@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kplot"
+version = "0.1.0"
+description = "Plotting utilities and tools for AthenaK interfacing plot-tools"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+packages = ["utilities"]
