@@ -1,2 +1,3 @@
 from .horizon import HorizonFinder
 from .batchmerge import BatchMerger
+from .waveforms import Waveform
