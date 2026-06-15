@@ -64,3 +64,35 @@ class Waveform:
       data[radius]["time"] = data_array[:, 0]
 
     self.waveform_data = data
+
+  def retarded_time(self, r, M=1.):
+    """
+    Calculates the retarded time on a Schwarzschild background in isotropic coordinates.
+
+    Parameters:
+    r: Extraction radius (in geometric units).
+    M: Black hole mass.
+
+    Returns:
+    Exchanges time column in waveform_data with retarded time.
+    """
+    if self.waveform_data is None:
+      raise ValueError("Waveform data not loaded. Call load_waveform_data() first.")
+
+    time_exists = any(
+      "time" in self.waveform_data[radius]
+      for radius in self.waveform_data.keys()
+    )
+
+    if not time_exists:
+      raise ValueError(f"Time data not found for any extraction radius.")
+
+    if (r == 1.0 or r == -1.0):
+      rs = 0.0 # for the case, when r = -1 (extrapolated at infinity)
+    else:
+      r_areal = r * (1 + M / (2 * r))**2
+      rs = r_areal + 2 * M * np.log(r_areal / (2 * M) - 1)
+
+    for radius in self.waveform_data.keys():
+      if "time" in self.waveform_data[radius]:
+        self.waveform_data[radius]["time"] -= rs
