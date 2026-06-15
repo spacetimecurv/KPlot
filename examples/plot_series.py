@@ -4,7 +4,7 @@
 #########################################################################
 
 # Import the series plot class.
-from utilities import SeriesPlot
+from kplot import SeriesPlot
 
 # Call the constructor.
 series = SeriesPlot(

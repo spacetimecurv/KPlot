@@ -4,7 +4,7 @@
 #########################################################################
 
 # Import the horizon finder class.
-from utilities import HorizonFinder
+from kplot import HorizonFinder
 
 # Import necessary third-party libraries.
 import matplotlib.pyplot as plt

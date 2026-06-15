@@ -4,7 +4,7 @@
 #########################################################################
 
 # Import the waveform reader class.
-from utilities import Waveform
+from kplot import Waveform
 
 # Import necessary third-party libraries.
 import matplotlib.pyplot as plt
