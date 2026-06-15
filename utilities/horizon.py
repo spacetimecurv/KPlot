@@ -4,7 +4,6 @@
 #########################################################################
 
 # Import necessary standard libaries.
-from fileinput import filename
 import re
 import os
 
@@ -13,47 +12,39 @@ import numpy as np
 
 # Define the horizon finder class.
 class HorizonFinder:
+  """
+  A class to handle output from the AthenaK horizon finder.
+  """
+
+  def __init__(self, horizon_path):
     """
-    A class to handle output from the AthenaK horizon finder.
+    Initialize the HorizonFinder with the path to the horizon file.
+
+    Parameters:
+    horizon_path (str): The path to the horizon file.
     """
+    self.horizon_path = horizon_path
+    self.horizon_data = None
 
-    def __init__(self, horizon_path):
-        """
-        Initialize the HorizonFinder with the path to the horizon file.
+  def load_horizon_data(self):
+    """
+    Load the horizon data from the specified file path.
 
-        Parameters:
-        horizon_path (str): The path to the horizon file.
-        """
-        self.horizon_path = horizon_path
-        self.horizon_data = None
+    Returns:
+    Dictionary holding the horizon data.
+    """
+    if not os.path.exists(self.horizon_path):
+      raise FileNotFoundError(f"Horizon file not found at: {self.horizon_path}")
 
-    def load_horizon_data(self):
-        """
-        Load the horizon data from the specified file path.
+    # Find the headers.
+    with open(self.horizon_path) as f:
+      header_line = f.readline().strip()
 
-        Returns:
-        Dictionary holding the horizon data.
-        """
-        if not os.path.exists(self.horizon_path):
-            raise FileNotFoundError(f"Horizon file not found at: {self.horizon_path}")
+    headers = re.findall(r'\d+:([^\s]+)', header_line)
 
-        # Find the headers.
-        with open(self.horizon_path) as f:
-            header_line = f.readline().strip()
+    # Read the data with numpy.
+    data = np.loadtxt(self.horizon_path, comments='#')
 
-        headers = re.findall(r'\d+:([^\s]+)', header_line)
-
-        # Read the data with numpy.
-        data = np.loadtxt(self.horizon_path, comments='#')
-
-        # Create a dictionary.
-        data_dict = {name: data[:, i] for i, name in enumerate(headers)}
-        self.horizon_data = data_dict
-
-
-
-
-
-
-
-
+    # Create a dictionary.
+    data_dict = {name: data[:, i] for i, name in enumerate(headers)}
+    self.horizon_data = data_dict
