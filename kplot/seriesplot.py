@@ -24,8 +24,9 @@ class SeriesPlot:
   A class to handle plotting of series data from AthenaK bin output.
   """
 
-  def __init__(self, series_path, pattern, extent, variable, label, slice=None, lognorm=False,
-               vmin=None, vmax=None, blackhole=False, output_dir=None, tracker_path=None, horizon_path=None):
+  def __init__(self, series_path, pattern, extent, variable, label, slice=None, sliceplot=None, plotblocks=True, lognorm=False,
+               vmin=None, vmax=None, blackhole=False, magfields=False, linedensity=1.5, output_dir=None,
+              tracker_path=None, horizon_path=None):
     """
     Initialize the SeriesPlot instance with the path to the series data.
 
@@ -36,10 +37,14 @@ class SeriesPlot:
     variable (str): Which variable from the bin file to plot (see athplot).
     label (str): Label to attach to the colorbar.
     slice: Which slice to plot on (if 3D data).
+    sliceplot (str): Needed for magnetic field lines as flag for components.
+    plotblocks (bool): Whether the MB bounds need to be plotted.
     lognorm: Whether to use a colorbar in log-scale.
     vmin: Minimum value of the colorbar.
     vmax: Maximum value of the colorbar.
     blackhole: Whether a black hole is present and needs to be plotted.
+    magfields: Whether the magnetic field lines need to be plotted.
+    linedensity: Magnetic field line density for plotting.
     output_dir: Where to store the image series.
     tracker_path: Path to the black hole tracker file.
     horizon_path: Path to the horizon finder file.
@@ -49,10 +54,14 @@ class SeriesPlot:
     self.extent = extent
     self.variable = variable
     self.slice = slice
+    self.sliceplot = sliceplot
+    self.plotblocks = plotblocks
     self.lognorm = lognorm
     self.vmin = vmin
     self.vmax = vmax
     self.blackhole = blackhole
+    self.magfields = magfields
+    self.linedensity = linedensity
     self.output_dir = output_dir
     self.label = label
     if blackhole and not (tracker_path or horizon_path):
@@ -99,6 +108,35 @@ class SeriesPlot:
       time = image.data.time
       data = image.make_image_data(256, 256)
 
+      # Prepare magnetic fields if needed.
+      if self.magfields:
+        if self.sliceplot == "xy":
+          Bx = Image(file, extent, "bcc1", slice_loc=self.slice)
+          By = Image(file, extent, "bcc2", slice_loc=self.slice)
+          x = np.linspace(extent[0], extent[1], 256)
+          y = np.linspace(extent[2], extent[3], 256)
+          X, Y = np.meshgrid(x, y)
+          bx_data = Bx.make_image_data(256, 256)
+          by_data = By.make_image_data(256, 256)
+        elif self.sliceplot == "xz":
+          Bx = Image(file, extent, "bcc1", slice_loc=self.slice)
+          Bz = Image(file, extent, "bcc3", slice_loc=self.slice)
+          x = np.linspace(extent[0], extent[1], 256)
+          z = np.linspace(extent[2], extent[3], 256)
+          X, Z = np.meshgrid(x, z)
+          bx_data = Bx.make_image_data(256, 256)
+          bz_data = Bz.make_image_data(256, 256)
+        elif self.sliceplot == "yz":
+          By = Image(file, extent, "bcc2", slice_loc=self.slice)
+          Bz = Image(file, extent, "bcc3", slice_loc=self.slice)
+          y = np.linspace(extent[0], extent[1], 256)
+          z = np.linspace(extent[2], extent[3], 256)
+          Y, Z = np.meshgrid(y, z)
+          by_data = By.make_image_data(256, 256)
+          bz_data = Bz.make_image_data(256, 256)
+        else:
+          raise ValueError("No valid slice for splot specified! (Options: xy,xz,yz)")
+
       # Creating the plots.
       plt.figure(figsize=(8, 6))
       if self.lognorm:
@@ -126,29 +164,11 @@ class SeriesPlot:
       if self.slice is not None:
           slice_dim, slice_pos = self.slice
 
-      for block in image.data.blocks:
-        if self.slice is None:
-          ext = block.get_extent()
-          x1, x2, y1, y2 = ext[0], ext[1], ext[2], ext[3]
-
-          # Optional: Only draw if the block is within the visual 'extent'
-          if not (x2 < extent[0] or x1 > extent[1] or y2 < extent[2] or y1 > extent[3]):
-            rect = patches.Rectangle((x1, y1), x2 - x1, y2 - y1,
-                                    linewidth=0.5, edgecolor='cyan',
-                                    facecolor='none', alpha=0.5)
-            plt.gca().add_patch(rect)
-        else:
-          # Check if this specific block contains the slice plane
-          if block.is_in_slice(slice_dim, slice_pos):
-            ext = block.get_extent() # Get the 6-element physical boundaries
-
-            # Map the 3D block extent to 2D plot coordinates based on the slice
-            if slice_dim == 'z':
-              x1, x2, y1, y2 = ext[0], ext[1], ext[2], ext[3]
-            elif slice_dim == 'y':
-              x1, x2, y1, y2 = ext[0], ext[1], ext[4], ext[5]
-            else: # slice_dim == 'x'
-              x1, x2, y1, y2 = ext[2], ext[3], ext[4], ext[5]
+      if self.plotblocks:
+        for block in image.data.blocks:
+          if self.slice is None:
+            ext = block.get_extent()
+            x1, x2, y1, y2 = ext[0], ext[1], ext[2], ext[3]
 
             # Optional: Only draw if the block is within the visual 'extent'
             if not (x2 < extent[0] or x1 > extent[1] or y2 < extent[2] or y1 > extent[3]):
@@ -156,6 +176,25 @@ class SeriesPlot:
                                       linewidth=0.5, edgecolor='cyan',
                                       facecolor='none', alpha=0.5)
               plt.gca().add_patch(rect)
+          else:
+            # Check if this specific block contains the slice plane
+            if block.is_in_slice(slice_dim, slice_pos):
+              ext = block.get_extent() # Get the 6-element physical boundaries
+
+              # Map the 3D block extent to 2D plot coordinates based on the slice
+              if slice_dim == 'z':
+                x1, x2, y1, y2 = ext[0], ext[1], ext[2], ext[3]
+              elif slice_dim == 'y':
+                x1, x2, y1, y2 = ext[0], ext[1], ext[4], ext[5]
+              else: # slice_dim == 'x'
+                x1, x2, y1, y2 = ext[2], ext[3], ext[4], ext[5]
+
+              # Optional: Only draw if the block is within the visual 'extent'
+              if not (x2 < extent[0] or x1 > extent[1] or y2 < extent[2] or y1 > extent[3]):
+                rect = patches.Rectangle((x1, y1), x2 - x1, y2 - y1,
+                                        linewidth=0.5, edgecolor='cyan',
+                                        facecolor='none', alpha=0.5)
+                plt.gca().add_patch(rect)
 
       # Plot the black hole if present.
       if self.blackhole:
@@ -164,8 +203,22 @@ class SeriesPlot:
         idxh = np.where(matchesh)[0][0]
         idxt = np.where(matchest)[0][0]
 
-        circle = plt.Circle((tracker_data[idxt,2], tracker_data[idxt,3]), horizon_data[idxh,-1], edgecolor="cyan", facecolor="black", fill=True)
+        if self.sliceplot == "xy":
+          circle = plt.Circle((tracker_data[idxt,2], tracker_data[idxt,3]), horizon_data[idxh,-1], edgecolor="cyan", facecolor="black", fill=True)
+        elif self.sliceplot == "xz":
+          circle = plt.Circle((tracker_data[idxt,2], tracker_data[idxt,4]), horizon_data[idxh,-1], edgecolor="cyan", facecolor="black", fill=True)
+        else:
+          circle = plt.Circle((tracker_data[idxt,3], tracker_data[idxt,4]), horizon_data[idxh,-1], edgecolor="cyan", facecolor="black", fill=True)
         plt.gca().add_patch(circle)
+
+      # Plot the magnetic field lines if present.
+      if self.magfields:
+        if self.sliceplot == "xy":
+          plt.streamplot(X, Y, bx_data, by_data, color="white", density=self.linedensity, linewidth=0.7)
+        elif self.sliceplot == "xz":
+          plt.streamplot(X, Z, bx_data, bz_data, color="white", density=self.linedensity, linewidth=0.7)
+        else:
+          plt.streamplot(Y, Z, by_data, bz_data, color="white", density=self.linedensity, linewidth=0.7)
 
       # Beautify.
       plt.xlim(extent[0:2])
