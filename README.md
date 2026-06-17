@@ -23,6 +23,8 @@ Currently supported are the following classes:
 - ```BatchMerger``` (concatenates batchtools ```output-*``` files)
 - ```Waveform``` (reads in waveform data)
 - ```SeriesPlot``` (reads in ```.bin``` files and creates a 2D plot series)
+- ```History``` (reads in ```.hst``` files)
+- ```Units``` (creates a unit conversion system for derived variables)
 Some examples outline the usage. Once built, the utilities can be called with:
 ```python
 from kplot import *
