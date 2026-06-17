@@ -29,3 +29,19 @@ ax.set_ylabel(r"$|1-M_b(t)/M_b(0)|$")
 fig.suptitle("Mass conservation")
 fig.tight_layout()
 plt.show()
+
+# Use the built in plot-function.
+history.plot_history(
+  variable="mass",
+  output_path=None,
+  save=False,
+  xmin=None,
+  xmax=None,
+  ymin=None,
+  ymax=None,
+  logx=False,
+  logy=True,
+  xlabel=r"$t$",
+  ylabel=r"$M_b$",
+  color="red"
+)
