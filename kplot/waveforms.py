@@ -11,6 +11,9 @@ import math
 
 # Import necessary third-party libraries.
 import numpy as np
+from watpy.wave.gwutils import ret_time
+from watpy.wave.gwutils import fixed_freq_int_2
+from watpy.utils.num import diff1
 
 # Define the waveform reader class.
 class Waveform:
@@ -124,42 +127,6 @@ class Waveform:
     """
     return np.abs(signal)
 
-  # Taken from watpy wave/wave.py.
-  @staticmethod
-  def ret_time(t, r, M = 1.):
-    """
-    Retarded time for generic data.
-
-    Parameters:
-    t: Time array.
-    r: Extraction radius.
-    M: Total gravitational mass of the system.
-    """
-    if (r == 1.0 or r == -1.0):
-      rs = 0.0 # for the case, when r = -1 (extrapolated at infinity)
-    else:
-      r_areal = r * (1 + M / (2 * r))**2
-      rs = r_areal + 2 * M * np.log(r_areal / (2 * M) - 1)
-
-    return t - rs
-
-  # Taken from watpy utils/num.py.
-  @staticmethod
-  def diff1(xp, yp, pad=True):
-    """
-    Computes the first derivative of y(x) using centered 2nd order
-    accurate finite-differencing.
-
-    This function returns an array of yp.shape[0]-2 elements.
-    """
-    dyp = [(yp[i+1] - yp[i-1]) / (xp[i+1] - xp[i-1]) \
-            for i in range(1, xp.shape[0]-1)]
-    dyp = np.array(dyp)
-    if pad==True:
-      dyp = np.insert(dyp, 0, dyp[0])
-      dyp = np.append(dyp, dyp[-1])
-    return dyp
-
   @staticmethod
   def phi_dot(time, signal):
     """
@@ -172,30 +139,7 @@ class Waveform:
     signal: (Re(psi4)+i*Im(psi4)) / M.
     """
     phase_to_diff = Waveform.phase(signal)
-    return Waveform.diff1(time, phase_to_diff, pad=True)
-
-  # Taken from watpy wave/gwutils.py.
-  @staticmethod
-  def fixed_freq_int_2(signal, cutoff, dt=1.):
-    """
-    Fixed frequency double time integration.
-
-    Parameters:
-    signal: A np.array with the target signal.
-    cutoff: The cutoff frequency.
-    dt: The sampling of the signal.
-    """
-    from scipy.fftpack import fft, ifft, fftfreq
-
-    f = fftfreq(signal.shape[0], dt)
-
-    idx_p = np.logical_and(f >= 0, f < cutoff)
-    idx_m = np.logical_and(f < 0, f > -cutoff)
-
-    f[idx_p] = cutoff
-    f[idx_m] = -cutoff
-
-    return ifft(-fft(signal)/(2*math.pi*f)**2)
+    return diff1(time, phase_to_diff, pad=True)
 
   # Compute the strain and frequency.
   @staticmethod
@@ -218,8 +162,8 @@ class Waveform:
 
     # Compute rpsi4, the retarded time and strain.
     rpsi4 = (Rerpsi4 + 1j * Imrpsi4) / Mass
-    u = Waveform.ret_time(time, radius, Mass)
-    h = Waveform.fixed_freq_int_2(rpsi4, cutoff=f0, dt=time[1]-time[0])
+    u = ret_time(time, radius, Mass)
+    h = fixed_freq_int_2(rpsi4, cutoff=f0, dt=time[1]-time[0])
 
     strain_data["Amplitude"] = Waveform.amplitude(h)
     strain_data["Phase"] = Waveform.phase(h)
