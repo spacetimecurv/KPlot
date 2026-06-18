@@ -4,6 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kplot"
+dependencies = [
+	"numpy >= 1.13",
+	"matplotlib >= 2.2",
+	"core-watpy >= 0.1",
+	"scipy >= 1.10.0"
+]
 version = "0.1.0"
 description = "Plotting utilities and tools for AthenaK interfacing plot-tools"
 readme = "README.md"

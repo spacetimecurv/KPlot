@@ -16,7 +16,7 @@ waveform.load_waveform_data()
 data = waveform.waveform_data
 
 # Convert to retarded time.
-waveform.retarded_time(300.0, 2.8)
+waveform.retarded_time(300.0, 4.4)
 
 # Plot the waveform data.
 radius = "0300"
@@ -30,3 +30,8 @@ ax.legend()
 
 fig.tight_layout()
 plt.show()
+plt.close()
+
+# Compute the strain.
+strain = Waveform.strain(data[radius]["time"], data[radius]["real"]["22"], data[radius]["imag"]["22"],
+                         300.0, 0.007072211146992, 4.4)
