@@ -15,5 +15,8 @@ description = "Plotting utilities and tools for AthenaK interfacing plot-tools"
 readme = "README.md"
 requires-python = ">=3.10"
 
+[project.scripts]
+kplot-system = "kplot.system:main"
+
 [tool.setuptools]
 packages = ["kplot"]
