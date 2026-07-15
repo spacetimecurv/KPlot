@@ -116,6 +116,16 @@ A ready-to-edit driver (plus an ffmpeg movie-maker) lives in
 per series into ```all_movies/```. Set ```DELETE_FRAMES=true``` in the driver to
 remove the rendered frame PNGs afterwards (the movies are kept).
 
+The above workflow is simplified by making use of the ```scripts/system/config.example.ini``` 
+file:
+```bash
+cd scripts/system
+cp config.example.ini config.ini    # set simpath for your machine
+bash plot_system.sh                 # plotting-specific parameters
+```
+Make sure to modify the ```config.ini``` file, before running the bash script, since 
+otherwise default values will be applied.
+
 ### Spherical-surface analysis (ejecta + neutrinos)
 ```kplot.sphere``` analyses AthenaK's spherical-surface extraction output
 (```file_type = sph```) — what crosses the extraction sphere, spanning all
