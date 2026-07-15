@@ -215,7 +215,7 @@ def _process_snapshot_ejecta(args):
     mask_floor = dens > dfloor
     mask_out   = (ur > 0) & mask_floor
     hut_cov    = h * ut_cov
-    mask_Ber   = (hut_cov < -1)             & mask_out
+    mask_Ber   = (hut_cov < -eos["h_min"])             & mask_out
     mask_geo   = (ut_cov  < -1)             & mask_out
 
     sqrt_det      = _sqrt_det(gxx, gyy, gzz, gxy, gxz, gyz, z4c_alpha)
@@ -245,7 +245,7 @@ def _process_snapshot_ejecta(args):
 
     if result['in_2d']:
         sel_geo = (ut_cov  < -1).flatten()
-        sel_Ber = (hut_cov < -1).flatten()
+        sel_Ber = (hut_cov < -eos["h_min"]).flatten()
         result['hist2d_geo'], _, _ = _np.histogram2d(
             vinf_geo.flatten()[sel_geo], theta.flatten()[sel_geo],
             bins=[_W_V_BINS, theta_edges],
