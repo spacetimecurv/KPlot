@@ -8,7 +8,8 @@ dependencies = [
 	"numpy >= 1.13",
 	"matplotlib >= 2.2",
 	"core-watpy >= 0.1",
-	"scipy >= 1.10.0"
+	"scipy >= 1.10.0",
+	"h5py >= 2.10"
 ]
 version = "0.1.0"
 description = "Plotting utilities and tools for AthenaK interfacing plot-tools"
@@ -16,7 +17,13 @@ readme = "README.md"
 requires-python = ">=3.10"
 
 [project.scripts]
-kplot-system = "kplot.system:main"
+kplot-system = "kplot.system.plotter:main"
+kplot-sphere-mergertime = "kplot.sphere.mergertime:main"
+kplot-sphere-ejecta = "kplot.sphere.ejecta:main"
+kplot-sphere-neutrinos = "kplot.sphere.neutrinos:main"
+kplot-sphere-plot = "kplot.sphere.plots:main"
+kplot-sphere-compare = "kplot.sphere.comparison:main"
+kplot-sphere-accretion = "kplot.sphere.accretion:main"
 
 [tool.setuptools]
-packages = ["kplot"]
+packages = ["kplot", "kplot.system", "kplot.sphere"]

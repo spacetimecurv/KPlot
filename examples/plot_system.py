@@ -22,7 +22,7 @@ plotter = SystemPlotter(
   skip_existing=True,    # skip frames whose PNG already exists
 )
 # Each frame series lands in its own <figpath>/<diagnostic>_<plane>/ subfolder,
-# e.g. Figs/temperature_xy/.  scripts/make_movies.sh then builds one movie per
+# e.g. Figs/temperature_xy/.  scripts/system/make_movies.sh then builds one movie per
 # folder into Figs/all_movies/.
 
 # Run any subset of the available diagnostics.  Pass ["all"] to run everything.
