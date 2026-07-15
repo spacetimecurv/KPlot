@@ -65,28 +65,14 @@ fi
 # Directory where all output txt/npy/pdf files will be written.
 OUTPUT_DIR="${SIMPATH}/analysis"
 
-# AthenaK job name prefixing the sph VTK files (input_block <job> name).
-JOBNAME=bns
-
-# SPH extraction radius [M_sun] used for BOTH ejecta and neutrino analysis.
-# Must have mhd/adm/z4c and rad_m1_E/F/N sph output at this radius.
-RADIUS=300.0
-
-# GW extraction radius for the merger-time estimate (rpsi4_*_RRRR.txt).
-WF_RADIUS=300
-
-# Neutrino plot x-axis: 0 = absolute time [ms]; 1 = t − t_merger [ms] (xlim left=0).
-PLOT_FROM_MERGER=0
-
-# How many ms post-merger to include in the 2D ejecta histogram.
-T_POST_MS=25.0
-
-# Density floor used in the simulation [code units].
-DFLOOR=3e-15
-
-# Number of parallel workers for the snapshot loop.
-# Login node: keep ≤ 4.  Compute node (salloc/srun): set to the core count.
-N_WORKERS=8
+# Extract the job-specific parameters from config.ini
+JOBNAME="$(_cfg_get jobname)"
+RADIUS="$(_cfg_get radius)"
+WF_RADIUS="$(_cfg_get wf_radius)"
+PLOT_FROM_MERGER="$(_cfg_get plot_from_merger)"
+T_POST_MS="$(_cfg_get t_post_ms)"
+DFLOOR="$(_cfg_get dfloor)"
+N_WORKERS="$(_cfg_get n_workers)"
 
 # ── auto-discover all output-*/sph directories (sorted) ──────────────────────
 SPH_DIRS=()
@@ -119,20 +105,20 @@ done
 # ─────────────────────────────────────────────────────────────────────────────
 # Aurora uses environment modules. Lmod's `module` is usually only a shell
 # function for interactive shells, so source its init first if needed.
-if ! command -v module &>/dev/null; then
-    for _init in "${MODULESHOME:-/usr/share/lmod/lmod}/init/bash" \
-                 /etc/profile.d/lmod.sh /etc/profile.d/z00_lmod.sh; do
-        [[ -r "${_init}" ]] && source "${_init}" && break
-    done
-fi
-if command -v module &>/dev/null; then
-    module load python py-numpy py-scipy py-matplotlib py-h5py
-fi
+#if ! command -v module &>/dev/null; then
+#    for _init in "${MODULESHOME:-/usr/share/lmod/lmod}/init/bash" \
+#                 /etc/profile.d/lmod.sh /etc/profile.d/z00_lmod.sh; do
+#        [[ -r "${_init}" ]] && source "${_init}" && break
+#    done
+#fi
+#if command -v module &>/dev/null; then
+#    module load python py-numpy py-scipy py-matplotlib py-h5py
+#fi
 # The module Python may have no pip/user-site; provide extra packages (e.g. vtk
 # needed by athplot.load_sph_vtk) via pythonpath_extra in config.ini.
-if [[ -n "${PYTHONPATH_EXTRA}" ]]; then
-    export PYTHONPATH="${PYTHONPATH_EXTRA}:${PYTHONPATH:-}"
-fi
+#if [[ -n "${PYTHONPATH_EXTRA}" ]]; then
+#    export PYTHONPATH="${PYTHONPATH_EXTRA}:${PYTHONPATH:-}"
+#fi
 
 # Prefer the installed console scripts; fall back to the module form if KPlot
 # has not been reinstalled since the kplot.sphere entry points were added.
