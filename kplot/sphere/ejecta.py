@@ -228,8 +228,9 @@ def _process_snapshot_ejecta(args):
     total_geo = flux_rate_geo.sum()
     total_Ber = flux_rate_Ber.sum()
 
-    vinf_geo = _np.sqrt(_np.where(ut_cov  < -1, 1.0 - ut_cov **-2, 0.0))
-    vinf_Ber = _np.sqrt(_np.where(hut_cov < -1, 1.0 - hut_cov**-2, 0.0))
+    vinf_geo = _np.sqrt(_np.where(ut_cov  < -1, 1.0 - ut_cov**-2, 0.0))
+    vinf_Ber = _np.sqrt(_np.where(hut_cov < -eos["h_min"],
+                                  1.0 - (eos["h_min"] / hut_cov)**2, 0.0))
 
     result = {
         'time':         time,
