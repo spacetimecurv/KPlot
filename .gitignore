@@ -1,5 +1,5 @@
 # Local machine-specific config (copy config.example.ini -> config.ini)
-scripts/sphere/config.ini
+scripts/*/config.ini
 
 # Python cache
 __pycache__/

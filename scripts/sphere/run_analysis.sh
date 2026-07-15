@@ -34,6 +34,8 @@ if [[ ! -f "${CONFIG_FILE}" ]]; then
     exit 1
 fi
 
+# Scalar `key = value`.  A trailing inline comment (whitespace followed by # or
+# ;) is stripped, so a '#' inside a path is still safe.
 _cfg_get() {
     awk -v key="$1" '
         /^[[:space:]]*[#;]/ { next }
@@ -43,6 +45,7 @@ _cfg_get() {
             gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
             if (k == key && index($0, "=")) {
                 v = substr($0, index($0, "=") + 1)
+                sub(/[[:space:]]+[#;].*/, "", v)
                 gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
                 print v; exit
             }
@@ -137,6 +140,20 @@ mkdir -p "${OUTPUT_DIR}"
 SPH_ARGS=()
 for d in "${SPH_DIRS[@]}"; do SPH_ARGS+=(--sph-dir "$d"); done
 
+# Optional settings: a key left blank in config.ini is omitted here, so the
+# analysis module applies its own default rather than receiving an empty string.
+COMMON_ARGS=()
+[[ -n "${JOBNAME}"   ]] && COMMON_ARGS+=(--jobname   "${JOBNAME}")
+[[ -n "${RADIUS}"    ]] && COMMON_ARGS+=(--radius    "${RADIUS}")
+[[ -n "${N_WORKERS}" ]] && COMMON_ARGS+=(--n-workers "${N_WORKERS}")
+
+EJECTA_ARGS=()
+[[ -n "${DFLOOR}"    ]] && EJECTA_ARGS+=(--dfloor    "${DFLOOR}")
+[[ -n "${T_POST_MS}" ]] && EJECTA_ARGS+=(--t-post-ms "${T_POST_MS}")
+
+MERGER_ARGS=()
+[[ -n "${WF_RADIUS}" ]] && MERGER_ARGS+=(--radius "${WF_RADIUS}")
+
 echo "============================================================"
 echo "  BNS SPH analysis"
 echo "  SPH dirs   : ${#SPH_DIRS[@]} segment(s)"
@@ -151,7 +168,7 @@ MERGER_FILE="${OUTPUT_DIR}/merger_time.txt"
 echo ""
 echo "── Merger time (GW (2,2) mode) ──────────────────────────────"
 _kplot kplot-sphere-mergertime kplot.sphere.mergertime \
-    --simpath "${SIMPATH}" --radius "${WF_RADIUS}" --out "${MERGER_FILE}"
+    --simpath "${SIMPATH}" "${MERGER_ARGS[@]+"${MERGER_ARGS[@]}"}" --out "${MERGER_FILE}"
 # Read the merger time (first non-comment numeric line) from the file.
 T_MERGER_MSUN="$(awk '!/^#/ && NF {print $1; exit}' "${MERGER_FILE}")"
 if [[ -z "${T_MERGER_MSUN}" ]]; then
@@ -174,12 +191,9 @@ if [[ $RUN_EJECTA -eq 1 ]]; then
         "${SPH_ARGS[@]}" \
         --eos-table  "${EOS_TABLE}" \
         --output-dir "${OUTPUT_DIR}" \
-        --jobname    "${JOBNAME}" \
-        --radius     "${RADIUS}" \
-        --dfloor     "${DFLOOR}" \
         --t-merger   "${T_MERGER_MSUN}" \
-        --t-post-ms  "${T_POST_MS}" \
-        --n-workers  "${N_WORKERS}" &
+        "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" \
+        "${EJECTA_ARGS[@]+"${EJECTA_ARGS[@]}"}" &
     EJECTA_PID=$!
 fi
 
@@ -188,9 +202,7 @@ if [[ $RUN_NEUTRINO -eq 1 ]]; then
     _kplot kplot-sphere-neutrinos kplot.sphere.neutrinos \
         "${SPH_ARGS[@]}" \
         --output-dir "${OUTPUT_DIR}" \
-        --jobname    "${JOBNAME}" \
-        --radius     "${RADIUS}" \
-        --n-workers  "${N_WORKERS}" &
+        "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" &
     NEUTRINO_PID=$!
 fi
 
@@ -207,7 +219,8 @@ fi
 if [[ $RUN_PLOT -eq 1 ]]; then
     echo ""
     echo "── Plotting ─────────────────────────────────────────────────"
-    PLOT_ARGS=(--output-dir "${OUTPUT_DIR}" --t-merger "${T_MERGER_MSUN}" --radius "${RADIUS}")
+    PLOT_ARGS=(--output-dir "${OUTPUT_DIR}" --t-merger "${T_MERGER_MSUN}")
+    [[ -n "${RADIUS}" ]] && PLOT_ARGS+=(--radius "${RADIUS}")
     [[ "${PLOT_FROM_MERGER}" == "1" ]] && PLOT_ARGS+=(--from-merger)
     _kplot kplot-sphere-plot kplot.sphere.plots "${PLOT_ARGS[@]}"
     echo "── Plotting done ────────────────────────────────────────────"
