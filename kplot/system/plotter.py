@@ -1303,7 +1303,7 @@ class SystemPlotter:
     print("[s00] Rendering s_00 (Ye proxy) frames...")
     self._render_field(f"{self.jobname}.mhd_w_bcc_{self.plane}", "s_00",
                        "s00", cmap="plasma", norm_from_params=False,
-                       vmin=0.0, vmax=0.2)
+                       vmin=0.0, vmax=0.5)
 
   def rad_E(self):
     print("[rad_E] Rendering radiation energy E:0 frames...")
