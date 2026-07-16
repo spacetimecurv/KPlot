@@ -12,7 +12,6 @@ import warnings
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-mpl.rcParams["text.usetex"] = True
 
 # Define the History class.
 class History:

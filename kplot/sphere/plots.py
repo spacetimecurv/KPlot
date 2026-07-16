@@ -19,6 +19,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 
+# Set explicitly rather than inherited, so the figures do not depend on which
+# other kplot module happened to be imported first.  Every label below renders
+# under mathtext, so a LaTeX install is not required.
+matplotlib.rcParams["text.usetex"] = False
+
 # Unit conversions
 G       = 6.67430e-11
 M_SUN   = 1.98892e30

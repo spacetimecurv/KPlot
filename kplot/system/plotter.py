@@ -108,6 +108,15 @@ def configure_matplotlib():
   mpl.rcParams.update(_STYLE)
 
 
+def use_latex(enable=True):
+  """Render text with a real LaTeX installation instead of mathtext.
+
+  Opt-in: LaTeX must be on PATH with a texmf tree covering the Computer Modern
+  font matching the active 'font.family', so this cannot be the default.
+  """
+  mpl.rcParams["text.usetex"] = enable
+
+
 def spatial_units(units):
   """Return (coord_scale, axis_label) for the spatial axes given a unit system.
 

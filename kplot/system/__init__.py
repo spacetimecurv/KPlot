@@ -18,7 +18,7 @@ from .waveforms import Waveform
 from .seriesplot import SeriesPlot
 from .history import History
 from .units import Units, CGS, MKS, GEOMETRIC_SOLAR
-from .plotter import SystemPlotter, main
+from .plotter import SystemPlotter, main, use_latex
 from . import athenak_units
 
 __all__ = [
@@ -33,5 +33,6 @@ __all__ = [
     "GEOMETRIC_SOLAR",
     "SystemPlotter",
     "main",
+    "use_latex",
     "athenak_units",
 ]

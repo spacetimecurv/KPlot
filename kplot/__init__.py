@@ -22,6 +22,7 @@ from .system import (
     MKS,
     GEOMETRIC_SOLAR,
     SystemPlotter,
+    use_latex,
     athenak_units,
 )
 from . import system
@@ -38,6 +39,7 @@ __all__ = [
     "MKS",
     "GEOMETRIC_SOLAR",
     "SystemPlotter",
+    "use_latex",
     "athenak_units",
     "system",
     "sphere",
