@@ -18,7 +18,8 @@ Outputs (written to --output-dir):
 
 Command line:
     kplot-sphere-ejecta --sph-dir DIR [--sph-dir DIR ...] --eos-table TABLE.h5 \
-        --output-dir DIR --radius 300 [--t-merger T --t-post-ms 25]
+        --output-dir DIR --radius 300 [--t-merger T --t-post-ms 25] \
+        --per-iteration-output True
 """
 
 import argparse
@@ -271,7 +272,8 @@ def _process_snapshot_ejecta(args):
 
 def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
             dfloor=DEFAULT_DFLOOR, t_stop=np.inf, jobname=DEFAULT_JOBNAME,
-            n_workers=None, dv=DEFAULT_DV, dye=DEFAULT_DYE):
+            n_workers=None, dv=DEFAULT_DV, dye=DEFAULT_DYE,
+            per_iteration_out=False):
     """Run the ejecta analysis over every snapshot found in `sph_dirs`.
 
     Parameters
@@ -293,6 +295,8 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
         AthenaK job name prefixing the VTK files (``<jobname>.r=R....vtk``).
     n_workers : int, optional
         Worker processes for the snapshot loop.  Default: min(8, cpu_count()).
+    per_iteration_out: bool, optional
+        Whether per iteration output of the histograms should be enabled.
     """
     if n_workers is None:
         n_workers = min(8, cpu_count())
@@ -423,6 +427,22 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
     Mej_Ber = simpson(y=Mej_rate_Ber_arr, x=time_arr)
     Mej_geo = simpson(y=Mej_rate_geo_arr, x=time_arr)
 
+    # Per iteration output (currently only Ye) if needed
+    if per_iteration_out:
+        output_dir_iter = os.path.join(output_dir, 'iteration')
+        if not os.path.exists(output_dir_iter):
+            os.mkdir(output_dir_iter)
+
+        for i, time in enumerate(time_2d_arr):
+            np.savetxt(os.path.join(output_dir_iter, f'Mej_Ye_geo_{int(time):05d}.txt'),
+               np.column_stack((ye_centers, hist_ye_geo_arr[i])),
+               header=f'Ye    Mej_per_bin[Msun]  (geodesic: u_t < -1) - T={time}',
+               fmt='%.6e')
+            np.savetxt(os.path.join(output_dir_iter, f'Mej_Ye_Ber_{int(time):05d}.txt'),
+               np.column_stack((ye_centers, hist_ye_Ber_arr[i])),
+               header=f'Ye    Mej_per_bin[Msun]  (Bernoulli: h*u_t < -1) - T={time}',
+               fmt='%.6e')
+
     print(f'Total Mej:     {Mej:.6e} Msun')
     print(f'Total Mej_Ber: {Mej_Ber:.6e} Msun')
     print(f'Total Mej_geo: {Mej_geo:.6e} Msun')
@@ -540,6 +560,8 @@ def main(argv=None):
                    help=f"vinf bin width [c]. Default: {DEFAULT_DV:g}.")
     p.add_argument("--dye", type=float, default=DEFAULT_DYE,
                    help=f"Y_e bin width. Default: {DEFAULT_DYE:g}.")
+    p.add_argument("--per_iteration_out", type=bool, default=False,
+                   help=f"Y_e hist per iteration output. Default: {False}.")
     args = p.parse_args(argv)
 
     if args.t_merger is None:
@@ -550,7 +572,7 @@ def main(argv=None):
     analyze(args.sph_dirs, args.eos_table, args.output_dir,
             radius=args.radius, dfloor=args.dfloor, t_stop=t_stop,
             jobname=args.jobname, n_workers=args.n_workers,
-            dv=args.dv, dye=args.dye)
+            dv=args.dv, dye=args.dye, per_iteration_out=args.per_iteration_out)
 
 
 if __name__ == '__main__':

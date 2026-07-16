@@ -76,6 +76,7 @@ PLOT_FROM_MERGER="$(_cfg_get plot_from_merger)"
 T_POST_MS="$(_cfg_get t_post_ms)"
 DFLOOR="$(_cfg_get dfloor)"
 N_WORKERS="$(_cfg_get n_workers)"
+PER_ITERATION_OUT="$(_cfg_get per_iteration_out)"
 
 # ── auto-discover all output-*/sph directories (sorted) ──────────────────────
 SPH_DIRS=()
@@ -150,6 +151,7 @@ COMMON_ARGS=()
 EJECTA_ARGS=()
 [[ -n "${DFLOOR}"    ]] && EJECTA_ARGS+=(--dfloor    "${DFLOOR}")
 [[ -n "${T_POST_MS}" ]] && EJECTA_ARGS+=(--t-post-ms "${T_POST_MS}")
+[[ -n "${PER_ITERATION_OUT}" ]] && EJECTA_ARGS+=(--per_iteration_out "${PER_ITERATION_OUT}")
 
 MERGER_ARGS=()
 [[ -n "${WF_RADIUS}" ]] && MERGER_ARGS+=(--radius "${WF_RADIUS}")
