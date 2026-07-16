@@ -15,6 +15,8 @@ Outputs (written to --output-dir):
   Mej_vinf_theta_geo.npy, Mej_vinf_theta_Ber.npy   (full 2D arrays, shape Nv x Ntheta)
   vinf_centers.txt, theta_centers_2d.txt             (axis labels for 2D arrays)
   Ye_avg_geo.txt, Ye_avg_Ber.txt, Mej_Ye_geo.txt, Mej_Ye_Ber.txt, Ye_centers.txt
+  Mej_Ye_theta_geo.npy, Mej_Ye_theta_Ber.npy   (Ye x theta 2D arrays, shape NYe x Ntheta;
+                                                 axes: Ye_centers.txt, theta_centers_2d.txt)
 
 Command line:
     kplot-sphere-ejecta --sph-dir DIR [--sph-dir DIR ...] --eos-table TABLE.h5 \
@@ -266,6 +268,16 @@ def _process_snapshot_ejecta(args):
             ye.flatten()[sel_Ber], bins=_W_YE_BINS,
             weights=flux_rate_Ber.flatten()[sel_Ber],
         )
+        result['hist2d_ye_theta_geo'], _, _ = _np.histogram2d(
+            ye.flatten()[sel_geo], theta.flatten()[sel_geo],
+            bins=[_W_YE_BINS, theta_edges],
+            weights=flux_rate_geo.flatten()[sel_geo],
+        )
+        result['hist2d_ye_theta_Ber'], _, _ = _np.histogram2d(
+            ye.flatten()[sel_Ber], theta.flatten()[sel_Ber],
+            bins=[_W_YE_BINS, theta_edges],
+            weights=flux_rate_Ber.flatten()[sel_Ber],
+        )
 
     return result
 
@@ -399,11 +411,13 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
             f"to integrate over time. Snapshots span "
             f"t = {time_arr.min():g} .. {time_arr.max():g} M_sun. "
             f"Check the merger time and the post-merger window (--t-post-ms).")
-    time_2d_arr      = np.array([r['time']         for r in res_2d])
-    hist2d_geo_arr   = np.array([r['hist2d_geo']   for r in res_2d])
-    hist2d_Ber_arr   = np.array([r['hist2d_Ber']   for r in res_2d])
-    hist_ye_geo_arr  = np.array([r['hist_ye_geo']  for r in res_2d])
-    hist_ye_Ber_arr  = np.array([r['hist_ye_Ber']  for r in res_2d])
+    time_2d_arr           = np.array([r['time']               for r in res_2d])
+    hist2d_geo_arr        = np.array([r['hist2d_geo']          for r in res_2d])
+    hist2d_Ber_arr        = np.array([r['hist2d_Ber']          for r in res_2d])
+    hist_ye_geo_arr       = np.array([r['hist_ye_geo']         for r in res_2d])
+    hist_ye_Ber_arr       = np.array([r['hist_ye_Ber']         for r in res_2d])
+    hist2d_ye_theta_geo_arr = np.array([r['hist2d_ye_theta_geo'] for r in res_2d])
+    hist2d_ye_theta_Ber_arr = np.array([r['hist2d_ye_theta_Ber'] for r in res_2d])
 
     # ------------------------------------------------------------------
     # Post-processing
@@ -413,6 +427,9 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
 
     dMej_Ye_geo = sum_over_time(hist_ye_geo_arr, time_2d_arr)  # (NYe,)
     dMej_Ye_Ber = sum_over_time(hist_ye_Ber_arr, time_2d_arr)
+
+    dMej_Ye_theta_geo = sum_over_time(hist2d_ye_theta_geo_arr, time_2d_arr)  # (NYe, Ntheta)
+    dMej_Ye_theta_Ber = sum_over_time(hist2d_ye_theta_Ber_arr, time_2d_arr)
 
     # Marginals
     dMej_geo = dMej_2d_geo.sum(axis=1)          # (Nv,)  — vinf histogram
@@ -525,6 +542,10 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
                fmt='%.6e')
     np.savetxt(os.path.join(output_dir, 'Ye_centers.txt'), ye_centers,
                header='Ye bin centers', fmt='%.6e')
+
+    # -- 2D arrays (NYe x Ntheta) -- axes: Ye_centers.txt, theta_centers_2d.txt
+    np.save(os.path.join(output_dir, 'Mej_Ye_theta_geo.npy'), dMej_Ye_theta_geo)
+    np.save(os.path.join(output_dir, 'Mej_Ye_theta_Ber.npy'), dMej_Ye_theta_Ber)
 
     print(f'All outputs saved to {output_dir}')
 

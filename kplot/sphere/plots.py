@@ -50,6 +50,12 @@ def plot_ejecta(adir, t_ms, radius):
     Mej_Ye_geo   = load('Mej_Ye_geo.txt')
     Mej_Ye_Ber   = load('Mej_Ye_Ber.txt')
 
+    # Ye - Theta histograms
+    Ye_centers   = load('Ye_centers.txt')
+    Thet_centers = load('theta_centers_2d.txt')
+    Ye_theta_Ber = np.load(os.path.join(adir, 'Mej_Ye_theta_Ber.npy'))
+    Ye_theta_geo = np.load(os.path.join(adir, 'Mej_Ye_theta_geo.npy'))
+
     t_geo_cum, Mej_geo_cum = cumulative(Mej_rate_geo)
     t_Ber_cum, Mej_Ber_cum = cumulative(Mej_rate_Ber)
 
@@ -102,16 +108,72 @@ def plot_ejecta(adir, t_ms, radius):
             ha='left', verticalalignment='top', bbox=props)
 
     fig.tight_layout()
-    out = os.path.join(adir, 'fig_ejecta.pdf')
+    out = os.path.join(adir, 'fig_ejecta.png')
     fig.savefig(out, dpi=150, bbox_inches='tight')
     print(f'Saved {out}')
 
     # Check whether per-iteration output present.
     if os.path.exists(os.path.join(adir, 'iteration')):
         print("Per-iteration output found. Making plots...")
-        plot_ye_evolution(adir, t_ms)
+        plot_ye_evolution(adir, t_ms, radius)
     else:
         print("Skipping per-iteration output; not found.")
+
+    # Ye-Theta histogram
+    plot_ye_theta(adir, radius, Ye_centers, Thet_centers, Ye_theta_Ber, Ye_theta_geo)
+
+
+def plot_ye_theta(adir, radius, Ye_centers, Thet_centers, 
+                  Ye_theta_Ber, Ye_theta_geo):
+    """Plot Ye - Theta histograms with the weights being the ejecta mass."""
+    from matplotlib.colors import LogNorm
+
+    # Prepare data and plotting utils
+    masked_ber = np.ma.masked_less_equal(Ye_theta_Ber.T, 0.0)
+    masked_geo = np.ma.masked_less_equal(Ye_theta_geo.T, 0.0)
+    vmax = max(Ye_theta_Ber.max(), Ye_theta_geo.max())
+    norm = LogNorm(vmin=vmax / 1e5, vmax=vmax)
+
+    fig, ax = plt.subplots(1,2,figsize=(15,6))
+
+    # Data to be plotted
+    ber = ax[0].pcolormesh(Ye_centers, Thet_centers, masked_ber, cmap='viridis', norm=norm)
+    geo = ax[1].pcolormesh(Ye_centers, Thet_centers, masked_geo, cmap='viridis', norm=norm)
+
+    # Labels
+    ax[0].set_xlabel(r'$Y_e$')
+    ax[0].set_ylabel(r'$\theta$')
+    ax[1].set_xlabel(r'$Y_e$')
+    ax[0].set_title('Bernoulli')
+    ax[1].set_title('Geodesic')
+
+    # X-/Y-ranges
+    ax[0].set_xlim(0.0, 0.5)
+    ax[0].set_ylim(0.0, np.pi)
+    ax[1].set_xlim(0.0, 0.5)
+    ax[1].set_ylim(0.0, np.pi)
+
+    # Theta tick modification
+    ticks = [0, np.pi/4, np.pi/2, 3*np.pi/4, np.pi]
+    labels = [r'$0$', r'$\frac{\pi}{4}$', r'$\pi/2$', r'$\frac{3\pi}{4}$', r'$\pi$']
+    ax[0].set_yticks(ticks)
+    ax[0].set_yticklabels(labels)
+    ax[1].set_yticks(ticks)
+    ax[1].set_yticklabels(labels)
+
+    fig.tight_layout()
+
+    # Colormap
+    cbar_geo = fig.colorbar(geo, ax=ax, pad=0.01, label=r'$M$  [$M_\odot$]')
+    cbar_geo.ax.set_ylabel(r'$M$  [$M_\odot$]')
+
+    # Text box with useful information
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+    fig.text(0.01, 0.99, f'R = {radius:g} $M_\\odot$', fontsize=12,
+            ha='left', verticalalignment='top', bbox=props)
+
+    out = os.path.join(adir, 'fig_ye_theta.png')
+    fig.savefig(out, dpi=150, bbox_inches='tight')
 
 
 def edges_from_centers(centers):
@@ -123,7 +185,7 @@ def edges_from_centers(centers):
     return np.concatenate([[first], mids, [last]])
 
 
-def plot_ye_evolution(adir, t_ms):
+def plot_ye_evolution(adir, t_ms, radius):
     """Time-vs-Y_e maps of the per-bin ejected mass, one panel per criterion.
 
     Reads the per-iteration histograms written by kplot.sphere.ejecta under
@@ -192,10 +254,19 @@ def plot_ye_evolution(adir, t_ms):
         ax.set_title(labels.get(crit, crit))
     axes[0].set_ylabel(r'$Y_e$')
 
-    cbar = fig.colorbar(mesh, ax=axes, label=r'$M$  [$M_\odot$]')
+    # Lay out the panels before stealing space for the colorbar, since the
+    # colorbar axes is not gridspec-managed and tight_layout() would
+    # otherwise warn and leave it unaccounted for.
+    fig.tight_layout()
+
+    cbar = fig.colorbar(mesh, ax=axes, pad=0.01, label=r'$M$  [$M_\odot$]')
     cbar.ax.set_ylabel(r'$M$  [$M_\odot$]')
 
-    out = os.path.join(adir, 'fig_ejecta_ye_evolution.pdf')
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+    fig.text(0.01, 0.99, f'R = {radius:g} $M_\\odot$', fontsize=12,
+            ha='left', verticalalignment='top', bbox=props)
+
+    out = os.path.join(adir, 'fig_ejecta_ye_evolution.png')
     fig.savefig(out, dpi=150, bbox_inches='tight')
     print(f'Saved {out}')
 
@@ -239,7 +310,7 @@ def plot_neutrino(adir, t_ms, t_merger_ms, nu_xlabel, nu_xlim, radius):
             ha='left', verticalalignment='top', bbox=props)
 
     fig.tight_layout()
-    out = os.path.join(adir, 'fig_neutrino.pdf')
+    out = os.path.join(adir, 'fig_neutrino.png')
     fig.savefig(out, dpi=150, bbox_inches='tight')
     print(f'Saved {out}')
 
@@ -263,21 +334,23 @@ def main(argv=None):
     adir = args.output_dir
     t_merger = args.t_merger
 
+    def t_ms_merger(t): return (t - t_merger) * MSUN_TO_MS
+
     if args.from_merger:
-        def t_ms(t): return (t - t_merger) * MSUN_TO_MS
+        nu_t_ms = t_ms_merger
         nu_xlabel = r'$t - t_\mathrm{merger}$ [ms]'
         nu_xlim = {'left': 0}
         t_merger_ms = 0.0
     else:
-        def t_ms(t): return t * MSUN_TO_MS
+        def nu_t_ms(t): return t * MSUN_TO_MS
         nu_xlabel = r'$t$ [ms]'
         nu_xlim = {}
         t_merger_ms = t_merger * MSUN_TO_MS
 
     if not args.no_ejecta:
-        plot_ejecta(adir, t_ms, args.radius)
+        plot_ejecta(adir, t_ms_merger, args.radius)
     if not args.no_neutrino:
-        plot_neutrino(adir, t_ms, t_merger_ms, nu_xlabel, nu_xlim, args.radius)
+        plot_neutrino(adir, nu_t_ms, t_merger_ms, nu_xlabel, nu_xlim, args.radius)
 
 
 if __name__ == "__main__":
