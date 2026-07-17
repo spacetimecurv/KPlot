@@ -121,6 +121,95 @@ def plot_ejecta(adir, t_ms, radius):
 
     # Ye-Theta histogram
     plot_ye_theta(adir, radius, Ye_centers, Thet_centers, Ye_theta_Ber, Ye_theta_geo)
+    plot_ye_theta_evolution(adir, radius, Ye_centers, Thet_centers, t_ms)
+
+
+def plot_ye_theta_evolution(adir, radius, Ye_centers, Thet_centers, t_ms):
+    """Plot Ye - Theta histogram evolution with the weights being the ejecta mass."""
+    from matplotlib.colors import LogNorm
+
+    # Open the figure
+    fig, ax = plt.subplots(1,2,figsize=(15,6))
+
+    # Extract the times and load the files.
+    idir = os.path.join(adir, 'iteration', 'Mej_Ye_theta')
+    files = [f for f in os.listdir(idir) if f.endswith(".npy")]
+    files.sort(key=lambda f: int(f.split(".")[0].split("_")[-1]))
+
+    Ber_data = []
+    Geo_data = []
+    Ber_time = []
+    Geo_time = []
+    vmax     = 0.0
+    for file in files:
+        criterion = file.split(".")[0].split("_")[-2]
+        time = int(file.split(".")[0].split("_")[-1])
+
+        if criterion == "Ber":
+            temp = np.load(os.path.join(idir, file))
+            Ber_data.append(temp)
+            Ber_time.append(t_ms(time))
+            vmax = max(temp.max(), vmax)
+        elif criterion == "geo":
+            temp = np.load(os.path.join(idir, file))
+            Geo_data.append(temp)
+            Geo_time.append(t_ms(time))
+            vmax = max(temp.max(), vmax)
+        else:
+            raise ValueError("Wrong criterion encountered!")
+
+    # Create the figures
+    for i, time in enumerate(Ber_time):
+        if i % 100 == 0:
+            print(f'Frame {i} / {len(Ber_time)} complete...')
+
+        # Prepare data and plotting utils
+        masked_ber = np.ma.masked_less_equal(Ber_data[i].T, 0.0)
+        masked_geo = np.ma.masked_less_equal(Geo_data[i].T, 0.0)
+        norm = LogNorm(vmin=vmax / 1e5, vmax=vmax)
+
+        fig, ax = plt.subplots(1,2,figsize=(15,6))
+
+        # Data to be plotted
+        ber = ax[0].pcolormesh(Ye_centers, Thet_centers, masked_ber, cmap='viridis', norm=norm)
+        geo = ax[1].pcolormesh(Ye_centers, Thet_centers, masked_geo, cmap='viridis', norm=norm)
+
+        # Labels
+        ax[0].set_xlabel(r'$Y_e$')
+        ax[0].set_ylabel(r'$\theta$')
+        ax[1].set_xlabel(r'$Y_e$')
+        ax[0].set_title('Bernoulli')
+        ax[1].set_title('Geodesic')
+
+        # X-/Y-ranges
+        ax[0].set_xlim(0.0, 0.5)
+        ax[0].set_ylim(0.0, np.pi)
+        ax[1].set_xlim(0.0, 0.5)
+        ax[1].set_ylim(0.0, np.pi)
+
+        # Theta tick modification
+        ticks = [0, np.pi/4, np.pi/2, 3*np.pi/4, np.pi]
+        labels = [r'$0$', r'$\frac{\pi}{4}$', r'$\pi/2$', r'$\frac{3\pi}{4}$', r'$\pi$']
+        ax[0].set_yticks(ticks)
+        ax[0].set_yticklabels(labels)
+        ax[1].set_yticks(ticks)
+        ax[1].set_yticklabels(labels)
+
+        fig.suptitle(f"$T - T_{{merger}}$ = {time:.2f}ms")
+        fig.tight_layout()
+
+        # Colormap
+        cbar_geo = fig.colorbar(geo, ax=ax, pad=0.01, label=r'$M$  [$M_\odot$]')
+        cbar_geo.ax.set_ylabel(r'$M$  [$M_\odot$]')
+
+        # Text box with useful information
+        props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+        fig.text(0.01, 0.99, f'R = {radius:g} $M_\\odot$', fontsize=12,
+                ha='left', verticalalignment='top', bbox=props)
+
+        out = os.path.join(adir, 'iteration', 'Mej_Ye_theta', f'fig_ye_theta_{i:05d}.png')
+        fig.savefig(out, dpi=150, bbox_inches='tight')
+        plt.close(fig)
 
 
 def plot_ye_theta(adir, radius, Ye_centers, Thet_centers, 
@@ -194,7 +283,7 @@ def plot_ye_evolution(adir, t_ms, radius):
     per-bin mass on a shared log color scale.  Empty (zero-mass) cells are left
     blank, as in the reference figure.
     """
-    idir = os.path.join(adir, 'iteration')
+    idir = os.path.join(adir, 'iteration', 'Mej_Ye')
 
     # Group the per-iteration files by ejecta criterion, sorted in time.
     # Filenames look like ``Mej_Ye_geo_00500.txt`` -> criterion 'geo', time 500.
@@ -254,9 +343,6 @@ def plot_ye_evolution(adir, t_ms, radius):
         ax.set_title(labels.get(crit, crit))
     axes[0].set_ylabel(r'$Y_e$')
 
-    # Lay out the panels before stealing space for the colorbar, since the
-    # colorbar axes is not gridspec-managed and tight_layout() would
-    # otherwise warn and leave it unaccounted for.
     fig.tight_layout()
 
     cbar = fig.colorbar(mesh, ax=axes, pad=0.01, label=r'$M$  [$M_\odot$]')

@@ -449,16 +449,22 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
         output_dir_iter = os.path.join(output_dir, 'iteration')
         if not os.path.exists(output_dir_iter):
             os.mkdir(output_dir_iter)
+            os.mkdir(os.path.join(output_dir_iter, 'Mej_Ye'))
+            os.mkdir(os.path.join(output_dir_iter, 'Mej_Ye_theta'))
 
         for i, time in enumerate(time_2d_arr):
-            np.savetxt(os.path.join(output_dir_iter, f'Mej_Ye_geo_{int(time):05d}.txt'),
+            np.savetxt(os.path.join(output_dir_iter, 'Mej_Ye', f'Mej_Ye_geo_{int(time):05d}.txt'),
                np.column_stack((ye_centers, hist_ye_geo_arr[i])),
                header=f'Ye    Mej_per_bin[Msun]  (geodesic: u_t < -1) - T={time}',
                fmt='%.6e')
-            np.savetxt(os.path.join(output_dir_iter, f'Mej_Ye_Ber_{int(time):05d}.txt'),
+            np.savetxt(os.path.join(output_dir_iter, 'Mej_Ye', f'Mej_Ye_Ber_{int(time):05d}.txt'),
                np.column_stack((ye_centers, hist_ye_Ber_arr[i])),
                header=f'Ye    Mej_per_bin[Msun]  (Bernoulli: h*u_t < -1) - T={time}',
                fmt='%.6e')
+            np.save(os.path.join(output_dir_iter, 'Mej_Ye_theta', f'Mej_Ye_theta_geo_{int(time)}.npy'),
+                                 hist2d_ye_theta_geo_arr[i])
+            np.save(os.path.join(output_dir_iter, 'Mej_Ye_theta', f'Mej_Ye_theta_Ber_{int(time)}.npy'),
+                                 hist2d_ye_theta_Ber_arr[i])
 
     print(f'Total Mej:     {Mej:.6e} Msun')
     print(f'Total Mej_Ber: {Mej_Ber:.6e} Msun')
