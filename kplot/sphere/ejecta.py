@@ -17,6 +17,10 @@ Outputs (written to --output-dir):
   Ye_avg_geo.txt, Ye_avg_Ber.txt, Mej_Ye_geo.txt, Mej_Ye_Ber.txt, Ye_centers.txt
   Mej_Ye_theta_geo.npy, Mej_Ye_theta_Ber.npy   (Ye x theta 2D arrays, shape NYe x Ntheta;
                                                  axes: Ye_centers.txt, theta_centers_2d.txt)
+  poynt_flux.txt                               (sphere-integrated Poynting luminosity vs time)
+  poynt_flux_map.npy                           (dL/dOmega, shape Nt x Nphi x Ntheta; axes:
+                                                 time_sph.txt, phi_centers_sph.txt,
+                                                 theta_centers_sph.txt)
 
 Command line:
     kplot-sphere-ejecta --sph-dir DIR [--sph-dir DIR ...] --eos-table TABLE.h5 \
@@ -149,6 +153,7 @@ def _process_snapshot_ejecta(args):
 
     from ._integrate import calc_ur as _calc_ur, sqrt_det_metric_adm as _sqrt_det
 
+    # ------- EJECTA -------
     eos     = _W_EOS
     mn_gram = _W_MN_GRAM
 
@@ -179,6 +184,9 @@ def _process_snapshot_ejecta(args):
     velx = mhd.fields['velx'] * dup_corr
     vely = mhd.fields['vely'] * dup_corr
     velz = mhd.fields['velz'] * dup_corr
+    bcc1 = mhd.fields['bcc1'] * dup_corr
+    bcc2 = mhd.fields['bcc2'] * dup_corr
+    bcc3 = mhd.fields['bcc3'] * dup_corr
 
     gxx = adm.fields['adm_gxx'] * dup_corr
     gyy = adm.fields['adm_gyy'] * dup_corr
@@ -206,9 +214,10 @@ def _process_snapshot_ejecta(args):
     W = _np.sqrt(1.0 + gxx*velx**2 + gyy*vely**2 + gzz*velz**2
                  + 2*gxy*velx*vely + 2*gxz*velx*velz + 2*gyz*vely*velz)
     ut_contrav = W / z4c_alpha
-    ur = _calc_ur(velx - z4c_betax*ut_contrav,
-                  vely - z4c_betay*ut_contrav,
-                  velz - z4c_betaz*ut_contrav, theta, phi)
+    ux_u = velx - z4c_betax * ut_contrav
+    uy_u = vely - z4c_betay * ut_contrav
+    uz_u = velz - z4c_betaz * ut_contrav
+    ur = _calc_ur(ux_u, uy_u, uz_u, theta, phi)
     ut_cov = (- z4c_alpha * W
               + gxx*z4c_betax*velx + gyy*z4c_betay*vely + gzz*z4c_betaz*velz
               + gxy*(z4c_betax*vely + z4c_betay*velx)
@@ -221,7 +230,7 @@ def _process_snapshot_ejecta(args):
     mask_Ber   = (hut_cov < -eos["h_min"])             & mask_out
     mask_geo   = (ut_cov  < -1)             & mask_out
 
-    sqrt_det      = _sqrt_det(gxx, gyy, gzz, gxy, gxz, gyz, z4c_alpha)
+    sqrt_det       = _sqrt_det(gxx, gyy, gzz, gxy, gxz, gyz, z4c_alpha)
     base_integrand = dens * ur * sqrt_det * r**2 * _np.sin(theta)
 
     cell_rate     = base_integrand * riemann_weights
@@ -235,6 +244,49 @@ def _process_snapshot_ejecta(args):
     vinf_Ber = _np.sqrt(_np.where(hut_cov < -eos["h_min"],
                                   1.0 - (eos["h_min"] / hut_cov)**2, 0.0))
 
+    # ------- POYNTING FLUX ------- (adapted from plot-tools)
+    sqrt_det_poynt = _sqrt_det(gxx, gyy, gzz, gxy, gxz, gyz, 1.0)
+    Bx = bcc1 / sqrt_det_poynt
+    By = bcc2 / sqrt_det_poynt
+    Bz = bcc3 / sqrt_det_poynt
+
+    # Compute the magnetic field in the fluid frame
+    Bsq = gxx * Bx * Bx + 2.0 * gxy * Bx * By + 2.0 * gxz * Bx * Bz + \
+          gyy * By * By + 2.0 * gyz * By * Bz + gzz * Bz * Bz
+
+    BWv = gxx * Bx * velx + gyy * By * vely + gzz * Bz * velz + \
+          gxy * (Bx * vely + velx * By) + \
+          gxz * (Bx * velz + velx * Bz) + \
+          gyz * (By * velz + vely * Bz)
+
+    # Magnetic field amplitude in the fluid frame
+    bsq = (Bsq + BWv * BWv) / (W * W)
+
+    bt_u = BWv / z4c_alpha
+    bx_u = (Bx + BWv * ux_u) / W
+    by_u = (By + BWv * uy_u) / W
+    bz_u = (Bz + BWv * uz_u) / W
+
+    # Lower the time-like component
+    betax_d = gxx * z4c_betax + gxy * z4c_betay + gxz * z4c_betaz
+    betay_d = gxy * z4c_betax + gyy * z4c_betay + gyz * z4c_betaz
+    betaz_d = gxz * z4c_betax + gyz * z4c_betay + gzz * z4c_betaz
+
+    betasq = gxx * z4c_betax**2 + 2.0 * gxy * z4c_betax * z4c_betay + \
+             2.0 * gxz * z4c_betax * z4c_betaz + gyy * z4c_betay**2 + \
+             2.0 * gyz * z4c_betay * z4c_betaz + gzz * z4c_betaz**2
+
+    bt_d = (-z4c_alpha * z4c_alpha + betasq) * bt_u + betax_d * bx_u + betay_d * by_u + \
+           betaz_d * bz_u
+
+    # Compute the radial components of the magnetic field
+    br_u = _calc_ur(bx_u, by_u, bz_u, theta, phi)
+
+    # Compute the Poynting flux per unit solid angle, dL/dOmega (Nphi, Ntheta)
+    poynt_map = (bsq * ur * ut_cov - br_u * bt_d) * z4c_alpha * sqrt_det_poynt * r**2
+
+    flux = _np.sum(poynt_map * _np.sin(theta) * riemann_weights)
+
     result = {
         'time':         time,
         'Mej_rate':     _np.where(mask_out, base_integrand, 0.0).sum() * riemann_weights.sum(),
@@ -244,6 +296,8 @@ def _process_snapshot_ejecta(args):
         'vinf_avg_Ber': (_np.sum(vinf_Ber * flux_rate_Ber) / total_Ber if total_Ber > 0 else 0.0),
         'ye_avg_geo':   (_np.sum(ye * flux_rate_geo) / total_geo if total_geo > 0 else 0.0),
         'ye_avg_Ber':   (_np.sum(ye * flux_rate_Ber) / total_Ber if total_Ber > 0 else 0.0),
+        'poynt_flux':   flux,
+        'poynt_map':    poynt_map,
         'in_2d':        time <= t_stop,
     }
 
@@ -402,6 +456,8 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
     vinf_avg_Ber_arr = np.array([r['vinf_avg_Ber'] for r in results])
     ye_avg_geo_arr   = np.array([r['ye_avg_geo']   for r in results])
     ye_avg_Ber_arr   = np.array([r['ye_avg_Ber']   for r in results])
+    poynt_flux_arr   = np.array([r['poynt_flux']   for r in results])
+    poynt_map_arr    = np.array([r['poynt_map']    for r in results])  # (Nt, Nphi, Ntheta)
 
     res_2d           = [r for r in results if r['in_2d']]
     if len(res_2d) < 2:
@@ -448,9 +504,9 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
     if per_iteration_out:
         output_dir_iter = os.path.join(output_dir, 'iteration')
         if not os.path.exists(output_dir_iter):
-            os.mkdir(output_dir_iter)
-            os.mkdir(os.path.join(output_dir_iter, 'Mej_Ye'))
-            os.mkdir(os.path.join(output_dir_iter, 'Mej_Ye_theta'))
+            os.mkdir(output_dir_iter, exist_ok=True)
+            os.mkdir(os.path.join(output_dir_iter, 'Mej_Ye'), exist_ok=True)
+            os.mkdir(os.path.join(output_dir_iter, 'Mej_Ye_theta'), exist_ok=True)
 
         for i, time in enumerate(time_2d_arr):
             np.savetxt(os.path.join(output_dir_iter, 'Mej_Ye', f'Mej_Ye_geo_{int(time):05d}.txt'),
@@ -548,6 +604,22 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
                fmt='%.6e')
     np.savetxt(os.path.join(output_dir, 'Ye_centers.txt'), ye_centers,
                header='Ye bin centers', fmt='%.6e')
+
+    # -- Poynting flux --
+    np.savetxt(os.path.join(output_dir, 'poynt_flux.txt'),
+               np.column_stack((time_arr, poynt_flux_arr)),
+               header='time(Msun)    L_Poynting(code units)', fmt='%.6e')
+
+    # -- Poynting flux map (Nt x Nphi x Ntheta) -- axes: time_sph.txt,
+    #    phi_centers_sph.txt, theta_centers_sph.txt.  Values are dL/dOmega, so
+    #    integrating with sin(theta) dtheta dphi reproduces poynt_flux.txt.
+    np.save(os.path.join(output_dir, 'poynt_flux_map.npy'), poynt_map_arr)
+    np.savetxt(os.path.join(output_dir, 'time_sph.txt'), time_arr,
+               header='snapshot times [Msun] (axis 0 of poynt_flux_map.npy)', fmt='%.6e')
+    np.savetxt(os.path.join(output_dir, 'phi_centers_sph.txt'), phi_1d,
+               header='phi [rad] (axis 1 of poynt_flux_map.npy)', fmt='%.6e')
+    np.savetxt(os.path.join(output_dir, 'theta_centers_sph.txt'), theta_1d,
+               header='theta [rad] (axis 2 of poynt_flux_map.npy)', fmt='%.6e')
 
     # -- 2D arrays (NYe x Ntheta) -- axes: Ye_centers.txt, theta_centers_2d.txt
     np.save(os.path.join(output_dir, 'Mej_Ye_theta_geo.npy'), dMej_Ye_theta_geo)

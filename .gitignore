@@ -30,3 +30,6 @@ Thumbs.db
 *.aux
 *.tex
 Figures/
+
+# Output
+examples/output
