@@ -233,13 +233,13 @@ def _process_snapshot(args):
     betaz_vtk = _SD(betaz_path)
 
     time  = flux_vtk.time
-    radius = flux_vtk.r
+    radius = flux_vtk.radii[0]
     theta = flux_vtk.theta
     phi   = flux_vtk.phi
-    surface_weights = flux_vtk.fields['weights']
+    surface_weights = flux_vtk.shell('weights')
 
     # -- Duplication correction --
-    z4c_alpha_raw = alpha_vtk.fields['z4c_alpha']
+    z4c_alpha_raw = alpha_vtk.shell('z4c_alpha')
     phi_zero    = (phi == phi.min())
     theta_north = (theta == theta.min())
     dup_corr = _np.ones(z4c_alpha_raw.shape)
@@ -248,16 +248,16 @@ def _process_snapshot(args):
     if z4c_alpha_raw[theta_north].max() > 1.0:
         dup_corr[theta_north] = 0.25
 
-    gxx = adm_vtk.fields['adm_gxx'] * dup_corr
-    gyy = adm_vtk.fields['adm_gyy'] * dup_corr
-    gzz = adm_vtk.fields['adm_gzz'] * dup_corr
-    gxy = adm_vtk.fields['adm_gxy'] * dup_corr
-    gxz = adm_vtk.fields['adm_gxz'] * dup_corr
-    gyz = adm_vtk.fields['adm_gyz'] * dup_corr
+    gxx = adm_vtk.shell('adm_gxx') * dup_corr
+    gyy = adm_vtk.shell('adm_gyy') * dup_corr
+    gzz = adm_vtk.shell('adm_gzz') * dup_corr
+    gxy = adm_vtk.shell('adm_gxy') * dup_corr
+    gxz = adm_vtk.shell('adm_gxz') * dup_corr
+    gyz = adm_vtk.shell('adm_gyz') * dup_corr
     z4c_alpha  = z4c_alpha_raw * dup_corr
-    z4c_betax  = betax_vtk.fields['z4c_betax'] * dup_corr
-    z4c_betay  = betay_vtk.fields['z4c_betay'] * dup_corr
-    z4c_betaz  = betaz_vtk.fields['z4c_betaz'] * dup_corr
+    z4c_betax  = betax_vtk.shell('z4c_betax') * dup_corr
+    z4c_betay  = betay_vtk.shell('z4c_betay') * dup_corr
+    z4c_betaz  = betaz_vtk.shell('z4c_betaz') * dup_corr
 
     nspecies = NSPECIES
     n_conv = N_CODE_PER_FM3
@@ -269,11 +269,11 @@ def _process_snapshot(args):
     dtheta = _np.diff(theta_edges)
 
     for s in range(nspecies):
-        Fx = flux_vtk.fields[f'Fx:{s}'] * dup_corr
-        Fy = flux_vtk.fields[f'Fy:{s}'] * dup_corr
-        Fz = flux_vtk.fields[f'Fz:{s}'] * dup_corr
-        E  = ener_vtk.fields[f'E:{s}']  * dup_corr
-        N  = nden_vtk.fields[f'N:{s}']  * dup_corr
+        Fx = flux_vtk.shell(f'Fx:{s}') * dup_corr
+        Fy = flux_vtk.shell(f'Fy:{s}') * dup_corr
+        Fz = flux_vtk.shell(f'Fz:{s}') * dup_corr
+        E  = ener_vtk.shell(f'E:{s}')  * dup_corr
+        N  = nden_vtk.shell(f'N:{s}')  * dup_corr
 
         Fux, Fuy, Fuz = _raise_spatial_covector(
             Fx, Fy, Fz, gxx, gyy, gzz, gxy, gxz, gyz)
@@ -402,7 +402,7 @@ def analyze(sph_dirs, output_dir, radius=DEFAULT_RADIUS, jobname=DEFAULT_JOBNAME
     _ap = _nearest_path(alpha_times, _t0)
     if _ap:
         _av = SphericalData(_ap)
-        _a  = _av.fields['z4c_alpha']
+        _a  = _av.shell('z4c_alpha')
         print(f"  [dup check] alpha range: min={_a.min():.4f}  max={_a.max():.4f}")
 
     # ------------------------------------------------------------------

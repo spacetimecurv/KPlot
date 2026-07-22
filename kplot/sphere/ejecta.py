@@ -165,11 +165,11 @@ def _process_snapshot_ejecta(args):
     betaz = _SD(betaz_path)
 
     time  = mhd.time
-    r     = mhd.r
+    r     = mhd.radii[0]
     theta = mhd.theta
     phi   = mhd.phi
 
-    z4c_alpha_raw = alpha.fields['z4c_alpha']
+    z4c_alpha_raw = alpha.shell('z4c_alpha')
     phi_zero    = (phi == phi.min())
     theta_north = (theta == theta.min())
     dup_corr = _np.ones(z4c_alpha_raw.shape)
@@ -178,26 +178,26 @@ def _process_snapshot_ejecta(args):
     if z4c_alpha_raw[theta_north].max() > 1.0:
         dup_corr[theta_north] = 0.25
 
-    dens        = mhd.fields['dens']        * dup_corr
-    ye          = mhd.fields['s_00']        * dup_corr
-    temperature = mhd.fields['temperature'] * dup_corr
-    velx = mhd.fields['velx'] * dup_corr
-    vely = mhd.fields['vely'] * dup_corr
-    velz = mhd.fields['velz'] * dup_corr
-    bcc1 = mhd.fields['bcc1'] * dup_corr
-    bcc2 = mhd.fields['bcc2'] * dup_corr
-    bcc3 = mhd.fields['bcc3'] * dup_corr
+    dens        = mhd.shell('dens')        * dup_corr
+    ye          = mhd.shell('s_00')        * dup_corr
+    temperature = mhd.shell('temperature') * dup_corr
+    velx = mhd.shell('velx') * dup_corr
+    vely = mhd.shell('vely') * dup_corr
+    velz = mhd.shell('velz') * dup_corr
+    bcc1 = mhd.shell('bcc1') * dup_corr
+    bcc2 = mhd.shell('bcc2') * dup_corr
+    bcc3 = mhd.shell('bcc3') * dup_corr
 
-    gxx = adm.fields['adm_gxx'] * dup_corr
-    gyy = adm.fields['adm_gyy'] * dup_corr
-    gzz = adm.fields['adm_gzz'] * dup_corr
-    gxy = adm.fields['adm_gxy'] * dup_corr
-    gxz = adm.fields['adm_gxz'] * dup_corr
-    gyz = adm.fields['adm_gyz'] * dup_corr
+    gxx = adm.shell('adm_gxx') * dup_corr
+    gyy = adm.shell('adm_gyy') * dup_corr
+    gzz = adm.shell('adm_gzz') * dup_corr
+    gxy = adm.shell('adm_gxy') * dup_corr
+    gxz = adm.shell('adm_gxz') * dup_corr
+    gyz = adm.shell('adm_gyz') * dup_corr
     z4c_alpha = z4c_alpha_raw * dup_corr
-    z4c_betax = betax.fields['z4c_betax'] * dup_corr
-    z4c_betay = betay.fields['z4c_betay'] * dup_corr
-    z4c_betaz = betaz.fields['z4c_betaz'] * dup_corr
+    z4c_betax = betax.shell('z4c_betax') * dup_corr
+    z4c_betay = betay.shell('z4c_betay') * dup_corr
+    z4c_betaz = betaz.shell('z4c_betaz') * dup_corr
 
     input_shape = dens.shape
     nb = _conv_dens(_cactus, _cgs, dens) * 1e-39 / mn_gram
