@@ -89,6 +89,7 @@ FIGPATH="${SIMPATH}/Figs"    # default: <SIMPATH>/Figs
 
 # Job-specifc input parameters parsed from config.ini
 JOBNAME="$(_cfg_get jobname)"
+PRIM_PREFIX="$(_cfg_get prim_prefix)"
 PLANE="$(_cfg_get plane)"
 SHOW_TRACKERS="$(_cfg_get show_trackers)"
 SHOW_HORIZON="$(_cfg_get show_horizon)"
@@ -116,6 +117,7 @@ done < <(_cfg_get_list sections | tr -s '[:space:]' '\n')
 ARGS=(--simpath "${SIMPATH}")
 [[ -n "${FIGPATH:-}"    ]] && ARGS+=(--figpath    "${FIGPATH}")
 [[ -n "${JOBNAME:-}"    ]] && ARGS+=(--jobname    "${JOBNAME}")
+[[ -n "${PRIM_PREFIX:-}" ]] && ARGS+=(--prim-prefix "${PRIM_PREFIX}")
 [[ -n "${PLANE:-}"      ]] && ARGS+=(--plane      "${PLANE}")
 [[ -n "${TIME_UNITS:-}" ]] && ARGS+=(--time-units "${TIME_UNITS}")
 [[ -n "${UNITS:-}"      ]] && ARGS+=(--units      "${UNITS}")

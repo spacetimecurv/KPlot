@@ -1164,7 +1164,8 @@ class SystemPlotter:
   def __init__(self, simpath, figpath=None, units='cgs', jobname="bhns",
                plane="xy", time_units="Msun",
                show_trackers=True, show_horizon=False,
-               full_domain=False, skip_existing=False):
+               full_domain=False, skip_existing=False,
+               prim_prefix="mhd_w_bcc"):
     """Initialize the SystemPlotter.
 
     Parameters:
@@ -1179,6 +1180,8 @@ class SystemPlotter:
     show_horizon (bool): Overlay black-hole apparent-horizon circles on 2-D slices.
     full_domain (bool): Show the full domain instead of the +/-60 Msun window.
     skip_existing (bool): Skip frames whose output PNG already exists.
+    prim_prefix (str): Primitive-variable file prefix (before "_{plane}") for
+                       density/temperature/s00, e.g. "mhd_w_bcc" or "prim".
     """
     if plane not in PLANES:
       raise ValueError(f"plane must be one of {PLANES}, got {plane!r}")
@@ -1189,6 +1192,7 @@ class SystemPlotter:
     self.units = units
     self.jobname = jobname
     self.plane = plane
+    self.prim_prefix = prim_prefix
     self.time_units = time_units
     self.show_trackers = show_trackers
     self.show_horizon = show_horizon
@@ -1299,18 +1303,18 @@ class SystemPlotter:
 
   def density(self):
     print("[density] Rendering density frames...")
-    self._render_field(f"{self.jobname}.mhd_w_bcc_{self.plane}", "dens",
+    self._render_field(f"{self.jobname}.{self.prim_prefix}_{self.plane}", "dens",
                        "dens", cmap="inferno")
 
   def temperature(self):
     print("[temperature] Rendering temperature frames...")
-    self._render_field(f"{self.jobname}.mhd_w_bcc_{self.plane}", "temperature",
+    self._render_field(f"{self.jobname}.{self.prim_prefix}_{self.plane}", "temperature",
                        "temperature", cmap="viridis", norm_from_params=False,
                        vmin=0.0, vmax=70.0)
 
   def s00(self):
     print("[s00] Rendering s_00 (Ye proxy) frames...")
-    self._render_field(f"{self.jobname}.mhd_w_bcc_{self.plane}", "s_00",
+    self._render_field(f"{self.jobname}.{self.prim_prefix}_{self.plane}", "s_00",
                        "s00", cmap="plasma", norm_from_params=False,
                        vmin=0.0, vmax=0.5)
 
@@ -1468,6 +1472,9 @@ def parse_args(argv=None):
                       help="Output figure directory (default: <simpath>/Figs)")
   parser.add_argument("--jobname", default="bhns",
                       help="AthenaK job name prefixing input/output files (default: bhns)")
+  parser.add_argument("--prim-prefix", dest="prim_prefix", default="mhd_w_bcc",
+                      help="Primitive-variable file prefix (before '_<plane>') for "
+                           "density/temperature/s00, e.g. 'mhd_w_bcc' [default] or 'prim'")
   parser.add_argument("--plane", default="xy", choices=list(PLANES),
                       help="Slice plane to render: xy [default], xz, or yz")
   parser.add_argument("--time-units", dest="time_units", default="Msun",
@@ -1500,6 +1507,7 @@ def main(argv=None):
     figpath=args.figpath,
     units=args.units,
     jobname=args.jobname,
+    prim_prefix=args.prim_prefix,
     plane=args.plane,
     time_units=args.time_units,
     show_trackers=not args.no_trackers,

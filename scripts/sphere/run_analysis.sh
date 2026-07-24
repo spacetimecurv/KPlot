@@ -77,6 +77,9 @@ T_POST_MS="$(_cfg_get t_post_ms)"
 DFLOOR="$(_cfg_get dfloor)"
 N_WORKERS="$(_cfg_get n_workers)"
 PER_ITERATION_OUT="$(_cfg_get per_iteration_out)"
+POYNTING="$(_cfg_get poynting)"
+YE_EVO="$(_cfg_get ye_evo)"
+YE_THETA_EVO="$(_cfg_get ye_theta_evo)"
 
 # ── auto-discover all output-*/sph directories (sorted) ──────────────────────
 SPH_DIRS=()
@@ -224,6 +227,10 @@ if [[ $RUN_PLOT -eq 1 ]]; then
     PLOT_ARGS=(--output-dir "${OUTPUT_DIR}" --t-merger "${T_MERGER_MSUN}")
     [[ -n "${RADIUS}" ]] && PLOT_ARGS+=(--radius "${RADIUS}")
     [[ "${PLOT_FROM_MERGER}" == "1" ]] && PLOT_ARGS+=(--from-merger)
+    [[ -n "${N_WORKERS}" ]] && PLOT_ARGS+=(--nprocs "${N_WORKERS}")
+    [[ "${POYNTING}" == "1" ]] && PLOT_ARGS+=(--poynting)
+    [[ "${YE_EVO}" == "1" ]] && PLOT_ARGS+=(--ye-evo)
+    [[ "${YE_THETA_EVO}" == "1" ]] && PLOT_ARGS+=(--ye-theta-evo)
     _kplot kplot-sphere-plot kplot.sphere.plots "${PLOT_ARGS[@]}"
     echo "── Plotting done ────────────────────────────────────────────"
 fi
