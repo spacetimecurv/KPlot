@@ -5,6 +5,7 @@ kplot.sphere.neutrinos.
 Reads the .txt outputs from --output-dir and writes:
     fig_ejecta.pdf    (2x3 panel summary of the ejecta properties)
     fig_neutrino.pdf  (2 panels: neutrino luminosity + mean energy)
+    (Optional): Poynting flux output, Ye-evolution, Ye-theta evolution
 
 Command line:
     kplot-sphere-plot --output-dir DIR --t-merger T [--radius 300] [--from-merger]
@@ -12,6 +13,7 @@ Command line:
 
 import argparse
 import os
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import matplotlib
@@ -30,13 +32,68 @@ M_SUN   = 1.98892e30
 C       = 2.99792458e8
 MSUN_TO_MS = G * M_SUN / C**3 * 1e3
 
+# CGS constants, used to convert the geometrized (G=c=1) Poynting flux to erg/s.
+G_CGS = 6.67430e-8
+C_CGS = 2.99792458e10
+
 
 def cumulative(arr):
     t = arr[:, 0]; r = arr[:, 1]; dt = np.diff(t)
     return t[1:], np.cumsum(0.5 * (r[:-1] + r[1:]) * dt)
 
 
-def plot_ejecta(adir, t_ms, radius):
+_POYNTING_WORKER_DATA = None
+
+
+def _init_poynting_worker(flux_ang, sel, x, y, z, r, cmap, norm, cb_ticks, odir, stride):
+    global _POYNTING_WORKER_DATA
+    _POYNTING_WORKER_DATA = dict(flux_ang=flux_ang, sel=sel, x=x, y=y, z=z, r=r,
+                                  cmap=cmap, norm=norm, cb_ticks=cb_ticks,
+                                  odir=odir, stride=stride)
+
+
+def _render_poynting_frame(task):
+    from matplotlib.ticker import FuncFormatter
+    from matplotlib import cm
+
+    i, t_val = task
+    d = _POYNTING_WORKER_DATA
+
+    L = -np.asarray(d['flux_ang'][i])[:, d['sel']] * (C_CGS**5 / G_CGS)
+    L = np.vstack([L, L[:1]])
+
+    fig = plt.figure(figsize=(8, 7))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot_surface(d['x'], d['y'], d['z'], rstride=1, cstride=1,
+                    facecolors=d['cmap'](d['norm'](L)), shade=False,
+                    linewidth=0, antialiased=False)
+
+    r = d['r']
+    ax.set_xlim(-r, r); ax.set_ylim(-r, r); ax.set_zlim(0, r)
+    ax.set_box_aspect((2, 2, 1))
+    ax.view_init(elev=25, azim=-60)
+    ax.set_axis_off()
+    ax.set_title(r"$t-t_{\mathrm{merger}} = %.2f$ ms" % t_val)
+
+    def cb_fmt(v, pos):
+        if v == 0:
+            return '0'
+        return r'$%s10^{%d}$' % ('-' if v < 0 else '', round(np.log10(abs(v))))
+
+    sm = cm.ScalarMappable(norm=d['norm'], cmap=d['cmap'])
+    sm.set_array([])
+    cb = fig.colorbar(sm, ax=ax, shrink=0.6, pad=0.0, ticks=d['cb_ticks'],
+                        format=FuncFormatter(cb_fmt))
+    cb.minorticks_off()
+    cb.set_label(r"erg/s/sr")
+
+    fig.tight_layout()
+    fig.savefig('%s/poynt_sphere_%05d.png' % (d['odir'], int(i / d['stride'])), dpi=150)
+    plt.close(fig)
+    print(f"Processed Poynting frame: {i}")
+
+
+def plot_ejecta(adir, t_ms, radius, poynting, ye_evo, ye_theta_evo, nprocs=1):
     def load(f): return np.loadtxt(os.path.join(adir, f))
 
     Mej_rate_geo = load('Mej_rate_geo.txt')
@@ -65,7 +122,7 @@ def plot_ejecta(adir, t_ms, radius):
     ax.plot(t_ms(Mej_rate_geo[:, 0]), Mej_rate_geo[:, 1] / MSUN_TO_MS * 1e3, color='tab:blue', label='geodesic', lw=1.2)
     ax.plot(t_ms(Mej_rate_Ber[:, 0]), Mej_rate_Ber[:, 1] / MSUN_TO_MS * 1e3, color='tab:orange', ls='--', label='Bernoulli', lw=1.2)
     ax.set_xlabel(r'$t - t_\mathrm{merger}$ [ms]'); ax.set_ylabel(r'$\dot{M}_\mathrm{ej}$  [$10^{-3}M_\odot\,\mathrm{ms}^{-1}$]')
-    ax.legend(fontsize=9, frameon=False); ax.set_xlim(left=0, right=np.max(t_ms(Mej_rate_geo[:, 0]))) 
+    ax.legend(fontsize=9, frameon=False); ax.set_xlim(left=0, right=np.max(t_ms(Mej_rate_geo[:, 0])))
     ax.set_title('Mass ejection rate')
 
     ax = axes[0, 1]
@@ -113,15 +170,118 @@ def plot_ejecta(adir, t_ms, radius):
     print(f'Saved {out}')
 
     # Check whether per-iteration output present.
-    if os.path.exists(os.path.join(adir, 'iteration')):
-        print("Per-iteration output found. Making plots...")
-        plot_ye_evolution(adir, t_ms, radius)
-    else:
-        print("Skipping per-iteration output; not found.")
+    if ye_evo:
+        if os.path.exists(os.path.join(adir, 'iteration')):
+            print("Per-iteration output found. Making Ye plots...")
+            plot_ye_evolution(adir, t_ms, radius)
+        else:
+            print("Skipping per-iteration output; not found.")
+
+    # Poynting flux
+    if poynting:
+        print("Processing Poynting flux...")
+        plot_poynting(adir, t_ms, radius, nprocs)
 
     # Ye-Theta histogram
-    plot_ye_theta(adir, radius, Ye_centers, Thet_centers, Ye_theta_Ber, Ye_theta_geo)
-    plot_ye_theta_evolution(adir, radius, Ye_centers, Thet_centers, t_ms)
+    if ye_theta_evo:
+        print("Processing Ye-theta evolution...")
+        plot_ye_theta(adir, radius, Ye_centers, Thet_centers, Ye_theta_Ber, Ye_theta_geo)
+        plot_ye_theta_evolution(adir, radius, Ye_centers, Thet_centers, t_ms)
+
+
+def plot_poynting(adir, t_ms, radius, nprocs=1):
+    """Plot the Poytning flux averaged and over the upper half-sphere."""
+    from matplotlib.colors import LinearSegmentedColormap, SymLogNorm
+    from mpl_toolkits.mplot3d import Axes3D
+
+    # Read in the files
+    flux     = np.loadtxt(os.path.join(adir, 'poynt_flux.txt'))
+    flux_ang = np.load(os.path.join(adir, 'poynt_flux_map.npy'))
+    phi      = np.loadtxt(os.path.join(adir, 'phi_centers_sph.txt'))
+    theta    = np.loadtxt(os.path.join(adir, 'theta_centers_sph.txt'))
+    t_map    = np.loadtxt(os.path.join(adir, 'time_sph.txt'))
+
+    # Convert to mergertime reference
+    t_map = t_ms(t_map)
+
+    # Output directory
+    odir = os.path.join(adir, 'poynt_sphere')
+    os.makedirs(odir, exist_ok=True)
+
+    # Prepare frames
+    stride = 10 # HARDCODED
+    frames = range(0, len(t_map), stride)
+
+    # ------- AVG. FLUX -------
+    mask     = np.where(flux[:,1] < 0)[0]
+    flux_cgs = -flux[mask,1]*(C_CGS**5/G_CGS)
+    t_flux   = t_ms(flux[:,0])
+
+    fig, ax = plt.subplots(1,1,figsize=(8,4))
+    ax.plot(t_flux[mask], flux_cgs, color='darkblue', linestyle='solid')
+    ax.set_xlabel(r"$t-t_{\mathrm{merger}}$ [ms]")
+    ax.set_ylabel(r"$-L_{\mathrm{poynt}}$ [erg/s]")
+    ax.set_xlim(np.min(t_flux), np.max(t_flux))
+    ax.set_ylim(bottom=np.min(flux_cgs))
+    ax.set_yscale("log")
+
+    fig.tight_layout()
+    fig.savefig(os.path.join(odir,'poynt_flux.png'), dpi=150,
+                bbox_inches='tight')
+    plt.close(fig)
+
+    # ------- FLUX ANGLES -------
+    cmap = LinearSegmentedColormap.from_list('poynt', [
+    (0.000, '#22e1f0'),
+    (0.150, '#1f4fd8'),
+    (0.400, '#9dc3e6'),
+    (0.480, '#ffffff'),
+    (0.520, '#ffffff'),
+    (0.600, '#e6a0a0'),
+    (0.850, '#cc0000'),
+    (0.950, '#ff8c00'),
+    (1.000, '#ffd21e'),
+    ])
+
+    # Select the upper half-sphere (theta runs from pi down to 0)
+    sel = np.where(theta <= np.pi/2)[0]
+    theta_h = theta[sel]
+
+    # Repeat the first phi column so the surface closes instead of leaving a seam
+    phi_c = np.append(phi, phi[0] + 2.0*np.pi)
+
+    PHI, THETA = np.meshgrid(phi_c, theta_h, indexing='ij')
+    r = radius
+    x = r * np.sin(THETA) * np.cos(PHI)
+    y = r * np.sin(THETA) * np.sin(PHI)
+    z = r * np.cos(THETA)
+
+    def dLdOmega(i):
+        """Outgoing Poynting flux per solid angle [erg/s/sr] on the closed north grid."""
+        L = -np.asarray(flux_ang[i])[:, sel] * (C_CGS**5 / G_CGS)
+        return np.vstack([L, L[:1]])
+
+    # Full global range, symmetric about zero
+    vmax = max(np.abs(dLdOmega(i)).max() for i in frames)
+    decades = 6
+    norm = SymLogNorm(linthresh=vmax/10**decades, vmin=-vmax, vmax=vmax, base=10)
+
+    _top = int(np.floor(np.log10(vmax)))
+    _bot = int(np.ceil(np.log10(norm.linthresh)))
+    _exp = list(range(_bot, _top + 1))
+    cb_ticks = [-10.0**e for e in reversed(_exp)] + [0.0] + [10.0**e for e in _exp]
+
+    tasks = [(i, t_map[i]) for i in frames]
+
+    if nprocs <= 1:
+        _init_poynting_worker(flux_ang, sel, x, y, z, r, cmap, norm, cb_ticks, odir, stride)
+        for task in tasks:
+            _render_poynting_frame(task)
+    else:
+        with ProcessPoolExecutor(max_workers=nprocs, initializer=_init_poynting_worker,
+                                  initargs=(flux_ang, sel, x, y, z, r, cmap, norm,
+                                            cb_ticks, odir, stride)) as ex:
+            list(ex.map(_render_poynting_frame, tasks))
 
 
 def plot_ye_theta_evolution(adir, radius, Ye_centers, Thet_centers, t_ms):
@@ -212,7 +372,7 @@ def plot_ye_theta_evolution(adir, radius, Ye_centers, Thet_centers, t_ms):
         plt.close(fig)
 
 
-def plot_ye_theta(adir, radius, Ye_centers, Thet_centers, 
+def plot_ye_theta(adir, radius, Ye_centers, Thet_centers,
                   Ye_theta_Ber, Ye_theta_geo):
     """Plot Ye - Theta histograms with the weights being the ejecta mass."""
     from matplotlib.colors import LogNorm
@@ -300,7 +460,7 @@ def plot_ye_evolution(adir, t_ms, radius):
         return
 
     labels = {'geo': 'Geodesic', 'Ber': 'Bernoulli'}
-    criteria = sorted(per_crit) 
+    criteria = sorted(per_crit)
 
     # Load every criterion into (Ntime, Nye) mass arrays sharing the Ye grid.
     data = {}
@@ -415,6 +575,11 @@ def main(argv=None):
                              "instead of absolute time.")
     parser.add_argument("--no-ejecta", action="store_true", help="Skip the ejecta figure.")
     parser.add_argument("--no-neutrino", action="store_true", help="Skip the neutrino figure.")
+    parser.add_argument("--poynting", action="store_true", help="Make Poynting flux analysis.")
+    parser.add_argument("--nprocs", type=int, default=1,
+                        help="Worker processes for rendering Poynting-flux frames. Default: 1.")
+    parser.add_argument("--ye-evo", action="store_true", help="Make Ye evolution analysis.")
+    parser.add_argument("--ye-theta-evo", action="store_true", help="Make Ye-theta-evolution analysis.")
     args = parser.parse_args(argv)
 
     adir = args.output_dir
@@ -434,7 +599,8 @@ def main(argv=None):
         t_merger_ms = t_merger * MSUN_TO_MS
 
     if not args.no_ejecta:
-        plot_ejecta(adir, t_ms_merger, args.radius)
+        plot_ejecta(adir, t_ms_merger, args.radius, args.poynting,
+                    args.ye_evo, args.ye_theta_evo, args.nprocs)
     if not args.no_neutrino:
         plot_neutrino(adir, nu_t_ms, t_merger_ms, nu_xlabel, nu_xlim, args.radius)
 
