@@ -17,6 +17,7 @@ from .batchmerge import BatchMerger
 from .waveforms import Waveform
 from .seriesplot import SeriesPlot
 from .history import History
+from .checkpoints import list_checkpoints, read_checkpoint
 from .units import Units, CGS, MKS, GEOMETRIC_SOLAR
 from .plotter import SystemPlotter, main, use_latex
 from . import athenak_units
@@ -27,6 +28,8 @@ __all__ = [
     "Waveform",
     "SeriesPlot",
     "History",
+    "list_checkpoints",
+    "read_checkpoint",
     "Units",
     "CGS",
     "MKS",

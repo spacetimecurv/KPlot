@@ -18,6 +18,7 @@ requires-python = ">=3.10"
 
 [project.scripts]
 kplot-system = "kplot.system.plotter:main"
+kplot-checkpoints = "kplot.system.checkpoints:main"
 kplot-sphere-mergertime = "kplot.sphere.mergertime:main"
 kplot-sphere-ejecta = "kplot.sphere.ejecta:main"
 kplot-sphere-neutrinos = "kplot.sphere.neutrinos:main"
