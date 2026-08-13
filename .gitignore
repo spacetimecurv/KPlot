@@ -25,10 +25,13 @@ venv/
 Thumbs.db
 
 # Latex 
+*.bib
 *.out
 *.log
 *.aux
 *.tex
+*.bbl
+*.blg
 Figures/
 
 # Output
