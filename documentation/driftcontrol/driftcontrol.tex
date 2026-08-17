@@ -1,0 +1,201 @@
+\documentclass{article}
+\usepackage{babel}
+\selectlanguage{english}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[colorlinks=true, linkcolor=blue]{hyperref}
+\usepackage{xcolor}
+\usepackage[top=2cm, bottom=2cm,
+            left=1.5cm, right=1.5cm]{geometry}
+%\usepackage{minted}
+%\usemintedstyle{vs}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{cite}
+\usepackage{ltablex}
+\usepackage{fancyvrb}
+\usepackage{hyperref}
+\keepXColumns
+
+\hypersetup{
+    colorlinks=true,      % Turns off the boxes, colors the text instead
+    linkcolor=blue,       % Color for internal links (sections, equations, figures)
+    citecolor=teal,       % Color for citations (\cite{})
+    urlcolor=cyan         % Color for web URLs (\url{})
+}
+
+% --- Inline style for code-level names (AthenaK variables, files, flags) ------
+\definecolor{varbg}{HTML}{EEF1F7}
+\definecolor{varfg}{HTML}{273C75}
+\newcommand{\var}[1]{%
+  {\setlength{\fboxsep}{1.5pt}%
+   \colorbox{varbg}{\textcolor{varfg}{\texttt{\small #1}}}}}
+
+% --- Run-in headers for the individual steps of a workflow -------------------
+% Small caps + rule instead of \textbf, so they read as a level below
+% \subsubsection rather than as another heading of the same weight.
+\definecolor{stepfg}{HTML}{1A6B62}
+\newcommand{\step}[1]{%
+  \par\medskip\noindent
+  {\color{stepfg}\rule[-0.15ex]{2pt}{1.5ex}\hspace{0.5em}\scshape #1}%
+  \hspace{0.75em}\ignorespaces}
+
+% Define short-commands for the variables
+\newcommand{\gxx}{\var{adm\_gxx}}
+\newcommand{\gxy}{\var{adm\_gxy}}
+\newcommand{\gxz}{\var{adm\_gxz}}
+\newcommand{\gyy}{\var{adm\_gyy}}
+\newcommand{\gyz}{\var{adm\_gyz}}
+\newcommand{\gzz}{\var{adm\_gzz}}
+\newcommand{\vx}{\var{velx}}
+\newcommand{\vy}{\var{vely}}
+\newcommand{\vz}{\var{velz}}
+\newcommand{\alp}{\var{z4c\_alpha}}
+\newcommand{\betx}{\var{z4c\_betax}}
+\newcommand{\bety}{\var{z4c\_betay}}
+\newcommand{\betz}{\var{z4c\_betaz}}
+\newcommand{\Bx}{\var{bcc1}}
+\newcommand{\By}{\var{bcc2}}
+\newcommand{\Bz}{\var{bcc3}}
+\newcommand{\mr}{\mathrm}
+\setlocalecaption{nil}{ref}{References}
+
+
+\begin{document}
+\section*{Driftcontrol in AthenaK}
+\textit{This document collects the driftcontrol algorithms used in AthenaK to reduce
+the black hole kick in various applications.}
+
+\subsection*{Driftcontrol}
+\step{Preliminaries}
+In black-hole neutron star mergers the remnant black hole experiences a physical kick during merger which leads
+to it moving away from the coordinate origin. For analysis purposes this is not ideal, since the matter distribution will follow the
+compact object and in most cases the surface analysis for ejecta etc. is biased. In short simulations this might not make
+a tremendous impact, but it certainly does in longer evolutions. As such we can seek to modify the gauge to pull the black hole
+back to the desired target location and keep it there throughout the rest of the simulation. Due to the gauge-invariance of the system
+this should not alter any physical properties. AthenaK implements four different methods that address this problem and which are
+described below. Here, we first introduce the basic concept behind the driftcontrol.
+\step{Basic concept} Consider that the drifting remnant black hole is followed by AthenaK's \var{CompactObjectTracker}, so we now it's
+position and velocity over time. For a tracked black hole the velocity of the tracker is determined as $v_{\mathrm{tracker}}^i=-\beta^i$ and
+the position is computed via $x_{\mathrm{tracker}}^i=x_{\mathrm{tracker,old}}^i+\Delta tv_{\mathrm{tracker}}^i$. AthenaK's driftcontrol never touches
+the position, but instead adds a controlling term to the RHS of the shift evolution equation $\beta^i$. In particular, we seed something like
+\begin{align}
+  \partial_t\beta^i = ...-f_{\mathrm{corr}}g,
+\end{align}
+where $g$ is a Gaussian window, and $f_{\mathrm{corr}}=-u$ where $u$ is what each individual controller seeds based on the specified algorithm. For
+a unit-mass particle we find
+\begin{align}
+  \Dot{x}^i&=-\beta^i,\\
+  \Ddot{x}^i&=-\partial_t\beta^i=-u+f,
+\end{align}
+where $f$ is the unperturbed RHS of the shift evolution equation, i.e. the contribution from the $\Gamma$-driver, shift advection, and $\eta$-damping.
+We therefore inject a control acceleration $u$ into the system that tries to control the drifting black hole. The algorithm is as follows:
+\begin{enumerate}
+  \item Measure the error of the current position to the target position $e=x-x_{\mathrm{target}}$.
+  \item Compute the injected acceleration $u(e,v,\mathrm{state})$ defined by each control mechanism.
+  \item Multiply that by a Gaussian window $g(r)$ which ideally is a certain factor larger than the black hole.
+  \item Feed this into the evolution equation of the shift $\partial_t\beta+=u\cdot g$.
+  \item The velocity will be automatically adjusted via $\Dot{x}^i=-\beta^i$.
+  \item Steps 1-5 are repeated at every cycle at the end of every RK stage.
+\end{enumerate}
+Physically nothing changes, as the shift is pure gauge and does not enter the constraints. However, holding the black hole there introduces additional coordinate shear around
+the black hole because the coordinates must keep stretching to keep the object there.
+\step{Shared properties} The four driftcontrol algorithms that will be introduced below all share some common machinery inside of AthenaK:
+\begin{itemize}
+  \item \var{dc\_tracker\_index} selects which object shall be controlled (after merger both share the same object).
+  \item \var{dc\_fixed\_x/y/z} is the target position we want the black hole at.
+  \item \var{dc\_vel} is the velocity computed as the finite-difference of the tracker position between cycles, i.e. $v=\frac{x_n-x_{n-1}}{\Delta t}$, but it is not
+  the tracker's own velocity. This velocity is clamped to $\pm$\var{dc\_vel\_cap}, which guards against bad interpolations or a tracker jump from injecting a
+  huge derivative kick into the shift.
+  \item The correction $f_{\mathrm{corr}}$ we feed into the shift is spatially constant and only the weight varies. With the Gaussian window we put the shear, where the
+  peak of the Gaussian window is located (ideally at the black hole). \var{dc\_gaussian\_center} centers the Gaussian window on either \var{fixed} (the target position) or
+  \var{tracker} (the tracked object). \var{dc\_damping\_scale} is the $\frac{1}{e}$ radius inside of $g(r)=\exp{\left(\frac{-r^2}{s^2}\right)}$, where $s$ is the damping scale.
+\end{itemize}
+
+\subsection*{Oscillator}
+\step{Formulation} The first method that is implemented is the Oscillator method from THC (second-order). For this method, the injected acceleration into the shift evolution is given by
+\begin{align}\label{Equ:oscillator}
+  u=\frac{e}{\tau^2}+\frac{2\zeta v}{\tau},
+\end{align}
+which is a natural damped harmonic oscillator with frequency $\omega=\frac{1}{\tau}$, and where $e$ is the error of the current position with respect to the target.
+It is unconditionally stable for $\zeta,\tau>0$. The parameters that can be tuned are
+\begin{itemize}
+  \item \var{dc\_damping\_time}: the restoring timescale $\tau=\frac{1}{\omega}$. A small $\tau$ means a stiff, and fast spring. This can lead to pullback speeds exceeding the
+  speed-of-light. At critical damping the compact object settles in roughly 3-5$\tau$.
+  \item \var{dc\_damping\_coeff}: the damping ratio $\zeta$. $\zeta<1$ represents an underdamped oscillator, $\zeta=1$ represents critical damping, and $\zeta>1$ overdamping.
+  The default is critical damping.
+\end{itemize}
+\step{Caveat} Equ.~\eqref{Equ:oscillator} can be written as
+\begin{align}
+  \Ddot{x}+\frac{e}{\tau^2}+\frac{2\zeta}{\tau}\Dot{x}=f.
+\end{align}
+Setting $\Ddot{x}=v=0$ gives $e=f\tau^2$, which means with this method we retain a constant offset that scales with the square of the timescale. Halving the offset
+costs a factor of $\sqrt{2}$ in stiffness. One can use it when the drift is mild and a constant offset is acceptable. It works better if it is turned off shortly after the
+kick, such that the initial separation from the target is not too large yet.
+
+\subsection*{PID}
+\step{Formulation} The PID method is third-order and the injected acceleration is defined by
+\begin{align}\label{Equ:pid}
+  u=K_pe+K_i\int edt+K_dv,
+\end{align}
+where $u$ without the integral term and $K_p=\frac{1}{\tau^2}$, $K_d=\frac{2\zeta}{\tau}$ reproduce the harmonic oscillator of
+Equ.~\eqref{Equ:oscillator} exactly. The integral term accumulates offset from the target and keeps pushing until the offset is gone,
+which kills the problem the Oscillator method had. This extended method requires that the coefficients $K_i,K_p,K_d>0$ and $K_i<K_pK_d$. The
+individual parameters that can be tuned are:
+\begin{itemize}
+  \item \var{dc\_Kp}: the spring constant $\omega_0=\sqrt{K_p}$, with the default being 1.0 such that $\tau=1$.
+  \item \var{dc\_Kd}: the damping parameter $\zeta=\frac{K_d}{(2\sqrt{K_p})}$ (default is critically damped).
+  \item \var{dc\_Ki}: the integral gain, i.e. how fast the accumulated offset is converted into a restoring force.
+  \item \var{dc\_integral\_cap}: clamp on the integral $\int edt$.
+\end{itemize}
+\step{Caveat} The residual error in principle is now zero with this method. However, releasing the driftcontrol at one point is fatal, because the
+restoring force used to keep the object at the desired location is then used to kick the black hole away again with the opposite force. The only option is to
+keep the remnant at the location with PID on for the entire time.
+
+\subsection*{Relaxation}
+\step{Formulation} The Relaxation method is first-order and relaxes the local shift field toward a commanded value. It modifies the shift evolution equation in the form
+\begin{align}
+  \partial_t \beta^i-=\left(\frac{1}{\tau_r}\right)\left(\beta^i-\kappa e^i\right)g-G_i\Gamma^ig,
+\end{align}
+where $g$ again is the Gaussian window, $\tau_r$ is the timescale, and $G_i$ is a constant. If $\frac{1}{\tau_r}$ dominates the other gauge terms, then
+$\beta^i\rightarrow\kappa e^i$ on timescale $\tau_r$. Then $\Dot{x}=-\beta=-\kappa e$ and the offset decays exponentially at rate $\kappa$. The tuning parameters are:
+\begin{itemize}
+  \item \var{dc\_kappa}: return rate $\kappa$ to the desired location.
+  \item \var{dc\_relaxation\_time}: relaxation time $\tau_r$ similar to the Oscillator method.
+  \item \var{dc\_gamma\_suppress}: fades out the $\Gamma$-driver's contribution to $\partial_t\beta^i$ inside the window (no suppression at $e=0$). In essence, the
+  relaxation term and the $\Gamma$-driver are fighting and in principle, the further off target one is the more the driftcontrol should win.
+\end{itemize}
+\step{Caveat} At equilibrium $\beta=0$ we get a residual $e=\frac{f\tau_r}{\kappa}$, which is still biased but still much better than the Oscillator at the
+same $\tau_r$. This is the only of the four methods that locally changes the shift gauge instead of nudging it. It is also not guarded against superluminal
+coordinate speeds. However, it pins the object locally.
+
+\subsection*{DOB (Disturbance observer)}
+\step{Formulation} The DOB method is third-order and it uses the injected acceleration
+\begin{align}
+  \Hat{f}&=p+\omega_0v,\\
+  u&=\omega_c^2e+2\zeta\omega_cv+\Hat{f},\\
+  \Dot{p}&=\omega_0(\omega_c^2e+2\zeta\omega_cv).
+\end{align}
+We can re-arrange the equation for $u$ to $\omega_c^2e+2\zeta\omega_cv=u-\Hat{f}$, which leads to the identity $\Dot{p}=\omega_0(u-\Hat{f})$.
+Differentiating $\Hat{f}$ leads to $\Dot{\Hat{f}}=\Dot{p}+\omega_0\Ddot{x}$. Substituting $\Dot{p}$ and the controller $\Ddot{x}=-u+f$ results in
+$\Dot{\Hat{f}}=\omega_0(f-\Hat{f})$, i.e. the estimator does not depend on what the controller is doing. The first two terms in $u$ are essentially just what
+the Oscillator method is doing. To understand the role of $\Hat{f}$ a bit better, we can split the injected acceleration in two parts
+\begin{align}
+  u&=u_{\mathrm{PD}}+\Hat{f},\ \text{PD=Proportional-Derivative}\\
+  u_{\mathrm{PD}}&=\underbrace{\omega_c^2e}_{\text{proportional to e}}+\underbrace{2\zeta\omega_cv}_{\text{derivative of e}},
+\end{align}
+which if substituted into $\Ddot{x}=-u+f$ gives $\Ddot{x}=-u_{\mathrm{PD}}+(f-\Hat{f})$. $\Hat{f}$ therefore is trying to delete $f$ from the equation. Physically, the
+observer is inferring the drive from the mismatch between the acceleration that wanted and the acceleration one actually gets. Put differently, we push with $-u$, watch the
+puncture and then attribute the difference to the ambient gauge, i.e. $f$.
+The tuning parameters are:
+\begin{itemize}
+  \item \var{dc\_omega\_c}: the analog to $\frac{1}{\tau}$ given in units $[\mathrm{M}^{-1}]$.
+  \item \var{dc\_zeta}: the damping ratio, and identical to the Oscillator method. Critical damping, i.e. $\zeta=1.0$ means there is no overshoot.
+  \item \var{dc\_omega\_o}: observer bandwidth, i.e. how fast $\Hat{f}$ tracks $f$. This improves the
+  disturbance rejection without eating any stability margin. It is numerically limited by $\omega_0\Delta t<0.5$.
+\end{itemize}
+\step{Caveat} It is the preferred method over PID and the others, because it has no ceiling for instance on the integral as PID and if
+the state is ever lost or wrong, it re-converges in $\approx\frac{1}{\omega_0}$.
+
+\end{document}
+
