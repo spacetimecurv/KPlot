@@ -504,10 +504,8 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
     # Per iteration output (currently only Ye) if needed
     if per_iteration_out:
         output_dir_iter = os.path.join(output_dir, 'iteration')
-        if not os.path.exists(output_dir_iter):
-            os.mkdir(output_dir_iter, exist_ok=True)
-            os.mkdir(os.path.join(output_dir_iter, 'Mej_Ye'), exist_ok=True)
-            os.mkdir(os.path.join(output_dir_iter, 'Mej_Ye_theta'), exist_ok=True)
+        os.makedirs(os.path.join(output_dir_iter, 'Mej_Ye'), exist_ok=True)
+        os.makedirs(os.path.join(output_dir_iter, 'Mej_Ye_theta'), exist_ok=True)
 
         for i, time in enumerate(time_2d_arr):
             np.savetxt(os.path.join(output_dir_iter, 'Mej_Ye', f'Mej_Ye_geo_{int(time):05d}.txt'),
@@ -629,6 +627,20 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
     print(f'All outputs saved to {output_dir}')
 
 
+def _bool_arg(value):
+    """Parse a boolean flag value.
+
+    run_analysis.sh forwards whatever config.ini holds, so '0' and 'False' have to
+    mean False — plain `type=bool` would make every non-empty string True.
+    """
+    v = value.strip().lower()
+    if v in ('1', 'true', 'yes', 'on'):
+        return True
+    if v in ('0', 'false', 'no', 'off', ''):
+        return False
+    raise argparse.ArgumentTypeError(f"expected a boolean, got '{value}'")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -661,8 +673,9 @@ def main(argv=None):
                    help=f"vinf bin width [c]. Default: {DEFAULT_DV:g}.")
     p.add_argument("--dye", type=float, default=DEFAULT_DYE,
                    help=f"Y_e bin width. Default: {DEFAULT_DYE:g}.")
-    p.add_argument("--per_iteration_out", type=bool, default=False,
-                   help=f"Y_e hist per iteration output. Default: {False}.")
+    p.add_argument("--per_iteration_out", type=_bool_arg, nargs='?', const=True,
+                   default=False,
+                   help="Y_e hist per iteration output. Default: False.")
     args = p.parse_args(argv)
 
     if args.t_merger is None:
