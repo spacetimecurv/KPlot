@@ -10,6 +10,11 @@ Per snapshot, loads 8 VTK files:
   <job>.r=R.z4c_alpha.NNNNN.vtk — z4c_alpha           (lapse)
   <job>.r=R.z4c_beta*.NNNNN.vtk — z4c_beta*           (shift)
 
+An output block writing several radii at once bundles them into one dump named
+``<job>.r=RMIN-RMAX.<var>.NNNNN.vtk`` instead; --radius then picks the surface to
+analyse out of the bundle (see :mod:`kplot.sphere._files`).  Each variable is looked
+up on its own, so the radii may be bundled differently from one variable to the next.
+
 Physics
 -------
 Energy luminosity per species s:
@@ -43,7 +48,8 @@ Species ordering (M1_TOTAL_NUM_SPECIES = 4):
 Note: in bns_nurates, species 2 and 3 are symmetric (nux = anux).  The code
 stores each separately; both are output here.
 
-Required parfile output blocks (add for each desired radius):
+Required parfile output blocks (``radius = R`` for one surface, or ``radii = R1, R2,
+...`` / ``nradii`` + ``r_min`` + ``r_max`` for several surfaces in one dump):
     <outputXX>
     file_type  = sph
     variable   = rad_m1_F
@@ -82,9 +88,9 @@ from multiprocessing import Pool, cpu_count
 
 import numpy as np
 
-from athplot.load_sph_vtk import SphericalData
 from athplot.utils.units import conv_energy, cactus, cgs
 
+from ._files import Shell, locate, read_time
 from ._integrate import sum_over_time
 
 DEFAULT_RADIUS = 300.0
@@ -93,6 +99,16 @@ DEFAULT_JOBNAME = "bns"
 # ===================================================================
 # Constants
 # ===================================================================
+
+# The M1 dumps carrying the neutrino fields, and the geometry dumps they are
+# combined with.  Geometry may use a different snapshot counter (a different restart
+# offset), so it is matched by time; the M1 variables share one counter.
+M1_VARIABLES   = ('rad_m1_F', 'rad_m1_E', 'rad_m1_N')
+# Order fixed: the worker unpacks its geometry arguments in it.
+GEOM_VARIABLES = ('adm', 'z4c_alpha', 'z4c_betax', 'z4c_betay', 'z4c_betaz')
+
+_M1_HINT = ("\nAdd 'variable = rad_m1_F / rad_m1_E / rad_m1_N' sph output blocks "
+            "to the parfile.")
 
 # Species labels matching AthenaK's M1 ordering
 SPECIES  = ['nue', 'nua', 'nux', 'anux']
@@ -115,27 +131,22 @@ N_CODE_PER_FM3 = (_G_SI * _M_SUN_KG / _C_SI**2 / _M_PER_FM)**3  # ≈ 3.222e54
 # Main analysis
 # ===================================================================
 
-def _build_time_list(sph_dir, r_str, prefix, jobname):
-    """Return sorted list of (time_float, path) for all matching VTK files."""
-    result = []
-    pat = f'{jobname}.{r_str}.{prefix}.'
-    for fname in os.listdir(sph_dir):
-        if fname.startswith(pat) and fname.endswith('.vtk'):
-            path = os.path.join(sph_dir, fname)
-            # Read only the metadata line (avoids the full VTK parse)
-            with open(path, 'r', encoding='latin_1') as f:
-                f.readline()
-                meta = f.readline()
-            for tok in meta.split():
-                if tok.startswith('time='):
-                    result.append((float(tok[5:]), path))
-                    break
+def _build_time_list(snapshots):
+    """Return sorted list of (time_float, (path, surface index)) for a SnapshotSet.
+
+    Only the metadata line of each dump is read, which avoids the full VTK parse.
+    """
+    result = [(read_time(path), (path, iradius))
+              for path, iradius in snapshots.entries.values()]
     result.sort(key=lambda x: x[0])
     return result
 
 
 def _nearest_path(time_list, t, tol=4.0):
-    """Return path of snapshot with time nearest to t, or None if outside tol."""
+    """Return (path, surface index) of the snapshot nearest in time to t.
+
+    None if the nearest one is further away than `tol`.
+    """
     if not time_list:
         return None
     times = np.array([x[0] for x in time_list])
@@ -213,27 +224,29 @@ def _process_snapshot(args):
     Imports are done inside the function so the worker is self-contained and
     can be pickled by multiprocessing without carrying module-level state.
     """
-    (flux_path, ener_path, nden_path, adm_path, alpha_path,
-     betax_path, betay_path, betaz_path,
+    (flux_file, ener_file, nden_file, adm_file, alpha_file,
+     betax_file, betay_file, betaz_file,
      theta_edges) = args
 
     import numpy as _np
-    from athplot.load_sph_vtk import SphericalData as _SD
     from athplot.utils.units import conv_luminosity as _conv_lum, \
                                     conv_energy as _conv_e, \
                                     cactus as _cactus, cgs as _cgs
 
-    flux_vtk  = _SD(flux_path)
-    ener_vtk  = _SD(ener_path)
-    nden_vtk  = _SD(nden_path)
-    adm_vtk   = _SD(adm_path)
-    alpha_vtk = _SD(alpha_path)
-    betax_vtk = _SD(betax_path)
-    betay_vtk = _SD(betay_path)
-    betaz_vtk = _SD(betaz_path)
+    from ._files import Shell as _Shell
+
+    # Every entry is (path, surface index): a dump may hold more than one radius.
+    flux_vtk  = _Shell(*flux_file)
+    ener_vtk  = _Shell(*ener_file)
+    nden_vtk  = _Shell(*nden_file)
+    adm_vtk   = _Shell(*adm_file)
+    alpha_vtk = _Shell(*alpha_file)
+    betax_vtk = _Shell(*betax_file)
+    betay_vtk = _Shell(*betay_file)
+    betaz_vtk = _Shell(*betaz_file)
 
     time  = flux_vtk.time
-    radius = flux_vtk.radii[0]
+    radius = flux_vtk.radius
     theta = flux_vtk.theta
     phi   = flux_vtk.phi
     surface_weights = flux_vtk.shell('weights')
@@ -325,9 +338,11 @@ def analyze(sph_dirs, output_dir, radius=DEFAULT_RADIUS, jobname=DEFAULT_JOBNAME
     output_dir : str
         Directory the .txt outputs are written to.
     radius : float
-        SPH extraction radius [M_sun]; must have rad_m1_E/F/N output.
+        SPH extraction radius [M_sun]; must have rad_m1_E/F/N output.  A dump
+        bundling several radii is accepted, and the surface at `radius` is used.
     jobname : str
-        AthenaK job name prefixing the VTK files (``<jobname>.r=R....vtk``).
+        AthenaK job name prefixing the VTK files (``<jobname>.r=R....vtk``, or
+        ``<jobname>.r=RMIN-RMAX....vtk`` when one dump holds several radii).
     n_workers : int, optional
         Worker processes for the snapshot loop.  Default: min(8, cpu_count()).
     """
@@ -335,60 +350,43 @@ def analyze(sph_dirs, output_dir, radius=DEFAULT_RADIUS, jobname=DEFAULT_JOBNAME
         n_workers = min(8, cpu_count())
 
     # ------------------------------------------------------------------
-    # Build snapshot index: scan for rad_m1_F files (the new M1 output).
-    # adm / z4c_alpha may use a different counter series (different restart
-    # offset) but cover the same simulation times, so we match by time.
+    # Locate the dumps holding `radius`, per variable: an output block may write
+    # one surface per file or bundle several radii into one file, and the two
+    # forms can be mixed between variables within a run.
     # ------------------------------------------------------------------
-    r_str = f'r={radius:.2f}'
+    m1_files = {v: locate(sph_dirs, jobname, v, radius, hint=_M1_HINT)
+                for v in M1_VARIABLES}
+    for v in M1_VARIABLES:
+        print(f"  {m1_files[v].describe()}")
 
-    m1_index_map = {}
-    for d in sph_dirs:
-        if not os.path.exists(d):
-            continue
-        for fname in os.listdir(d):
-            if fname.startswith(f'{jobname}.{r_str}.rad_m1_F.') and fname.endswith('.vtk'):
-                idx = int(fname.split('.')[-2])
-                m1_index_map[idx] = d
-
-    indices = sorted(m1_index_map.keys())
-    print(f"Found {len(indices)} rad_m1_F snapshots at r={radius} M_sun")
+    # Build the snapshot index from the counters all three M1 variables share.
+    m1_indices = [set(m1_files[v].paths) for v in M1_VARIABLES]
+    indices = sorted(set.intersection(*m1_indices))
+    print(f"Found {len(indices)} rad_m1 snapshots at r={radius} M_sun")
     if len(indices) == 0:
         raise RuntimeError(
-            f"No rad_m1_F VTK files found in {list(sph_dirs)}.\n"
-            "Add 'variable = rad_m1_F / rad_m1_E / rad_m1_N' sph output blocks to the parfile."
-        )
+            f"No snapshot in {list(sph_dirs)} has all of "
+            f"{', '.join(M1_VARIABLES)} at r = {radius:g}.{_M1_HINT}")
+    incomplete = len(set.union(*m1_indices)) - len(indices)
+    if incomplete:
+        print(f"  [skip] {incomplete} snapshots missing one of {', '.join(M1_VARIABLES)}")
 
-    # Build sorted time lists for adm and z4c gauge outputs (counter may differ)
+    # Build sorted time lists for adm and z4c gauge outputs: they may use a
+    # different counter series (different restart offset) but cover the same
+    # simulation times, so they are matched by time rather than by counter.
     print("Building time index for adm / z4c gauge files...")
-    adm_times    = []
-    alpha_times  = []
-    betax_times  = []
-    betay_times  = []
-    betaz_times  = []
-    for d in sph_dirs:
-        if not os.path.exists(d):
-            continue
-        adm_times.extend(_build_time_list(d, r_str, 'adm', jobname))
-        alpha_times.extend(_build_time_list(d, r_str, 'z4c_alpha', jobname))
-        betax_times.extend(_build_time_list(d, r_str, 'z4c_betax', jobname))
-        betay_times.extend(_build_time_list(d, r_str, 'z4c_betay', jobname))
-        betaz_times.extend(_build_time_list(d, r_str, 'z4c_betaz', jobname))
-    adm_times.sort(key=lambda x: x[0])
-    alpha_times.sort(key=lambda x: x[0])
-    betax_times.sort(key=lambda x: x[0])
-    betay_times.sort(key=lambda x: x[0])
-    betaz_times.sort(key=lambda x: x[0])
-    print(f"  adm files:       {len(adm_times)}")
-    print(f"  z4c_alpha files: {len(alpha_times)}")
-    print(f"  z4c_beta  files: {len(betax_times)}")
+    geom_files = {v: locate(sph_dirs, jobname, v, radius) for v in GEOM_VARIABLES}
+    geom_times = {v: _build_time_list(geom_files[v]) for v in GEOM_VARIABLES}
+    for v in GEOM_VARIABLES:
+        print(f"  {geom_files[v].describe()}")
 
     # ------------------------------------------------------------------
     # Build theta bins for dL/dtheta diagnostics.  Surface integrals use the
     # native AthenaK SPH weights stored in each VTK file.
     # ------------------------------------------------------------------
-    first_flux_path = os.path.join(
-        m1_index_map[indices[0]], f'{jobname}.{r_str}.rad_m1_F.{indices[0]:05d}.vtk')
-    _fv = SphericalData(first_flux_path)
+    flux_files = m1_files['rad_m1_F']
+    first_flux_path, flux_iradius = flux_files.shell(indices[0])
+    _fv = Shell(first_flux_path, flux_iradius)
     theta_1d        = _fv.theta[0, :]
     theta_1d_sorted = np.sort(theta_1d)
     theta_edges     = np.concatenate([[0.0],
@@ -398,38 +396,31 @@ def analyze(sph_dirs, output_dir, radius=DEFAULT_RADIUS, jobname=DEFAULT_JOBNAME
     del _fv
 
     # dup check on first snapshot with alpha
-    _t0 = SphericalData(first_flux_path).time
-    _ap = _nearest_path(alpha_times, _t0)
+    _t0 = read_time(first_flux_path)
+    _ap = _nearest_path(geom_times['z4c_alpha'], _t0)
     if _ap:
-        _av = SphericalData(_ap)
+        _av = Shell(*_ap)
         _a  = _av.shell('z4c_alpha')
         print(f"  [dup check] alpha range: min={_a.min():.4f}  max={_a.max():.4f}")
 
     # ------------------------------------------------------------------
-    # Build worker argument list (pre-resolve adm/alpha paths by time)
+    # Build worker argument list (pre-resolve adm/alpha paths by time).  Every
+    # entry is (path, surface index), so a bundled dump is read at the right radius.
     # ------------------------------------------------------------------
     worker_args = []
     skipped = 0
     for index in indices:
-        sph_dir = m1_index_map[index]
-        pfx     = os.path.join(sph_dir, f'{jobname}.{r_str}.')
-        flux_path = pfx + f'rad_m1_F.{index:05d}.vtk'
-        t_flux = SphericalData(flux_path).time   # read header only via VTK
-        adm_path   = _nearest_path(adm_times,   t_flux)
-        alpha_path = _nearest_path(alpha_times, t_flux)
-        bx_path    = _nearest_path(betax_times, t_flux)
-        by_path    = _nearest_path(betay_times, t_flux)
-        bz_path    = _nearest_path(betaz_times, t_flux)
-        if (adm_path is None or alpha_path is None or bx_path is None or
-                by_path is None or bz_path is None):
+        flux_file = flux_files.shell(index)
+        t_flux = read_time(flux_file[0])   # metadata line only, no VTK parse
+        geom = [_nearest_path(geom_times[v], t_flux) for v in GEOM_VARIABLES]
+        if any(entry is None for entry in geom):
             skipped += 1
             continue
         worker_args.append((
-            flux_path,
-            pfx + f'rad_m1_E.{index:05d}.vtk',
-            pfx + f'rad_m1_N.{index:05d}.vtk',
-            adm_path, alpha_path,
-            bx_path, by_path, bz_path,
+            flux_file,
+            m1_files['rad_m1_E'].shell(index),
+            m1_files['rad_m1_N'].shell(index),
+            *geom,
             theta_edges,
         ))
     if skipped:
@@ -531,7 +522,8 @@ def main(argv=None):
     p.add_argument("--output-dir", required=True,
                    help="Directory for the .txt outputs.")
     p.add_argument("--radius", type=float, default=DEFAULT_RADIUS,
-                   help=f"SPH extraction radius [M_sun]. Default: {DEFAULT_RADIUS:g}.")
+                   help=f"SPH extraction radius [M_sun]; picks the surface out of "
+                        f"dumps holding several radii. Default: {DEFAULT_RADIUS:g}.")
     p.add_argument("--jobname", default=DEFAULT_JOBNAME,
                    help=f"AthenaK job name prefixing the VTK files. "
                         f"Default: {DEFAULT_JOBNAME}.")

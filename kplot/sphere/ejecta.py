@@ -38,8 +38,8 @@ from scipy.integrate import simpson
 from scipy.interpolate import RegularGridInterpolator
 
 from athplot.utils.units import cgs
-from athplot.load_sph_vtk import SphericalData
 
+from ._files import Shell, locate
 from ._integrate import get_riemann_weights, sum_over_time
 
 # M_sun in seconds (G M_sun / c^3), for the --t-post-ms window.
@@ -50,6 +50,9 @@ DEFAULT_DFLOOR = 3e-15
 DEFAULT_JOBNAME = "bns"
 DEFAULT_DV = 0.01
 DEFAULT_DYE = 0.01
+
+# The sph output variables a snapshot needs, in the order the worker unpacks them.
+VARIABLES = ('mhd_w_bcc', 'adm', 'z4c_alpha', 'z4c_betax', 'z4c_betay', 'z4c_betaz')
 
 
 def velocity_bins(dv=DEFAULT_DV):
@@ -143,29 +146,30 @@ def _init_ejecta_worker(eos, mn_gram, v_bins, ye_bins_):
 
 def _process_snapshot_ejecta(args):
     """Per-snapshot worker for ejecta analysis."""
-    (mhd_path, adm_path, alpha_path, betax_path, betay_path, betaz_path,
+    (mhd_file, adm_file, alpha_file, betax_file, betay_file, betaz_file,
      riemann_weights, theta_edges, dfloor, t_stop) = args
 
     import numpy as _np
-    from athplot.load_sph_vtk import SphericalData as _SD
     from athplot.utils.units import (conv_dens as _conv_dens,
                                      cactus as _cactus, cgs as _cgs)
 
+    from ._files import Shell as _Shell
     from ._integrate import calc_ur as _calc_ur, sqrt_det_metric_adm as _sqrt_det
 
     # ------- EJECTA -------
     eos     = _W_EOS
     mn_gram = _W_MN_GRAM
 
-    mhd   = _SD(mhd_path)
-    adm   = _SD(adm_path)
-    alpha = _SD(alpha_path)
-    betax = _SD(betax_path)
-    betay = _SD(betay_path)
-    betaz = _SD(betaz_path)
+    # Every entry is (path, surface index): a dump may hold more than one radius.
+    mhd   = _Shell(*mhd_file)
+    adm   = _Shell(*adm_file)
+    alpha = _Shell(*alpha_file)
+    betax = _Shell(*betax_file)
+    betay = _Shell(*betay_file)
+    betaz = _Shell(*betaz_file)
 
     time  = mhd.time
-    r     = mhd.radii[0]
+    r     = mhd.radius
     theta = mhd.theta
     phi   = mhd.phi
 
@@ -351,14 +355,16 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
     output_dir : str
         Directory the .txt/.npy outputs are written to.
     radius : float
-        SPH extraction radius [M_sun]; must have mhd_w_bcc/adm/z4c output.
+        SPH extraction radius [M_sun]; must have mhd_w_bcc/adm/z4c output.  A dump
+        bundling several radii is accepted, and the surface at `radius` is used.
     dfloor : float
         Density floor used in the simulation [code units].
     t_stop : float
         Include snapshots up to this time [M_sun] in the 2D histogram.  The
         Mej_rate time series always accumulates every snapshot.
     jobname : str
-        AthenaK job name prefixing the VTK files (``<jobname>.r=R....vtk``).
+        AthenaK job name prefixing the VTK files (``<jobname>.r=R....vtk``, or
+        ``<jobname>.r=RMIN-RMAX....vtk`` when one dump holds several radii).
     n_workers : int, optional
         Worker processes for the snapshot loop.  Default: min(8, cpu_count()).
     per_iteration_out: bool, optional
@@ -373,32 +379,32 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
     ye_centers = bin_centers(ye_bins_)
 
     # ------------------------------------------------------------------
-    # Build snapshot index and Riemann weights from first snapshot
+    # Locate the dumps holding `radius` and build the snapshot index.  An output
+    # block may write one surface per file or bundle several radii into one file,
+    # and the two forms can be mixed between variables within a run, so every
+    # variable is looked up on its own.
     # ------------------------------------------------------------------
-    r_str = f'r={radius:.2f}'
-    index_map = {}
-    for d in sph_dirs:
-        if not os.path.exists(d):
-            continue
-        for fname in os.listdir(d):
-            if fname.startswith(f'{jobname}.{r_str}.adm.'):
-                idx = int(fname.split('.')[-2])
-                index_map[idx] = d
+    located = {v: locate(sph_dirs, jobname, v, radius) for v in VARIABLES}
+    for v in VARIABLES:
+        print(f"  {located[v].describe()}")
 
-    indices = sorted(index_map.keys())
+    index_sets = [set(located[v].paths) for v in VARIABLES]
+    indices = sorted(set.intersection(*index_sets))
     if not indices:
         raise RuntimeError(
-            f"No {jobname}.{r_str}.adm.*.vtk files found in {list(sph_dirs)}.\n"
+            f"No snapshot in {list(sph_dirs)} has all of {', '.join(VARIABLES)} "
+            f"at r = {radius:g}.\n"
             "Check the sph directories, the job name and the extraction radius.")
+    incomplete = len(set.union(*index_sets)) - len(indices)
+    if incomplete:
+        print(f"  [skip] {incomplete} snapshots missing one of {', '.join(VARIABLES)}")
     print(f"Found {len(indices)} snapshots. Loading EOS and grid...")
 
     eos     = load_eos(eos_table)
     mn_gram = eos['mn_mev'] * cgs.eV * 1e6 / cgs.light_speed**2
 
     # Compute Riemann weights and theta grid from first snapshot's geometry
-    _first_dir = index_map[indices[0]]
-    _first_mhd = SphericalData(
-        os.path.join(_first_dir, f'{jobname}.{r_str}.mhd_w_bcc.{indices[0]:05d}.vtk'))
+    _first_mhd = Shell(*located['mhd_w_bcc'].shell(indices[0]))
     theta_1d        = _first_mhd.theta[0, :]
     phi_1d          = _first_mhd.phi[:, 0]
     riemann_weights = get_riemann_weights(
@@ -413,17 +419,12 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
     # ------------------------------------------------------------------
     # Build worker argument list
     # ------------------------------------------------------------------
-    def _paths(d, idx):
-        p = os.path.join(d, f'{jobname}.{r_str}.')
-        return (p+f'mhd_w_bcc.{idx:05d}.vtk',
-                p+f'adm.{idx:05d}.vtk',
-                p+f'z4c_alpha.{idx:05d}.vtk',
-                p+f'z4c_betax.{idx:05d}.vtk',
-                p+f'z4c_betay.{idx:05d}.vtk',
-                p+f'z4c_betaz.{idx:05d}.vtk')
+    def _snapshot_files(idx):
+        """(path, surface index) of every variable of snapshot `idx`."""
+        return tuple(located[v].shell(idx) for v in VARIABLES)
 
     worker_args = [
-        _paths(index_map[i], i) + (riemann_weights, theta_edges, dfloor, t_stop)
+        _snapshot_files(i) + (riemann_weights, theta_edges, dfloor, t_stop)
         for i in indices
     ]
     print(f"Processing {len(worker_args)} snapshots with n_workers={n_workers}...")
@@ -639,7 +640,8 @@ def main(argv=None):
     p.add_argument("--output-dir", required=True,
                    help="Directory for the .txt/.npy outputs.")
     p.add_argument("--radius", type=float, default=DEFAULT_RADIUS,
-                   help=f"SPH extraction radius [M_sun]. Default: {DEFAULT_RADIUS:g}.")
+                   help=f"SPH extraction radius [M_sun]; picks the surface out of "
+                        f"dumps holding several radii. Default: {DEFAULT_RADIUS:g}.")
     p.add_argument("--jobname", default=DEFAULT_JOBNAME,
                    help=f"AthenaK job name prefixing the VTK files. "
                         f"Default: {DEFAULT_JOBNAME}.")
