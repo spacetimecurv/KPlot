@@ -1,0 +1,370 @@
+\documentclass{article}
+\usepackage{babel}
+\selectlanguage{english}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[colorlinks=true, linkcolor=blue]{hyperref}
+\usepackage{xcolor}
+\usepackage[top=2cm, bottom=2cm,
+            left=1.5cm, right=1.5cm]{geometry}
+\usepackage{listings}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{cite}
+\usepackage{tabularx}
+\usepackage{fancyvrb}
+
+% --- Inline style for code-level names (AthenaK variables, files, flags) ------
+\definecolor{varbg}{HTML}{EEF1F7}
+\definecolor{varfg}{HTML}{273C75}
+\newcommand{\var}[1]{%
+  {\setlength{\fboxsep}{1.5pt}%
+   \colorbox{varbg}{\textcolor{varfg}{\texttt{\small #1}}}}}
+
+% --- Run-in headers for the individual steps of a workflow -------------------
+% Small caps + rule instead of \textbf, so they read as a level below
+% \subsubsection rather than as another heading of the same weight.
+\definecolor{stepfg}{HTML}{1A6B62}
+\newcommand{\step}[1]{%
+  \par\medskip\noindent
+  {\color{stepfg}\rule[-0.15ex]{2pt}{1.5ex}\hspace{0.5em}\scshape #1}%
+  \hspace{0.75em}\ignorespaces}
+
+% Define short-commands for the variables
+\newcommand{\gxx}{\var{adm\_gxx}}
+\newcommand{\gxy}{\var{adm\_gxy}}
+\newcommand{\gxz}{\var{adm\_gxz}}
+\newcommand{\gyy}{\var{adm\_gyy}}
+\newcommand{\gyz}{\var{adm\_gyz}}
+\newcommand{\gzz}{\var{adm\_gzz}}
+\newcommand{\vx}{\var{velx}}
+\newcommand{\vy}{\var{vely}}
+\newcommand{\vz}{\var{velz}}
+\newcommand{\alp}{\var{z4c\_alpha}}
+\newcommand{\betx}{\var{z4c\_betax}}
+\newcommand{\bety}{\var{z4c\_betay}}
+\newcommand{\betz}{\var{z4c\_betaz}}
+\newcommand{\Bx}{\var{bcc1}}
+\newcommand{\By}{\var{bcc2}}
+\newcommand{\Bz}{\var{bcc3}}
+\newcommand{\mr}{\mathrm}
+
+\begin{document}
+\section*{AthenaK output for post-processing analysis}
+\textit{This document collects which AthenaK output variables are needed to perform
+a certain analysis in post-processing, e.g. the visualization of the evolution of kinetic
+and magnetic energy in the case of GRMHD simulations.}
+
+\medskip
+
+\noindent
+\subsection*{Ejecta and Poynting flux}
+\step{Variables}\mbox{}\\
+Metric: \var{adm\_gxx}, \var{adm\_gxy}, \var{adm\_gxz}, \var{adm\_gyy}, \var{adm\_gyz}, \var{adm\_gzz}\\
+Primitives: \var{dens}, \var{s00}, \var{temperature}, \var{velx}, \var{vely}, \var{velz}, \var{bcc1}, \var{bcc2}, \var{bcc3}\\
+Gauge: \var{z4c\_alpha}, \var{z4c\_betax}, \var{z4c\_betay}, \var{z4c\_betaz}\\
+Total: $\boxed{N_{\mathrm{vars}}=23}$
+
+\step{Output type}
+\begin{verbatim}
+<output1>
+file_type = sph
+variable  = ...   # see variable list
+dt        = 20.0
+radius    = 400.0 # radii = 300.0 400.0 ...
+\end{verbatim}
+
+\step{Setup}\mbox{}\\
+Output time: 10M or 20M (the latter might already be too large)\\
+Resolution: $(\theta,\phi)_{\mathrm{low}}=(128,256)$ or  $(\theta,\phi)_{\mathrm{high}}=(256,512)$\\
+Radii: Between 300M and 500M
+
+\step{Disk usage}
+\begin{itemize}
+  \item Low resolution - $N_{\mathrm{vars}}\times N_{\theta}\times N_{\phi}\times 8\ \mathrm{bytes}=23\times128\times256\times8\approx \boxed{6.03\mathrm{MB}(r\Delta t)^{-1}}$
+  \item High resolution - $N_{\mathrm{vars}}\times N_{\theta}\times N_{\phi}\times 8\ \mathrm{bytes}=23\times256\times512\times8\approx \boxed{24.12\mathrm{MB}(r\Delta t)^{-1}}$
+  \item Total (100ms or 20000M):
+  \begin{raggedleft}
+    \begin{tabular}{|c|c|c|}
+      \hline
+      &\textbf{10M}&\textbf{20M}\\
+      \hline
+      \textbf{Low resolution}&$\approx 12.06\ \mathrm{GB}r^{-1}$&$\approx 6.03\ \mathrm{GB}r^{-1}$\\
+      \hline
+      \textbf{High resolution}&$\approx 48.24\ \mathrm{GB}r^{-1}$&$\approx 24.12\ \mathrm{GB}r^{-1}$\\
+      \hline
+    \end{tabular}
+  \end{raggedleft}
+\end{itemize}
+
+\step{Note}
+To save disk-usage, this can be paired with the output from \textbf{Neutrino luminosity and average energy density} and also
+\textbf{GRMHD butterfly diagrams}.
+
+\subsection*{Neutrino luminosity and average energy density}
+\step{Variables}\mbox{}\\
+M1 variables: \var{rad\_m1\_F}, \var{rad\_m1\_E}, \var{rad\_m1\_N}\\
+Metric: \var{adm\_gxx}, \var{adm\_gxy}, \var{adm\_gxz}, \var{adm\_gyy}, \var{adm\_gyz}, \var{adm\_gzz}\\
+Gauge: \var{z4c\_alpha}, \var{z4c\_betax}, \var{z4c\_betay}, \var{z4c\_betaz}\\
+Total: $\boxed{N_{\mathrm{vars}}}=N_{\mathrm{vars, E/N}}\times N_{\mathrm{species}}+\underbrace{N_{\mathrm{vars, F}}}_{3\ \mathrm{vector}\ \mathrm{components}}\times N_{\mathrm{species}}+N_{\mathrm{vars, metric/gauge}}=2\times4+3\times4+10=\boxed{30}$
+
+\step{Output type}
+\begin{verbatim}
+<output2>
+file_type = sph
+variable  = ...   # see variable list
+dt        = 20.0
+radius    = 400.0 # radii = 300.0 400.0 ...
+\end{verbatim}
+
+\step{Setup}\mbox{}\\
+Output time: 10M or 20M (the latter might already be too large)\\
+Resolution: $(\theta,\phi)_{\mathrm{low}}=(128,256)$ or  $(\theta,\phi)_{\mathrm{high}}=(256,512)$\\
+Radii: Between 300M and 500M
+
+\step{Disk usage}
+\begin{itemize}
+  \item Low resolution - $N_{\mathrm{vars}}\times N_{\theta}\times N_{\phi}\times 8\ \mathrm{bytes}=30\times128\times256\times8\approx \boxed{7.86\mathrm{MB}(r\Delta t)^{-1}}$
+  \item High resolution - $N_{\mathrm{vars}}\times N_{\theta}\times N_{\phi}\times 8\ \mathrm{bytes}=30\times256\times512\times8\approx \boxed{31.46\mathrm{MB}(r\Delta t)^{-1}}$
+  \item Total (100ms or 20000M):
+  \begin{raggedleft}
+    \begin{tabular}{|c|c|c|}
+      \hline
+      &\textbf{10M}&\textbf{20M}\\
+      \hline
+      \textbf{Low resolution}&$\approx 15.72\ \mathrm{GB}r^{-1}$&$\approx 7.86\ \mathrm{GB}r^{-1}$\\
+      \hline
+      \textbf{High resolution}&$\approx 62.92\ \mathrm{GB}r^{-1}$&$\approx 31.46\ \mathrm{GB}r^{-1}$\\
+      \hline
+    \end{tabular}
+  \end{raggedleft}
+\end{itemize}
+
+\step{Note}
+To save disk-usage, this can be paired with the output from \textbf{Ejecta} and also
+\textbf{GRMHD butterfly diagrams}.
+
+\subsection*{Tracers}
+\step{Variables}\mbox{}\\
+Derived variables: \var{u\_t}\\
+M1 variables (fluid frame): \var{rad\_m1\_absF}, \var{rad\_m1\_e}\\
+Primitives: \var{win\_Vi}, \var{dens}, \var{temperature}, \var{s\_00}\\
+Total: $\boxed{N_{\mathrm{vars}}}=N_{\mathrm{vars, absF/e}}\times N_{\mathrm{species}}++N_{\mathrm{vars, der./primitives}}=2\times4+7=\boxed{15}$
+
+\step{Output type}
+\begin{verbatim}
+<output3>
+file_type = sph
+variable  = ...   # see variable list
+dt        = 20.0
+r_min     = 150.0
+r_max     = 1000.0
+r_spacing = linear
+nradii    = 128
+ntheta    = 128
+\end{verbatim}
+
+\step{Setup}
+Output time: 20M might be too expensive, but 50M might already be too coarse
+Resolution: $(r,\theta,\phi)_{\mathrm{low}}=(128,128,256)$ or  $(r,\theta,\phi)_{\mathrm{high}}=(128,256,512)$\\
+Radii: 128 radii between the outer part of the disk and the domain is a good choice
+
+\step{Disk usage}
+\begin{itemize}
+  \item Low resolution - $N_{\mathrm{vars}}\times N_r\times N_{\theta}\times N_{\phi}\times 8\ \mathrm{bytes}=15\times128\times128\times256\times8\approx \boxed{503.32\mathrm{MB}(\Delta t)^{-1}}$
+  \item High resolution - $N_{\mathrm{vars}}\times N_r\times N_{\theta}\times N_{\phi}\times 8\ \mathrm{bytes}=15\times128\times256\times512\times8\approx \boxed{2.013\mathrm{GB}(\Delta t)^{-1}}$
+  \item Total (100ms or 20000M):
+  \begin{raggedleft}
+    \begin{tabular}{|c|c|c|}
+      \hline
+      &\textbf{20M}&\textbf{50M}\\
+      \hline
+      \textbf{Low resolution}&$\approx503.32 \ \mathrm{GB}$&$\approx201.33 \ \mathrm{GB}$\\
+      \hline
+      \textbf{High resolution}&$\approx 2013.64\ \mathrm{GB}$&$\approx 805.2\ \mathrm{GB}$\\
+      \hline
+    \end{tabular}
+  \end{raggedleft}
+\end{itemize}
+
+\subsection*{GRMHD butterfly diagrams}
+\step{Variables}\mbox{}\\
+Primitives: \var{bcc1}, \var{bcc2}, \var{bcc3}, \var{velx}, \var{vely}, \var{velz}\\
+Gauge: \var{z4c\_alpha}, \var{z4c\_betax}, \var{z4c\_betay}, \var{z4c\_betaz}\\
+Metric: \var{adm\_gxx}, \var{adm\_gxy}, \var{adm\_gxz}, \var{adm\_gyy}, \var{adm\_gyz}, \var{adm\_gzz}\\
+Total: $\boxed{N_{\mathrm{vars}}=16}$
+
+\step{Output type}
+\begin{verbatim}
+<output4>
+file_type = sph
+variable  = ...   # see variable list
+dt        = 20.0
+radius    = 400.0 # radii = 300.0 400.0 ...
+\end{verbatim}
+
+\step{Setup}\mbox{}\\
+Output time: 10M or 20M (the latter might already be too large)\\
+Resolution: $(\theta,\phi)_{\mathrm{low}}=(128,256)$ or  $(\theta,\phi)_{\mathrm{high}}=(256,512)$\\
+Radii: Somewhere in the disk (between 50M and 300M)
+
+\step{Disk usage}
+\begin{itemize}
+  \item Low resolution - $N_{\mathrm{vars}}\times N_{\theta}\times N_{\phi}\times 8\ \mathrm{bytes}=16\times128\times256\times8\approx \boxed{4.19\mathrm{MB}(r\Delta t)^{-1}}$
+  \item High resolution - $N_{\mathrm{vars}}\times N_{\theta}\times N_{\phi}\times 8\ \mathrm{bytes}=16\times256\times512\times8\approx \boxed{16.78\mathrm{MB}(r\Delta t)^{-1}}$
+  \item Total (100ms or 20000M):
+  \begin{raggedleft}
+    \begin{tabular}{|c|c|c|}
+      \hline
+      &\textbf{10M}&\textbf{20M}\\
+      \hline
+      \textbf{Low resolution}&$\approx 8.38\ \mathrm{GB}r^{-1}$&$\approx 4.19\ \mathrm{GB}r^{-1}$\\
+      \hline
+      \textbf{High resolution}&$\approx 33.56\ \mathrm{GB}r^{-1}$&$\approx 16.78\ \mathrm{GB}r^{-1}$\\
+      \hline
+    \end{tabular}
+  \end{raggedleft}
+\end{itemize}
+
+\step{Note}
+To save disk-usage, this can be paired with the output from \textbf{Ejecta} and also
+\textbf{Neutrino luminosity and average energy density}. The computation is performed via $b_{\bar{\phi}}=\frac{xb_y-yb_x}{\sqrt{x^2+y^2}}$,
+where $b_x$ and $b_y$ are the magnetic field components along the x- and y-direction in the fluid frame, and $\bar{\phi}$ denotes the average
+in the azimuthal direction.
+
+\subsection*{Waveforms}
+\step{Variables} None.
+\step{Output type}
+A block like this is needed inside of the \var{<z4c>} block:
+\begin{verbatim}
+nrad_wave_extraction = 5
+extraction_radius_0  = 100
+extraction_radius_1  = 200
+extraction_radius_2  = 300
+extraction_radius_3  = 400
+extraction_radius_4  = 500
+waveform_dt          = 4.0
+\end{verbatim}
+This will generate two files (real/imag) for each radius with all the modes up to $l=8$ by default.
+
+\step{Setup}\mbox{}\\
+Output time: 10M is a good minimum, but 20M might also be acceptable
+Radii: a wide range between 100M and 1000M is recommended for proper waveform extraction
+
+\step{Disk usage}
+\begin{itemize}
+  \item Bytes per line - $N_{\mathrm{byte, column}}\times N_{\mathrm{columns}}=\underbrace{21}_{\text{worstcase}}\times \underbrace{77}_{\text{for 1 passive scalar}}+\underbrace{13}_{\text{t-column}}\approx 1708\ \text{Bytes per file}$
+  \item Total (100ms or 20000M):
+  \begin{raggedleft}
+    \begin{tabular}{|c|c|c|c|}
+      \hline
+      \textbf{Num. radii \slash dt}&\textbf{5M}&\textbf{10M}&\textbf{20M}\\
+      \hline
+      \textbf{5}&$\approx 68.32\ \mathrm{MB}$&$\approx 34.16\ \mathrm{MB}$&$\approx 17.08\ \mathrm{MB}$\\
+      \hline
+      \textbf{10}&$\approx 136.64\ \mathrm{MB}$&$\approx 68.32\ \mathrm{MB}$&$\approx 34.16\ \mathrm{MB}$\\
+      \hline
+    \end{tabular}
+  \end{raggedleft}
+\end{itemize}
+
+\subsection*{Kinetic/magnetic energy evolution}
+\step{Variables} None.
+\step{Output type}
+\begin{verbatim}
+<output5>
+file_type   = hst
+dt          = 20.0
+data_format = %20.15e
+\end{verbatim}
+For this analysis we require the file \var{<jobname>.mhd.hst}.
+
+\step{Setup}\mbox{}\\
+Output time: 5M is a good minimum, but can also be increased to 10M or 20M, or lowered to 1M
+
+\step{Disk usage}
+\begin{itemize}
+  \item Bytes per line - $N_{\mathrm{byte, column}}\times N_{\mathrm{columns}}=\underbrace{22}_{\text{21 if unsigned}}\times \underbrace{14}_{\text{for 1 passive scalar}}\approx 294\ \mathrm{Bytes}$
+  \item Total (100ms or 20000M):
+  \begin{raggedleft}
+    \begin{tabular}{|c|c|c|c|c|}
+      \hline
+      &\textbf{1M}&\textbf{5M}&\textbf{10M}&\textbf{20M}\\
+      \hline
+      \textbf{Usage}&$\approx 5.88\ \mathrm{MB}$&$\approx 1.18\ \mathrm{MB}$&$\approx 0.588\ \mathrm{MB}$&$\approx 0.294\ \mathrm{MB}$\\
+      \hline
+    \end{tabular}
+  \end{raggedleft}
+\end{itemize}
+
+\subsection*{User history output}
+\step{Variables} None.
+\step{Output type}
+\begin{verbatim}
+<output6>
+file_type   = hst
+dt          = 20.0
+data_format = %20.15e
+\end{verbatim}
+For this analysis we require the file \var{<jobname>.user.hst}. Note: the parameter \var{user\_hist} inside of
+\var{<problem>} is needed for this output.
+
+\step{Setup}\mbox{}\\
+Output time: 5M is a good minimum, but can also be increased to 10M or 20M, or lowered to 1M
+
+\step{Disk usage}
+\begin{itemize}
+  \item Bytes per line - $N_{\mathrm{byte, column}}\times N_{\mathrm{columns}}=\underbrace{22}_{\text{21 if unsigned}}\times 4\approx 88\ \mathrm{Bytes}$
+  \item Total (100ms or 20000M):
+  \begin{raggedleft}
+    \begin{tabular}{|c|c|c|c|c|}
+      \hline
+      &\textbf{1M}&\textbf{5M}&\textbf{10M}&\textbf{20M}\\
+      \hline
+      \textbf{Usage}&$\approx 1.76\ \mathrm{MB}$&$\approx 0.352\ \mathrm{MB}$&$\approx 0.176\ \mathrm{MB}$&$\approx 0.088\ \mathrm{MB}$\\
+      \hline
+    \end{tabular}
+  \end{raggedleft}
+\end{itemize}
+
+\subsection*{Spectra (MHD)}
+\step{Variables}\mbox{}\\
+Primitives: \var{bcc1}, \var{bcc2}, \var{bcc3}, \var{velx}, \var{vely}, \var{velz}\\
+Total: $\boxed{N_{\mathrm{vars}}=6}$
+
+\step{Output type}
+\begin{verbatim}
+<output7>
+file_type = bin
+variable  = ... # see variable list
+dt        = 20.0
+\end{verbatim}
+
+\step{Setup}\mbox{}\\
+Output time: 50M or 100M\\
+Start: post-merger phase
+
+\step{Disk usage}
+\begin{itemize}
+  \item Usage per MeshBlock ($32^3$) - $N_{\mathrm{vars}}\times N_{\text{points per MB}}=6\times32^3\times 8\ \mathrm{bytes}\approx\boxed{1.57\text{MB per MeshBlock}}$
+  \item Usage per MeshBlock ($48^3$) - $N_{\mathrm{vars}}\times N_{\text{points per MB}}=6\times48^3\times 8\ \mathrm{bytes}\approx\boxed{5.31\text{MB per MeshBlock}}$
+  \item Usage per MeshBlock ($64^3$) - $N_{\mathrm{vars}}\times N_{\text{points per MB}}=6\times64^3\times 8\ \mathrm{bytes}\approx\boxed{12.58\text{MB per MeshBlock}}$
+  \item Total (100ms or 20000M):
+  \begin{raggedleft}
+    \begin{tabular}{|c|c|c|}
+      \hline
+      &\textbf{50M}&\textbf{100M}\\
+      \hline
+      $N_{\text{p.p.MB}}=32^3;\ N_{\text{MB tot.}}=1000$&$\approx 628\ \mathrm{GB}$&$\approx 314\ \mathrm{GB}$\\
+      \hline
+      $N_{\text{p.p.MB}}=48^3;\ N_{\text{MB tot.}}=1000$&$\approx 2.124\ \mathrm{TB}$&$\approx 1.062\ \mathrm{TB}$\\
+      \hline
+      $N_{\text{p.p.MB}}=64^3;\ N_{\text{MB tot.}}=1000$&$\approx 5.032\ \mathrm{TB}$&$\approx 2.516\ \mathrm{TB}$\\
+      \hline
+    \end{tabular}
+  \end{raggedleft}
+\end{itemize}
+
+
+\end{document}
+

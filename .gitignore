@@ -29,10 +29,8 @@ Thumbs.db
 *.out
 *.log
 *.aux
-*.tex
 *.bbl
 *.blg
-Figures/
 
 # Output
 examples/output

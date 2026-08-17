@@ -1,0 +1,645 @@
+\documentclass{article}
+\usepackage{babel}
+\selectlanguage{english}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[colorlinks=true, linkcolor=blue]{hyperref}
+\usepackage{xcolor}
+\usepackage[top=2cm, bottom=2cm,
+            left=1.5cm, right=1.5cm]{geometry}
+\usepackage{listings}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{cite}
+
+% --- Inline style for code-level names (AthenaK variables, files, flags) ------
+\definecolor{varbg}{HTML}{EEF1F7}
+\definecolor{varfg}{HTML}{273C75}
+\newcommand{\var}[1]{%
+  {\setlength{\fboxsep}{1.5pt}%
+   \colorbox{varbg}{\textcolor{varfg}{\texttt{\small #1}}}}}
+
+% --- Run-in headers for the individual steps of a workflow -------------------
+% Small caps + rule instead of \textbf, so they read as a level below
+% \subsubsection rather than as another heading of the same weight.
+\definecolor{stepfg}{HTML}{1A6B62}
+\newcommand{\step}[1]{%
+  \par\medskip\noindent
+  {\color{stepfg}\rule[-0.15ex]{2pt}{1.5ex}\hspace{0.5em}\scshape #1}%
+  \hspace{0.75em}\ignorespaces}
+
+% Define short-commands for the variables
+\newcommand{\gxx}{\var{adm\_gxx}}
+\newcommand{\gxy}{\var{adm\_gxy}}
+\newcommand{\gxz}{\var{adm\_gxz}}
+\newcommand{\gyy}{\var{adm\_gyy}}
+\newcommand{\gyz}{\var{adm\_gyz}}
+\newcommand{\gzz}{\var{adm\_gzz}}
+\newcommand{\vx}{\var{velx}}
+\newcommand{\vy}{\var{vely}}
+\newcommand{\vz}{\var{velz}}
+\newcommand{\alp}{\var{z4c\_alpha}}
+\newcommand{\betx}{\var{z4c\_betax}}
+\newcommand{\bety}{\var{z4c\_betay}}
+\newcommand{\betz}{\var{z4c\_betaz}}
+\newcommand{\Bx}{\var{bcc1}}
+\newcommand{\By}{\var{bcc2}}
+\newcommand{\Bz}{\var{bcc3}}
+\newcommand{\mr}{\mathrm}
+
+\begin{document}
+\section*{AthenaK post-processing computations and conventions}
+\textit{This document summarizes the computations and conventions needed
+to post-process a set of variables/quantities. It also collects some of the output
+variables that are given in the code and how they are defined.}
+
+\subsection*{Conventions}
+\step{Variables}
+\begin{itemize}
+  \item Metric: The spatial metric is defined with lower indices, i.e. $\gamma_{ij}$. It can be
+  extracted from the code by specifying the output variables \gxx, \gxy, \gxz,
+  \gyy, \gyz, and \gzz or by giving the block of variables \var{adm}, which
+  also contains the extrinsic curvature $K_{ij}$. Note that the $\langle\mathrm{adm}\rangle$
+  block needs to exist for this to apply.
+  \item Lapse: As a scalar quantity, the lapse $\alpha$ follows no convention and can be fetched by specifying
+  the \alp variable in the respective $\langle\mathrm{output}\rangle$ block. Note that the
+  $\langle\mathrm{z4c}\rangle$ block needs to exist for this to apply.
+  \item Shift: Together with the lapse $\alpha$, the shift completes the set of gauge variables and is defined
+  with upper indices, i.e. $\beta^i$. It can be specified in the output via \betx, \bety,
+  and \betz. Note that also here the $\langle\mathrm{z4c}\rangle$ block needs to exist.
+  \item Magnetic field components: In AthenaK, we evolve the densitized magnetic field components, i.e.
+  $\tilde{B}^i=\sqrt{\gamma}B^i$ with upper indices. By specifying the output for the magnetic field components
+  via \Bx, \By, and \Bz, we therefore mean $\tilde{B}^i$ cell-centered on the grid. $\tilde{B}^i$ is
+  defined in the Eulerian frame and needs to be undensitized in the post-processing step. This requires the metric (see above).
+  Note that in this case the $\langle\mathrm{mhd}\rangle$ block needs to exist.
+  \item 3-velocity: The convention for the 3-velocity in AthenaK is a bit tricky. When we specify \vx, \vy, and
+  \vz in the output, then we mean the Lorentz-weighted 3-velocity in the fluid frame $\tilde{u}^i=Wv^i$, where
+  $v^i$ is the 3-velocity in the Eulerian frame and $W$ the Lorentz factor. In GR-Athena++ the variable $\tilde{u}^i$ gets
+  directly evolved and is defined as the projection of the 4-velocity $u^{\mu}$ onto the hypersurface $\Sigma_t$. This is important
+  to know when computing the 4-velocity in some post-processing steps below. For the output of the Lorentz-weighted 3-velocity
+  either $\langle\mathrm{hydro}\rangle$ or $\langle\mathrm{mhd}\rangle$ needs to exist.
+  \item M1 variables: The neutrino energy density $E$ follows no convention as a scalar quantity and can be extracted via
+  \var{rad\_m1\_E}. On the other hand, the neutrino number flux $F_i$ is given with lower indices as \var{rad\_m1\_F}, and lastly
+  the neutrino number density also follows no convention as \var{rad\_m1\_N}. All the aforementioned variables are given per species
+  in the Eulerian frame. To obtain all of them in the fluid frame, one would have to project the stress-energy tensor accordingly.
+\end{itemize}
+
+\step{Derived variables}
+Here we collect a couple of derived variables, that are needed for the computation of some post-processing
+quantities below:
+\begin{itemize}
+  \item Lorentz-factor: The Lorentz factor in terms of the AthenaK conventions can be computed via
+  \begin{align}
+    W = \sqrt{1 + \tilde{u}^i\tilde{u}_i} = \sqrt{1 + \gamma_{ij}\tilde{u}^i\tilde{u}^j}\ |\ \tilde{u}^i = Wv^i, \nonumber
+  \end{align}
+  which is equal to the common form by realizing that
+  \begin{align}
+    W = \sqrt{1 + \tilde{u}^i\tilde{u}_i} = \sqrt{1 + W^2v^2} = \sqrt{1 + \frac{v^2}{1-v^2}} = \sqrt{\frac{1-v^2+v^2}{1-v^2}} = \sqrt{\frac{1}{1-v^2}}.\nonumber
+  \end{align}
+  Writing this in terms of the AthenaK variables gives
+  \begin{align}\label{Equ:lorentz}
+    \gamma_{ij}\tilde{u}^i\tilde{u}^j =& \gxx\vx\vx+2\gxy\vx\vy+2\gxz\vx\vz\\
+    &+\gyy\vy\vy+2\gyz\vy\vz+\gzz\vz\vz,\nonumber\\
+    W =& \sqrt{1+\gamma_{ij}\tilde{u}^i\tilde{u}^j} \nonumber.
+  \end{align}
+  \item Determinant of the spatial metric: To get the determinant of the spatial metric $\gamma_{ij}$, we can first write it
+  in component form as
+  \begin{align}
+    \gamma = \gamma_{xx}\gamma_{yy}\gamma_{zz}-2\gamma_{xy}\gamma_{xz}\gamma_{yz}-\gamma_{xx}\gamma_{yz}\gamma_{yz}
+                -\gamma_{yy}\gamma_{xz}\gamma_{xz}-\gamma_{zz}\gamma_{xy}\gamma_{xy}\nonumber .
+  \end{align}
+  In terms of the AthenaK variables this becomes
+  \begin{align}\label{Equ:detgamma}
+    \gamma =& \gxx\gyy\gzz-2\gxy\gxz\gyz-\gxx\gyz\gyz\\
+    &-\gyy\gxz\gxz-\gzz\gxy\gxy.\nonumber
+  \end{align}
+  \item Inverse spatial metric components: Since AthenaK only provides $\gamma_{ij}$, we need to calculate the inverse spatial metric
+  $\gamma^{ij}$ with help of the determinant of the metric which we can obtain via Equ.~\eqref{Equ:detgamma}. The components are then computed
+  via
+  \begin{align}
+    \gamma^{xx}&=(\gamma_{yy}\gamma_{zz}-\gamma_{yz}^2)/\gamma,\nonumber\\
+    \gamma^{yy}&=(\gamma_{xx}\gamma_{zz}-\gamma_{xz}^2)/\gamma,\nonumber\\
+    \gamma^{zz}&=(\gamma_{xx}\gamma_{yy}-\gamma_{xy}^2)/\gamma,\nonumber\\
+    \gamma^{xy}&=(\gamma_{xz}\gamma_{yz}-\gamma_{xy}\gamma_{zz})/\gamma,\nonumber\\
+    \gamma^{xz}&=(\gamma_{xy}\gamma_{yz}-\gamma_{xz}\gamma_{yy})/\gamma,\nonumber\\
+    \gamma^{yz}&=(\gamma_{xy}\gamma_{xz}-\gamma_{yz}\gamma_{xx})/\gamma.\nonumber
+  \end{align}
+  Or in terms of AthenaK variables
+  \begin{align}
+    \gamma^{xx}&=(\gyy\gzz-\gyz^2)/\gamma,\label{Equ:invgxx}\\
+    \gamma^{yy}&=(\gxx\gzz-\gxz^2)/\gamma,\label{Equ:invgyy}\\
+    \gamma^{zz}&=(\gxx\gyy-\gxy^2)/\gamma,\label{Equ:invgzz}\\
+    \gamma^{xy}&=(\gxz\gyz-\gxy\gzz)/\gamma,\label{Equ:invgxy}\\
+    \gamma^{xz}&=(\gxy\gyz-\gxz\gyy)/\gamma,\label{Equ:invgxz}\\
+    \gamma^{yz}&=(\gxy\gxz-\gyz\gxx)/\gamma.\label{Equ:invgyz}
+  \end{align}
+  \item Undensitized Eulerian magnetic field components: Since AthenaK stores the densitized magnetic field
+  components $\tilde{B}^i$, we need to undensitize them using Equ.~\eqref{Equ:detgamma}, i.e.
+  \begin{align}
+    B^i = \frac{\tilde{B}^i}{\sqrt{\gamma}}.\nonumber
+  \end{align}
+  Or in terms of AthenaK variables
+  \begin{align}
+    B^x &= \frac{\Bx}{\sqrt{\gamma}},\label{Equ:undensmag1}\\
+    B^y &= \frac{\By}{\sqrt{\gamma}},\label{Equ:undensmag2}\\
+    B^z &= \frac{\Bz}{\sqrt{\gamma}}\label{Equ:undensmag3}.
+  \end{align}
+  \item Magnetic field amplitude in the Eulerian frame: Using the metric components $\gamma_{ij}$ and the
+  undensitized magnetic field components of Equs.~\eqref{Equ:undensmag1}-\eqref{Equ:undensmag3}, we can compute the
+  magnetic field amplitude in the Eulerian frame via
+  \begin{align}
+    B^2 = \gamma_{ij}B^iB^j.\nonumber
+  \end{align}
+  Or in terms of the AthenaK variables
+  \begin{align}\label{Equ:Bmag}
+    B^2 =& \gxx\Bx\Bx+2\gxy\Bx\By+2\gxz\Bx\Bx\nonumber\\
+    &+\gyy\By\By+2\gyz\By\Bz+\gzz\Bz\Bz.
+  \end{align}
+  \item Magnetic field amplitude in the fluid frame: To get the magnetic field amplitude in the fluid frame, we
+  require again the metric components $\gamma_{ij}$, the undensitized magnetic field components $B^i$, and the
+  Lorentz-weighted 3-velocity in the Lorentz frame $\tilde{u}^i$. In general, the magnetic field amplitude in the fluid
+  frame can be written as
+  \begin{align}\label{Equ:bmag}
+    b^2 = \frac{(B^2 + (B^iWv_i)(B^iWv_i))}{W^2}.
+  \end{align}
+  We can make use of Equ.~\eqref{Equ:lorentz} and Equ.~\eqref{Equ:Bmag}. The remaining two terms can be computed
+  as
+  \begin{align}
+    B^iWv_i = B^i\tilde{u}_i= B^i\gamma_{ij}\tilde{u}^j=&\gamma_{xx}B^x\tilde{u}^x+\gamma_{yy}B^y\tilde{u}^y+\gamma_{zz}B^z\tilde{u}^z\nonumber\\
+              &+\gamma_{xy}(B^x\tilde{u}^y+B^y\tilde{u}^x)+\gamma_{xz}(B^x\tilde{u}^z+B^z\tilde{u}^x)+\gamma_{yz}(B^y\tilde{u}^z+B^z\tilde{u}^y)\nonumber .
+  \end{align}
+  Or in terms of the AthenaK variables:
+  \begin{align}\label{Equ:BWv}
+    B^i\gamma_{ij}\tilde{u}^i=&\gxx\vx\Bx+\gyy\By\vy+\gzz\Bz\vz \nonumber\\
+    &+\gxy(\Bx\vy+\By\vx)+\gxz(\Bx\vz+\Bz\vx)\nonumber\\
+    &+\gyz(\By\vz+\Bz\vy).
+  \end{align}
+  Combining Equs.~\eqref{Equ:lorentz},~\eqref{Equ:Bmag}, and~\eqref{Equ:BWv} in the definition for $b^2$, yields
+  the desired result.
+  \item 4-velocity with upper indices: To obtain the 4-velocity $u^{\mu}$, we require the metric components $\gamma_{ij}$, the 3-velocity $\tilde{u}^i$,
+  and the gauge variables $\alpha$ and $\beta^i$. The definitions are
+  \begin{align}
+    u^t&=\frac{W}{\alpha},\nonumber\\
+    u^i&=\tilde{u}^i-u^t\beta^i.\nonumber
+  \end{align}
+  By using Equs.~\eqref{Equ:lorentz}, we can use the AthenaK variables to write
+  \begin{align}
+    u^t&=\frac{W}{\alp},\label{Equ:vel4t}\\
+    u^x&=\vx - u^t\betx,\label{Equ:vel4x}\\
+    u^y&=\vy - u^t\bety,\label{Equ:vel4y}\\
+    u^z&=\vz - u^t\betz\label{Equ:vel4z}.
+  \end{align}
+  \item 4-velocity with lower indices: To compute the 4-velocity with lower indices, we need the gauge variables
+  $\alpha$ and $\beta^i$, as well as the metric components $\gamma_{ij}$ and 3-velocity. We start by writing down the general
+  lowering operation
+  \begin{align}
+    u_t &= g_{t\nu}u^{\nu}=g_{tt}u^t+g_{ti}u^i=(-\alpha^2+\beta^k\beta_k)u^t+\beta_iu^i=-\alpha W+\beta^iu_i,\nonumber\\
+    u_i &= g_{i\nu}u^{\nu}=g_{it}u^t+g_{ij}u^j=\beta_iu^t+\gamma_{ij}u^j=\gamma_{ij}\beta^ju^t+\gamma_{ij}u^j=\gamma_{ij}\left(u^j+\beta^ju^t\right).\nonumber
+  \end{align}
+  To reach the first equality, we have contracted with $\beta^i$ and realized from above that $u^t=\frac{W}{\alpha}$, i.e.
+  \begin{align}
+    u_t =-\alpha W+\beta^k\beta_ku^t+\beta_iu^i &= -\alpha W+\beta^i(\beta_iu^t)+\beta^i(\gamma_{ij}u^j)\nonumber\\
+    &=\beta^i(\beta_iu^t+\gamma_{ij}u^j)\nonumber\\
+    &=\beta^iu_i.\nonumber
+  \end{align}
+  In the second equality, we have relabeled and reordered the shift components in the first term, while in the second
+  we have raised the index of the shift vector and also reordered. The last equality uses the general expression for $u_i$ above.
+  We can also realize that the bracket in $u_i$, i.e. $u^j+\beta^ju^t$, is equal to the 3-velocity AthenaK uses, redefined in terms
+  of the 4-velocity, see Equs.~\eqref{Equ:vel4x}-\eqref{Equ:vel4z}. Therefore, we have $u^j+\beta^ju^t=\tilde{u}^j$.
+  We can therefore express the 4-velocity with lowered indices in terms of the AthenaK variables as
+  \begin{align}
+    u_x &= \gxx\vx+\gxy\vy+\gxz\vz,\label{Equ:vel4x_d}\\
+    u_y &= \gxy\vx+\gyy\vy+\gyz\vz,\label{Equ:vel4y_d}\\
+    u_z &= \gxz\vx+\gyz\vy+\gzz\vz,\label{Equ:vel4z_d}\\
+    u_t &= -\alp W+\beta_x u_x+\beta_y u_y + \beta_z u_z.\label{Equ:vel4t_d}
+  \end{align}
+  The shift with the lowered components can be calculated via Equs.~\eqref{Equ:betx_d}-\eqref{Equ:betz_d}.
+  \item Magnetic field components in fluid frame with upper indices: To obtain the magnetic field components in the fluid
+  frame with upper indices $b^{\mu}$, we require the gauge variables $\alpha$ and $\beta^i$, as well as the undensitized
+  magnetic field components in the Eulerian frame $B^i$, the Lorentz factor $W$, the 3-velocity $\tilde{u}^i$ and the spatial components of the 4-velocity $u^{\mu}$
+  \begin{align}
+    b^t&=\frac{B^iW\tilde{u}_i}{\alpha},\nonumber\\
+    b^{i}&=\frac{B^i+\alpha b^tu^i}{W}.\nonumber
+  \end{align}
+  After computing $B^iW\tilde{u}_i$ via Equ.~\eqref{Equ:BWv}, undensitizing the Eulerian magnetic field components with
+  Equs.~\eqref{Equ:undensmag1}-\eqref{Equ:undensmag3}, computing the Lorentz factor with Equ.~\eqref{Equ:lorentz}, and
+  computing the four velocity components with Equs.~\eqref{Equ:vel4t}-\eqref{Equ:vel4z}, we can compute the
+  magnetic field components in the fluid frame via
+  \begin{align}
+    b^t&=\frac{B^iW\tilde{u}_i}{\alp},\label{Equ:bt}\\
+    b^x&=\frac{\Bx+\alp b^t u^x}{W},\label{Equ:bx}\\
+    b^y&=\frac{\By+\alp b^t u^y}{W},\label{Equ:by}\\
+    b^z&=\frac{\Bz+\alp b^t u^z}{W}.\label{Equ:bz}
+  \end{align}
+  \item Shift with lower components: Since AthenaK only outputs $\beta^i$, it is instructive for some computations to
+  compute the shift with lower components, i.e. $\beta_i$, via
+  \begin{align}
+    \beta_i&=\gamma_{ik}\beta^k,\nonumber\\
+    \beta_x&=\gamma_{xx}\beta^x+\gamma_{xy}\beta^y+\gamma_{xz}\beta^z,\nonumber\\
+    \beta_y&=\gamma_{yx}\beta^x+\gamma_{yy}\beta^y+\gamma_{yz}\beta^z,\nonumber\\
+    \beta_z&=\gamma_{xz}\beta^x+\gamma_{yz}\beta^y+\gamma_{zz}\beta^z.\nonumber
+  \end{align}
+  To achieve this, we require the metric components $\gamma_{ij}$ from the ouput, as well as the shift with
+  upper components, or in terms of AthenaK variables we can write
+  \begin{align}
+    \beta_x &=\gxx\betx+\gxy\bety+\gxz\betz,\label{Equ:betx_d}\\
+    \beta_y &=\gxy\betx+\gyy\bety+\gyz\betz,\label{Equ:bety_d}\\
+    \beta_z &=\gxz\betx+\gyz\bety+\gzz\betz\label{Equ:betz_d}.
+  \end{align}
+  \item Amplitude of the shift vector: For the computation of the amplitude of the shift vector, we require the AthenaK
+  shift with upper indices, i.e. $\beta^i$, as well as the metric components. It can then be
+  computed via
+  \begin{align}
+    \beta^2 = \gamma_{ij}\beta^i\beta^j=\gamma_{xx}\beta^x\beta^x+2\gamma_{xy}\beta^x\beta^y+2\gamma_{xz}\beta^x\beta^z+
+              \gamma_{yy}\beta^y\beta^y+2\gamma_{yz}\beta^y\beta^z+\gamma_{zz}\beta^z\beta^z.\nonumber
+  \end{align}
+  Or in terms of AthenaK variables
+  \begin{align}\label{Equ:betamag}
+    \beta^2=&\gxx\betx\betx+2\gxy\betx\bety+2\gxz\betx\betz\nonumber\\
+    &+\gyy\bety\bety+2\gyz\bety\betz+\gzz\betz\betz.
+  \end{align}
+  \item Magnetic field components in fluid frame with lower indices: To obtain the magnetic field components in the fluid frame
+  with lower indices $b_{\mu}$, we require the shift $\beta^i$, the magnetic field components in the fluid frame with upper inidices $b^{\mu}$,
+  and the metric components $\gamma_{ij}$. The general lowering operation is given by
+  \begin{align}
+    b_t&=g_{\mu t}b^{\mu}=g_{tt}b^t+g_{tj}b^j=(-\alpha^2+\beta^2)b^t+\beta_jb^j,\nonumber\\
+    b_j&=g_{\mu j}b^{\mu}=g_{tj}b^t+g_{ij}b^i=\beta_j b^t+\gamma_{ij}b^i.\nonumber
+  \end{align}
+  The latter equality is given by the line element in 3+1 notation
+  \begin{align}
+    ds^2&=-\alpha^2dt^2+\gamma_{ij}(dx^i+\beta^i dt)(dx^j+\beta^jdt),\nonumber \\
+    g_{tt}&=-\alpha^+\beta_i\beta^i=-\alpha^2+\beta^2,\nonumber\\
+    g_{ti}&=\beta_i,\nonumber\\
+    g_{ij}&=\gamma_{ij}.\nonumber
+  \end{align}
+  After using Equs.~\eqref{Equ:bt}-\eqref{Equ:bz} to compute the magnetic field components in the fluid frame with
+  upper indices, Equ.~\eqref{Equ:betamag} to compute the amplitude of the shift vector and Equs.~\eqref{Equ:betx_d}-\eqref{Equ:betz_d} to compute the shift vector with lower indices,
+  we can use the AthenaK variables to get the lower indices of the magnetic field components in the fluid frame via
+  \begin{align}
+    b_t=&(-\alp^2+\beta^2)b^t+\beta_xb^x+\beta_yb^y+\beta_zb^z,\label{Equ:bt_d}\\
+    b_x=&\gxx(b^t\betx+b^x)+\gxy(b^t\bety+b^y)+\gxz(b^t\betz+b^z),\label{Equ:bx_d}\\
+    b_y=&\gxy(b^t\betx+b^x)+\gyy(b^t\bety+b^y)+\gyz(b^t\betz+b^z),\label{Equ:by_d}\\
+    b_z=&\gxz(b^t\betx+b^x)+\gyz(b^t\bety+b^y)+\gzz(b^t\betz+b^z).\label{Equ:bz_d}
+  \end{align}
+  \item Local angular velocity: To compute the local angular velocity, we require the AthenaK 3-velocity $\tilde{u}^i$,
+  the metric components $\gamma_{ij}$ and the gauge variables. In general we have
+  \begin{align}\label{Equ:Omega}
+    \Omega = \frac{u^{\phi}}{u^t}.
+  \end{align}
+  The velocity component $\phi$ is defined in terms of the Jacobian and the spatial components of the 4-velocity, i.e.
+  \begin{align}
+    u^{\phi}=\frac{\partial\phi}{\partial x^i}u^i.\nonumber
+  \end{align}
+  With $\phi=\arctan{\left(\frac{y}{x}\right)}$, we can compute the local angular velocity on any plane. For instance,
+  in the xy-plane we find
+  \begin{align}
+    u^{\phi}&=\frac{\partial\phi}{\partial x}u^x+\frac{\partial \phi}{\partial y}u^y=-\frac{y}{x^2+y^2}u^x+\frac{x}{x^2+y^2}u^y=\frac{xu^y-yu^x}{R^2},\nonumber\\
+    \Omega &= \frac{xu^y-yu^x}{R^2u^t}.\nonumber
+  \end{align}
+  Here, the 4-velocity components with upper indices can be computed via Equs.~\eqref{Equ:vel4t}-\eqref{Equ:vel4z}.
+  \item Radial component of a 3-vector: For the computation of the radial component of a 3-vector with components $(p^x,p^y,p^z)$, we can write
+  \begin{align}
+    p^r = p^x\sin{\theta}\cos{\phi}+p^y\sin(\theta)\sin{\phi}+p^z\cos{\theta}.\label{Equ:radcomp}
+  \end{align}
+  \item Raise spatial vector: To raise a spatial vector with lower indices $(p_x,p_y,p_z)$, we can use the inverse spatial metric components from
+  Equs.~\eqref{Equ:invgxx}-\eqref{Equ:invgyz} to get
+  \begin{align}
+    p^x &= \gamma&{xx}p^x+\gamma^{xy}p^y+\gamma^{xz}p^z,\label{Equ:raisepx}\\
+    p^y &= \gamma&{xy}p^x+\gamma^{yy}p^y+\gamma^{yz}p^z,\label{Equ:raisepy}\\
+    p^z &= \gamma&{xz}p^x+\gamma^{yz}p^y+\gamma^{zz}p^z.\label{Equ:raisepz}
+  \end{align}
+  \item Metric-normalized radial projection: To project a vector $p^i$ along $\frac{r_i}{\sqrt{g^{ij}r_ir_j}}$, we first compute the
+  inverse spatial metric via Equs.~\eqref{Equ:invgxx}-\eqref{Equ:invgyz}. The inverse 4-metric $g^{ij}$ is then obtained via
+  \begin{align}
+    g^{xx} &= \gamma^{xx}-(\beta^x\beta^x)/\alpha^2,\nonumber\\
+    g^{yy} &= \gamma^{yy}-(\beta^y\beta^y)/\alpha^2,\nonumber\\
+    g^{zz} &= \gamma^{zz}-(\beta^z\beta^z)/\alpha^2,\nonumber\\
+    g^{xy} &= \gamma^{xy}-(\beta^x\beta^y)/\alpha^2,\nonumber\\
+    g^{xz} &= \gamma^{xz}-(\beta^x\beta^z)/\alpha^2,\nonumber\\
+    g^{yz} &= \gamma^{yz}-(\beta^y\beta^z)/\alpha^2.\nonumber
+  \end{align}
+  The components of the vector $r_i$ are computed with the angles of the sphere
+  \begin{align}
+    r_x&=r\sin{\theta}\cos{\phi},\nonumber\\
+    r_y&=r\sin{\theta}\sin{\phi},\nonumber\\
+    r_z&=r\cos{\theta}\nonumber
+  \end{align}
+  The denominator $\sqrt{g^{ij}r_ir_j}$ is determined as
+  \begin{align}
+    \sqrt{g^{ij}r_ir_j}=\sqrt{g^{xx}r_x^2+g^{yy}r_y^2+g^{zz}r_z^2+2g^{xy}r_xr_y+2g^{xz}r_xr_z+2g_{yz}r_yr_z}.\nonumber
+  \end{align}
+  Lastly the projection of the vector $p^i$ is defined as
+  \begin{align}
+    p^r_{\mathrm{norm}}=\frac{r_xp^x+r_yp^y+r_zp^z}{\sqrt{g^{ij}r_ir_j}}.\label{Equ:radnormproj}
+  \end{align}
+\end{itemize}
+
+\subsection*{Computations}
+\step{Poynting flux}
+For the computation of the Poynting flux across a shell, we require a set of output variables interpolated onto a sphere
+of fixed radius and specified in the parameter file via:
+\begin{verbatim}
+<output1>
+file_type = sph
+variable  = velx
+dt        = 10.0
+radius    = 400.0
+ntheta    = 256
+\end{verbatim}
+The variables we require are:
+\begin{itemize}
+  \item The ADM metric components \var{adm\_gxx}, \var{adm\_gxy}, \var{adm\_gxz},
+  \var{adm\_gyy}, \var{adm\_gyz}, and \var{adm\_gzz} or the entire ADM output block \var{adm}. Note:
+  if the entire \var{adm} block is specified, then the six extrinsic curvature components are also
+  stored which are not needed for this computation and might fill unnecessary disk space.
+  \item The gauge variables \var{z4c\_alpha}, \var{z4c\_betax}, \var{z4c\_betay}, and \var{z4c\_betaz}.
+  \item The Lorentz-weighted 3-velocity $\tilde{u}^i$, given by the output variables \var{velx}, \var{vely}, and
+  \var{velz}.
+  \item The densitized magnetic field components in the Eulerian frame $\tilde{B}^i$, given by \var{bcc1}, \var{bcc2}, and
+  \var{bcc3}.
+\end{itemize}
+A step-by-step approach is:
+\begin{enumerate}
+  \item Compute the Lorentz-factor via Equ.~\eqref{Equ:lorentz}.
+  \item Compute the 4-velocity with upper indices $u^i$ using Equs.~\eqref{Equ:vel4t}-\eqref{Equ:vel4z}.
+  \item Compute the lower time-component of the 4-velocity $u_t$ via Equ.~\eqref{Equ:vel4t_d}.
+  \item Compute the determinant of the metric $\gamma$ via (Equ.~\eqref{Equ:detgamma}), to undensitize
+  the magnetic field components with Equs.~\eqref{Equ:undensmag1}-\eqref{Equ:undensmag3}.
+  \item Compute $B^2$ in the Eulerian frame via Equ.~\eqref{Equ:Bmag} and $B^iW\tilde{u}_i$ via Equ.~\eqref{Equ:BWv}.
+  \item Compute $b^2$ in the fluid frame through Equ.~\eqref{Equ:bmag}.
+  \item Compute the magnetic field components in the fluid frame $b^{\mu}$ via Equs.\eqref{Equ:bt_d}-\eqref{Equ:bz_d}.
+  \item Lower the indices on the shift vector ($\beta_i$) via Equs.~\eqref{Equ:betx_d}-\eqref{Equ:betz_d}.
+  \item Compute $\beta^2$ with Equ.~\eqref{Equ:betamag}.
+  \item Compute the lower time-component of the magnetic field in the fluid frame, i.e. $b_t$, with Equ.~\eqref{Equ:bt_d}.
+  \item Compute the radial component of the velocity vector $(u^x,u^y,u^z)$ and the magnetic field $(b^x,b^y,b^z)$ (in the fluid frame)
+  with Equ.~\eqref{Equ:radcomp} ($u^r$ and $b^r$).
+  \item Compute the integrand as
+  \begin{align}
+    I = (b^2u^ru_t-b^rb_t)\alpha\sqrt{\gamma}r^2\sin{\theta}.\nonumber
+  \end{align}
+  The spherical coordinates $(r,\theta,\phi)$ can be obtained from the spherical output \var{sph}.
+  \item Lastly, integrate $I$ over the sphere with angles $(\theta,\phi)$ as dictated by the spherical output.
+\end{enumerate}
+
+\step{$\lambda_{\mathrm{MRI}}$ and quality factor $Q$}
+For the computation of the $\lambda_{\mathrm{MRI}}$ parameter and the quality factor $Q$, we ideally require 3D
+binary output. However, this procedure also works on a 2D slice. In general, we require
+\begin{verbatim}
+<output2>
+file_type = bin
+variable  = dens
+dt        = 10.0
+slice_x3  = 0.0 # optional
+\end{verbatim}
+The variables we require are:
+\begin{itemize}
+  \item The density $\rho$ given by \var{dens}, the temperature \var{temperature}, the electron fraction $Y_e$ \var{s\_00},
+  the densitized magnetic field components \var{bcc1}, \var{bcc2}, \var{bcc3}, and the Lorentz-weighted 3-velocity components $\tilde{u}^i$, given
+  by \var{velx}, \var{vely}, and \var{velz}.
+  \item The ADM metric components \var{adm\_gxx}, \var{adm\_gxy}, \var{adm\_gxz},
+  \var{adm\_gyy}, \var{adm\_gyz}, and \var{adm\_gzz} or the entire ADM output block \var{adm}. Note:
+  if the entire \var{adm} block is specified, then the six extrinsic curvature components are also
+  stored which are not needed for this computation and might fill unnecessary disk space.
+  \item The gauge variables \var{z4c\_alpha}, \var{z4c\_betax}, \var{z4c\_betay}, and \var{z4c\_betaz}.
+\end{itemize}
+A step-by-step approach is:
+\begin{enumerate}
+  \item Compute the Lorentz-factor via Equ.~\eqref{Equ:lorentz}.
+  \item Compute the determinant of the metric $\gamma$ via (Equ.~\eqref{Equ:detgamma}), to undensitize
+  the magnetic field components with Equs.~\eqref{Equ:undensmag1}-\eqref{Equ:undensmag3}.
+  \item Compute $B^2$ in the Eulerian frame via Equ.~\eqref{Equ:Bmag} and $B^iW\tilde{u}_i$ via Equ.~\eqref{Equ:BWv}.
+  \item Compute $b^2$ in the fluid frame through Equ.~\eqref{Equ:bmag}.
+  \item Compute the magnetic field components in the fluid frame $b^{\mu}$ via Equs.\eqref{Equ:bt_d}-\eqref{Equ:bz_d}.
+  \item Compute the 4-velocity with upper indices $u^i$ using Equs.~\eqref{Equ:vel4t}-\eqref{Equ:vel4z}.
+  \item Compute the spatial magnetic field components in the fluid frame with lower indices $b_i$ via
+  Equs.~\eqref{Equ:bx_d}-\eqref{Equ:bz_d}.
+  \item Compute the local angular velocity either on the plane or if 3D over the entire domain via Equ.~\eqref{Equ:Omega}.
+  \item The components of $\lambda_{\mathrm{MRI}}$ are then computed via
+  \begin{align}
+    \lambda_{\mathrm{MRI},i}=\frac{2\pi b_i}{\Omega\sqrt{\rho h+b^2}},\nonumber
+  \end{align}
+  where $h$ is the enthalpy given by the equation of state and the state vector $(n_B,Y_e,T)$ at a given point.
+  \item The quality average quality factor for each direction is then
+  \begin{align}
+    Q_i = \langle\lambda_{\mathrm{MRI},i}/\Delta x\rangle,\nonumber
+  \end{align}
+  where $\Delta x$ is the grid spacing at the given grid point.
+\end{enumerate}
+
+\step{Ejecta - Bernoulli and Geodesic criterion}
+To compute the ejecta properties based on the Bernoulli and Geodesic criterion, we need data interpolated onto a sphere
+at a fixed radius, i.e.
+\begin{verbatim}
+<output3>
+file_type = sph
+variable  = velx
+dt        = 10.0
+radius    = 400.0
+ntheta    = 256
+\end{verbatim}
+The variables we require are:
+\begin{itemize}
+  \item The density $\rho$ given by \var{dens}, the temperature \var{temperature}, the electron fraction $Y_e$ \var{s\_00},
+  and the Lorentz-weighted 3-velocity components $\tilde{u}^i$, given by \var{velx}, \var{vely}, and \var{velz}.
+  \item The ADM metric components \var{adm\_gxx}, \var{adm\_gxy}, \var{adm\_gxz},
+  \var{adm\_gyy}, \var{adm\_gyz}, and \var{adm\_gzz} or the entire ADM output block \var{adm}. Note:
+  if the entire \var{adm} block is specified, then the six extrinsic curvature components are also
+  stored which are not needed for this computation and might fill unnecessary disk space.
+  \item The gauge variables \var{z4c\_alpha}, \var{z4c\_betax}, \var{z4c\_betay}, and \var{z4c\_betaz}.
+\end{itemize}
+We also need the 3D equation of state with columns $(n_B,Y_e,T)$. This table will be used to calculate the specific
+enthalpy. A step-by-step approach is:
+\begin{enumerate}
+  \item Take the points for the density, electron fraction, and the temperature from the \var{sph} output and clip the points
+  to the ranges of the 3D table. Change the density and temperature columns to log-scale.
+  \item Set up interpolators to interpolate the total energy density $\frac{e}{n_Bm_n}$ and the pressure $\frac{p}{n_Bm_n}$ from the table given $(\log_{10}(n_B),Y_e,\log_{10}(T))$.
+  \item For all the points on the spherical shell, interpolate to obtain the total energy density and the pressure and then compute the
+  specific enthalpy via
+  \begin{align}
+    h = 1+e_{\mathrm{intp}}+p_{\mathrm{intp}}.\nonumber
+  \end{align}
+  \item Compute the Lorentz-factor via Equ.~\eqref{Equ:lorentz}.
+  \item Compute the 4-velocity with upper indices $u^i$ via Equs.~\eqref{Equ:vel4t}-\eqref{Equ:vel4z}.
+  \item Compute the radial component from the spatial part of the 4-velocity with Equ.~\eqref{Equ:radcomp}.
+  \item Lower the index on the time-component of the 4-velocity $u_t$ via Equ.~\eqref{Equ:vel4t_d}.
+  \item Create masks, such that the density is above the density floor and that the radial component of the velocity
+  $u^r$ is greater than 0.
+  \item Compute a criterion mask with
+  \begin{align}
+    \mathrm{Bernoulli:}&\quad h\cdot u_t < h_{\mathrm{min}},\nonumber\\
+    \mathrm{Geodesic:}&\quad u_t < -1.\nonumber
+  \end{align}
+  \item Compute the determinant of the spatial metric $\gamma$ with Equ.~\eqref{Equ:detgamma} and the base
+  integrand via
+  \begin{align}
+    I = \rho u^r\sqrt{\gamma}r^2\sin{\theta}.\nonumber
+  \end{align}
+  \item See the documentation on the ejecta and neutrino analysis in the repo for more information about the various quantities one
+  can calculate with the above steps.
+\end{enumerate}
+
+\step{Neutrino luminosity and average energy density}
+For the neutrino luminosity and average energy density we again require spherical output at a fixed radius, i.e.
+\begin{verbatim}
+<output4>
+file_type = sph
+variable  = rad_m1_F
+dt        = 10.0
+radius    = 400.0
+ntheta    = 256
+\end{verbatim}
+The variables we need are:
+\begin{itemize}
+  \item The ADM metric components \var{adm\_gxx}, \var{adm\_gxy}, \var{adm\_gxz},
+  \var{adm\_gyy}, \var{adm\_gyz}, and \var{adm\_gzz} or the entire ADM output block \var{adm}. Note:
+  if the entire \var{adm} block is specified, then the six extrinsic curvature components are also
+  stored which are not needed for this computation and might fill unnecessary disk space.
+  \item The gauge variables \var{z4c\_alpha}, \var{z4c\_betax}, \var{z4c\_betay}, and \var{z4c\_betaz}.
+  \item The neutrino energy density per species \var{rad\_m1\_E}, the neutrino number flux per species \var{rad\_m1\_F}, and
+  the neutrino number density per species \var{rad\_m1\_N} in the Eulerian frame.
+\end{itemize}
+A step-by-step guide is:
+\begin{enumerate}
+  \item Take the neutrino number flux $F_i$ and raise its components with the inverse spatial metric, which can
+  be computed with Equs.~\eqref{Equ:invgxx}-\eqref{Equ:invgyz}. The raising operation is then defined via Equs.~\eqref{Equ:raisepx}-\eqref{Equ:raisepy}.
+  We obtain the vector $F^i$.
+  \item Taking the raised neutrino number flux vector in the Eulerian frame $F^i$, we can compute the metric-normalized radial projection $F^r_{\mathrm{norm}}$ via
+  Equ.~\eqref{Equ:radnormproj}.
+  \item The same projection is done for the shift vector $\beta^i$ to obtain $\beta^r_{\mathrm{norm}}$.
+  \item The radial flux is compute as
+  \begin{align}
+    F_{\mathrm{radial}}=\alpha F^r-\beta^rE.\nonumber
+  \end{align}
+  \item Compute the neutrino luminosity per species $s$ as
+  \begin{align}
+    L^{\mathrm{code}}_{s}=\sum F_{\mathrm{radial}}w,\nonumber
+  \end{align}
+  where $w$ are the surface weights of the extraction sphere. The luminosity has to be converted into physical units afterwards.
+  \item Compute the average energy density of the neutrino species, by computing the number flux as
+  \begin{align}
+    N_{\mathrm{flux}}=\frac{F_{\mathrm{radial}}N_{\mathrm{code}}}{E},\nonumber
+  \end{align}
+  where $N_{\mathrm{code}}$ is the neutrino number density in code units.
+  \item Lastly, compute the change of the neutrino number density as
+  \begin{align}
+    \Dot{N}_{\mathrm{code}}=\sum N_{\mathrm{flux}}w,\nonumber
+  \end{align}
+  and then compute the average energy density in code units as
+  \begin{align}
+    \langle\varepsilon\rangle_s=\frac{L^{\mathrm{code}}_s}{\Dot{N}_{\mathrm{code}}}.\nonumber
+  \end{align}
+\end{enumerate}
+Note: the exact M1 number flux uses $f_{\nu}^a$, so the above is an approximation.
+
+\step{M1 variables in fluid frame}
+Since all the M1 variables in AthenaK are given in the Eulerian frame, we need to perform a set of
+projections to obtain them in the fluid frame. This is particularly desireable if we want to do a
+tracer analysis in post-processing. To convert the M1 variables, namely the radiation energy density $E$, the radiation flux $F^{\alpha}$,
+and the radiation pressure tensor $P^{\alpha\beta}$ in the Eulerian frame into the fluid frame, we first
+note that the definition of the radiation stress-energy tensor in both frames is
+\begin{align}
+  \mathrm{Eulerian\ frame:}&\quad T^{\alpha\beta}=En^{\alpha}n^{\beta}+F^{\alpha}n^{\beta}+n^{\alpha}F^{\beta}+P^{\alpha\beta},\\
+  \mathrm{Fluid\ frame:}&\quad T^{\alpha\beta}=Ju^{\alpha}u^{\beta}+H^{\alpha}u^{\beta}+u^{\alpha}H^{\beta}+K^{\alpha\beta},
+\end{align}
+where $n^{\alpha}$ is the unit-normal to the t = const. hypersurface, $u^{\alpha}$ is the fluid four-velocity,
+$J$ is the radiation energy density, $H^{\alpha}$ the radiation flux, and $K^{\alpha\beta}$ the radiation pressure
+tensor in the fluid frame. We will need to carry out a set of projections to obtain the fluid frame variables. An additional
+quantity in the fluid frame will be the comoving number density $n=\frac{N}{\Gamma}$, where $N$ is the number density
+in the Eulerian frame and $\Gamma$ the ratio of neutrinos in the Eulerian and the fluid frame. Since this is not an evolved
+variable, we can simply derive it on the way from the evolved ones. Note: the procedure has to be done per species.
+A step-by-step approach is:
+\begin{enumerate}
+  \item Compute the lower and upper spacetime metric from the spatial metric $\gamma_{ij}$ and the gauge variables
+  $\alpha$, and $\beta^i$ via
+  \begin{align}
+    g_{00}&=-\alpha^2+\beta^i\beta_i,\nonumber\\
+    g_{0j}&=\beta_j,\nonumber\\
+    g_{ij}&=\gamma_{ij},\nonumber\\
+    g^{00}&=-\frac{1}{\alpha^2},\nonumber\\
+    g^{0j}&=\frac{\beta^{j}}{\alpha^2},\nonumber\\
+    g^{ij}&=\gamma^{ij}-\frac{\beta^i\beta^i}{\alpha^2}.\nonumber
+  \end{align}
+  These can be computed via the functions \var{adm::SpacetimeMetric} and \var{adm::SpacetimeUpperMetric} in \var{adm.hpp}.
+  \item Populate a four-vector $n_{\alpha}$ using \var{pack\_n\_d} inside of \var{radiation\_m1\_tensors.hpp}, which defines
+  \begin{align}
+    n_0&=-\alpha,\nonumber\\
+    n_i&=0.
+  \end{align}
+  \item Populate a four-vector $\beta^{\mu}$ with the spatial components of the shift $\beta^i$, where for $\mu=0$ the vector is
+  zero (via the function \var{pack\_beta\_u} in \var{radiation\_m1\_tensors.hpp}).
+  \item Compute the Lorentz-factor using
+  Equ.~\eqref{Equ:lorentz}, and the Lorentz-weighted 3-velocity in AthenaK by using the function \var{get\_w\_lorentz} inside
+  \var{radiation\_m1\_tensors.hpp}.
+  \item Pack a vector for the 4-velocity $u^{\alpha}$ via \var{pack\_u\_u} with
+  \begin{align}
+    u^{0}&=\frac{W}{\alpha},\nonumber\\
+    u^{i}&=\tilde{u}^i-\frac{W\beta^i}{\alpha},\nonumber
+  \end{align}
+  and pack a vector for the 3-velocity $v^{\alpha}$ (only spatial components important) via \var{pack\_v\_u} with
+  \begin{align}
+    v^{0}&=0,\nonumber\\
+    v^{i}&=\frac{u^{i}}{W}+\frac{\beta^{i}}{\alpha}.\nonumber
+  \end{align}
+  Above, $\tilde{u}^i$ is the Lorentz-weighted 3-velocity that AthenaK uses.
+  \item Use the \var{tensor\_contract} function in \var{radiation\_m1\_tensors.hpp} to compute $u_{\alpha}$ and
+  $v_{\alpha}$ using the lower spacetime metric $g_{\alpha\beta}$ from step 1.
+  \item Calculate the fluid projector $P^{\alpha}_{\beta}$ from $u_{\alpha}$ and $u^{\alpha}$ using \var{calc\_proj} inside \var{radiation\_m1\_helper.hpp} which
+  computes
+  \begin{align}
+    P^{\alpha}_{\beta}=\delta^{\alpha}_{\beta}+u^{\alpha}u_{\beta},\nonumber
+  \end{align}
+  where $\delta^{\alpha}_{\beta}$ is the Kronecker-delta.
+  \item For each neutrino species, get the radiation energy density $E$ from the array holding the solution and
+  pack the radiation flux $F^{\alpha}$ using \var{pack\_F\_d} in \var{radiation\_m1\_tensors.hpp}, which computes
+  \begin{align}
+    F_{0}&=\beta^iF_i,\nonumber\\
+    F_{i}&=F_i,\nonumber
+  \end{align}
+  where $F_{i}$ is the radiation flux per species evolved on the given hypersurface.
+  \item Using the spacetime metric with lower indices $g_{\alpha\beta}$, with upper indices $g^{\alpha\beta}$,
+  the unit-normal with lower index $n_{\alpha}$, the Lorentz-factor $W$, the fluid 4-velocity $u^{\alpha}$, the fluid 3-velocity
+  $v_i$, the fluid projector $P^{\alpha}_{\beta}$, the radiation energy density $E$, and the radiation flux $F_{\alpha}$ in the Eulerian frame
+  plus the Eddington-factor $\chi$, we can compute the radiation stress-energy tensor $P_{\alpha\beta}$ using the \var{apply\_closure}
+  function inside \var{radiation\_m1\_helpers.hpp}. This function computes
+  \begin{align}
+    P_{\alpha\beta}^{\mathrm{thin}}=&\frac{E}{F_{\mu}F^{\mu}}F_{\alpha}F_{\beta},\nonumber\\
+    \gamma^{\kappa}_{\alpha}H_{\kappa}=&\frac{F_{\alpha}}{W}+\frac{W}{2W^2+1}v_{\alpha}((4W^2+1)F^{\mu}v_{\mu}-4W^2E),\nonumber\\
+    P_{\alpha\beta}^{\mathrm{thick}}=&\left(\frac{2W^2-1}{2W^2+1}E-2W^2F^{\mu}v_{\mu}\right)(4W^2v_{\alpha}v_{\beta}+g_{\alpha\beta}+n_{\alpha}n_{\beta})\nonumber\\
+    &+W(\gamma^{\kappa}_{\alpha}H_{\kappa}v_{\beta}+\gamma^{\kappa}_{\beta}H_{\kappa}v_{\alpha}),\nonumber\\
+    P_{\alpha\beta}=&\frac{3\chi-1}{2}P_{\alpha\beta}^{\mathrm{thin}}+\frac{3(1-\chi)}{2}P_{\alpha\beta}^{\mathrm{thick}}.\nonumber
+  \end{align}
+  \item Using the radiation pressure tensor in the Eulerian frame $P_{\alpha\beta}$, we can now compute the stress-energy tensor
+  $T_{\alpha\beta}$ in the Eulerian frame using the function \var{assemble\_rT} in \var{radiation\_m1\_helpers.hpp}, which computes
+  \begin{align}
+    T_{\alpha\beta}=En_{\alpha}n_{\beta}+F_{\alpha}n_{\beta}+n_{\alpha}F_{\beta}+P_{\alpha\beta}.\nonumber
+  \end{align}
+  \item With the stress-energy tensor in the Eulerian frame $T_{\alpha\beta}$, we can now contract this with the four-velocity vector
+  to obtain the radiation energy density in the fluid frame via
+  \begin{align}
+    \boxed{J=T_{\alpha\beta}u^{\alpha}u^{\beta}}.
+  \end{align}
+  This computation is encapsulated inside the function \var{calc\_J\_from\_rT} inside \var{radiation\_m1\_helpers.hpp}.
+  \item Using the fluid projector $P^{\alpha}_{\beta}$, the stress-energy tensor in the Eulerian frame $T_{\alpha\beta}$ and
+  the fluid four-velocity $u^{\alpha}$, we can compute the radiation flux in the fluid frame $H_{\alpha}$ via
+  \begin{align}
+    \boxed{H_{\alpha}=-P^{\beta}_{\alpha}u^{\kappa}T_{\beta\kappa}}.
+  \end{align}
+  This computation is encapsulated inside the function \var{calc\_H\_from\_rT} inside \var{radiation\_m1\_helpers.hpp}.
+  Contract with the spacetime metric $g^{\alpha\beta}$ to obtain $H^{\alpha}$.
+  \item Enforce that $J$ and $H_{\alpha}$ are above their respective floors with \var{apply\_floor} inside \var{radiation\_m1\_helpers.hpp}.
+  \item Compute the comoving number density $n$, using $J$, $E$, and $F_{\alpha}$. For that we compute the ratio of neutrinos in the Eulerian and
+  the fluid frame $\Gamma$ via \var{compute\_Gamma} inside {radiation\_m1\_helpers.hpp} which defines
+  \begin{align}
+    \Gamma=W\frac{E}{J}(1-\frac{F_{\alpha}v^{\alpha}}{E}),\quad \boxed{n=\frac{N}{\Gamma}},
+  \end{align}
+  where $N$ is the number density in the Eulerian frame, and $v^{\alpha}$ the 3-velocity packed into a 4-vector.
+  \item Optional: compute the unit-norm radiation number current $f_{\nu}$ using the fluid four-velocity $u^{\alpha}$,
+  the radiation energy density $J$, and the radiation flux in the fluid frame $H^{\alpha}$ with
+  \begin{align}
+    \boxed{f_{\nu}^{\alpha}=u^{\alpha}+\frac{H^{\alpha}}{J}}.
+  \end{align}
+  The computation is inside the function \var{assemble\_fnu} in \var{radiation\_m1\_helpers.hpp}. Note: inside the computation there is
+  a check that the radiation energy density in the fluid frame $J$ is above the floor for the radiation energy density in the Eulerian frame $E$. If this is
+  not the case, the second term vanishes.
+\end{enumerate}
+\end{document}

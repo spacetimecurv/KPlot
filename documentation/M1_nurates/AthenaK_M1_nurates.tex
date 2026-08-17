@@ -1,0 +1,726 @@
+\documentclass{article}
+\usepackage{babel}
+\selectlanguage{english}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[colorlinks=true, linkcolor=blue]{hyperref}
+\usepackage{xcolor}
+\usepackage[top=2cm, bottom=2cm,
+            left=1.5cm, right=1.5cm]{geometry}
+%\usepackage{minted}
+%\usemintedstyle{vs}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{cite}
+\usepackage{ltablex}
+\usepackage{fancyvrb}
+\usepackage{hyperref}
+\keepXColumns
+
+\hypersetup{
+    colorlinks=true,      % Turns off the boxes, colors the text instead
+    linkcolor=blue,       % Color for internal links (sections, equations, figures)
+    citecolor=teal,       % Color for citations (\cite{})
+    urlcolor=cyan         % Color for web URLs (\url{})
+}
+
+% --- Inline style for code-level names (AthenaK variables, files, flags) ------
+\definecolor{varbg}{HTML}{EEF1F7}
+\definecolor{varfg}{HTML}{273C75}
+\newcommand{\var}[1]{%
+  {\setlength{\fboxsep}{1.5pt}%
+   \colorbox{varbg}{\textcolor{varfg}{\texttt{\small #1}}}}}
+
+% --- Run-in headers for the individual steps of a workflow -------------------
+% Small caps + rule instead of \textbf, so they read as a level below
+% \subsubsection rather than as another heading of the same weight.
+\definecolor{stepfg}{HTML}{1A6B62}
+\newcommand{\step}[1]{%
+  \par\medskip\noindent
+  {\color{stepfg}\rule[-0.15ex]{2pt}{1.5ex}\hspace{0.5em}\scshape #1}%
+  \hspace{0.75em}\ignorespaces}
+
+% Define short-commands for the variables
+\newcommand{\gxx}{\var{adm\_gxx}}
+\newcommand{\gxy}{\var{adm\_gxy}}
+\newcommand{\gxz}{\var{adm\_gxz}}
+\newcommand{\gyy}{\var{adm\_gyy}}
+\newcommand{\gyz}{\var{adm\_gyz}}
+\newcommand{\gzz}{\var{adm\_gzz}}
+\newcommand{\vx}{\var{velx}}
+\newcommand{\vy}{\var{vely}}
+\newcommand{\vz}{\var{velz}}
+\newcommand{\alp}{\var{z4c\_alpha}}
+\newcommand{\betx}{\var{z4c\_betax}}
+\newcommand{\bety}{\var{z4c\_betay}}
+\newcommand{\betz}{\var{z4c\_betaz}}
+\newcommand{\Bx}{\var{bcc1}}
+\newcommand{\By}{\var{bcc2}}
+\newcommand{\Bz}{\var{bcc3}}
+\newcommand{\mr}{\mathrm}
+\setlocalecaption{nil}{ref}{References}
+
+
+\begin{document}
+\section*{AthenaK M1 neutrino transport and BNS\_nurates}
+\textit{This document collects the workflow of the M1 neutrino transport implementation
+coupled to the BNS\_nurates opacity library.}
+
+\subsection*{M1 neutrino transport}
+\step{Preliminaries}
+The M1 neutrino transport scheme in \texttt{AthenaK} is based on the implementation in \texttt{THC\_M1}~\cite{Radice:2021jtw}.
+At it's heart, the M1 neutrino transport scheme tries to solve the 7-dimensional Boltzmann equation in general relativistic formulation, i.e.
+\begin{align}
+  p^{\alpha}\frac{\partial f}{\partial x^{\alpha}}-\Gamma_{\beta\gamma}^{\alpha}p^{\beta}p^{\gamma}\frac{\partial f}{\partial p^{\alpha}}=\mathcal{C}[f],
+\end{align}
+where $f_{\nu}(x^{\alpha},p^{i})$ is neutrino distribution function. Due to it's dimensionality, we choose a reduction to 3+1 dimensions, by performing a
+angular truncation over $\Omega$. The first two angular moments of $f_{\nu}$, i.e. the energy density and flux, are kept and the system is closed with
+a prescription for the second moment, i.e. the pressure. Integration is performed over the neutrino energy $\varepsilon$, so all the spectral information is gone from
+the evolved state. $\mathcal{C}[f]$ is the collision integral, appearing in the Boltzmann equation.\\
+The M1 scheme requires a formulation of the radiation stress-energy tensor $T^{\mu\nu}_{(\nu)}$ in the Eulerian (normal observer $n^{\mu}=\frac{1}{\alpha}(1,-\beta^i)$) and the fluid frame
+(comoving observer $u^{\mu}$) for each neutrino species $(\nu)$, i.e.
+\begin{align}
+  \text{Eulerian frame:}&\quad T^{\mu\nu}_{(\nu)}=E_{(\nu)}n^{\mu}n^{\nu}+F_{(\nu)}^{\mu}n^{\nu}+n^{\mu}F_{(\nu)}^{\nu}+P_{(\nu)}^{\mu\nu},\ F_{(\nu)}^{\mu}n_{\mu}=P_{(\nu)}^{\mu\nu}n_{\nu}=0,\label{Equ:eulstress}\\
+  \text{Fluid frame:}&\quad T^{\mu\nu}_{(\nu)}=J_{(\nu)}u^{\mu}u^{\nu}+H_{(\nu)}^{\mu}u^{\nu}+u^{\mu}H_{(\nu)}^{\nu}+K_{(\nu)}^{\mu\nu},\ H_{(\nu)}^{\mu}u_{\mu}=K_{(\nu)}^{\mu\nu}u_{\nu}=0,\label{Equ:fluidstress}
+\end{align}
+where $E_{(\nu)}/J_{(\nu)}$, $F_{(\nu)}^{\mu}/H_{(\nu)}^{\mu}$, and $P_{(\nu)}^{\mu\nu}/K_{(\nu)}^{\mu\nu}$ are the radiation energy density, the radiation flux, and the radiation pressure tensor
+in the Eulerian/fluid frame. The most important operation in \texttt{AthenaK}'s M1 scheme is the calculation of the stress-energy tensor in
+the Eulerian frame using the evolved Eulerian variables $(E_{(\nu)},F_{(\nu)}^{\mu})$ to compute the radiation pressure tensor $P_{(\nu)}^{\alpha\beta}$ and then assemble everything
+according to Equ.~\eqref{Equ:eulstress}. Finally, the fluid frame variables, i.e. $(J^{(\nu)},H^{(\nu)}_{\mu})$, can be obtained by contracting with the fluid
+four-velocity
+\begin{align}
+  J^{(\nu)}&=T^{(\nu)}_{\mu\nu}u^{\mu}u^{\nu},\\
+  H_{\mu}^{(\nu)}&=-^{\perp}h_{\mu}^{\nu}u^{\rho}T^{(\nu)}_{\nu\rho},
+\end{align}
+where $^{\perp}h_{\mu}^{\nu}=\delta^{\nu}_{\mu}+u^{\nu}u_{\mu}$ is the fluid projector.\\
+As mentioned above, the evolved variables in \texttt{AthenaK}'s M1 implementation are the radiation energy density $E_{(\nu)}$, the radiation flux
+$F_{(\nu)}^{\mu}$, and also the neutrino number current $N_{(\nu)}^{\alpha}$ for each neutrino species, i.e. electron neutrinos $\nu_e$, anti-electron neutrinos $\Bar{\nu}_e$,
+heavy lepton neutrinos $\nu_x$, and anti-heavy lepton neutrinos $\Bar{\nu}_x$. The evolution of the neutrino number current is desired, because weak reactions can alter the electron fraction
+of the matter, while conserving the total lepton number of the system. In total, we find a system of three evolution equations
+\begin{align}
+  \partial_t\tilde{E}+\partial_j(\alpha\tilde{F}^j-\beta^j\tilde{E})&=\alpha \tilde{P}^{ij}K_{ij}-\tilde{F}_j\gamma^{jk}\partial_k\alpha-\underbrace{\alpha n_{\mu}\tilde{S}^{\mu}}_{\text{matter}},\label{Equ:Eevo}\\
+  \partial_t\tilde{F}_i+\partial_j(\alpha \tilde{P}^j_i-\beta^j\tilde{F}_i)&=-\tilde{E}\partial_i\alpha+\tilde{F}_k\partial_i\beta^k+\frac{\alpha}{2}\tilde{P}^{jk}\partial_i\gamma_{jk}+\underbrace{\alpha \gamma^{\mu}_i\tilde{S}_{\mu}}_{\text{matter}},\label{Equ:Fevo}\\
+  \partial_t \tilde{N}+\partial_j(\alpha n_{\nu}\tilde{f}^j_{\nu})&=\alpha(\tilde{\eta}_0-\tilde{\kappa}_{0,a}n_{\nu}),\label{Equ:evoN}
+\end{align}
+where $\tilde{A}=\sqrt{\gamma}A$ are densitized variables (in the case of the radiation pressure tensor this is implicit by construction from the
+densitized M1 variables), and $\eta_0/\kappa_{0,a}$ are the neutrino number emission/absorption coefficients. $S^{\mu}$ is the term incorporating the interaction between the neutrino radiation and the fluid, given by
+\begin{align}\label{Equ:neutrinomatterS}
+  S^{\mu}=(\eta-\kappa_aJ)u^{\mu}-(\kappa_a+\kappa_s)H^{\mu},
+\end{align}
+where $\eta$ is the neutrino emissivity, $\kappa_a$ the absorption, and $\kappa_s$ the scattering coefficient. The combination $\eta-\kappa_aJ$ drives
+the neutrino energy density towards a black-body-like equilibrium $J_{\mathrm{eq}}$, while scattering only damps $H^{\mu}$, i.e. the radiation flux.\\
+The final missing piece to the above machinery is the closure, which gives the radiation pressure tensor $P^{ij}$ in terms of $(E,F_i)$. The Minerbo closure mostly used in
+\texttt{AthenaK} defines
+\begin{align}
+  P^{ij}=\frac{3\chi-1}{2}P^{ij}_{\mathrm{thin}}+\frac{3(1-\chi)}{2}P^{ij}_{\mathrm{thick}},\label{Equ:minerbo}
+\end{align}
+where $\chi\in[1/3,1]$ is the Eddington-factor and which is a function of the fluid-frame flux factor $\xi=\frac{\sqrt{H_{\mu}H^{\mu}}}{J}$, i.e.
+\begin{align}
+  \chi(\xi)=\frac{1}{3}+\xi^2\left(\frac{6-2\xi+6\xi^2}{15}\right).
+\end{align}
+The problem here is, that $\xi$ depends on $H^{\mu}$, which depends on $P^{ij}$, which depends on $\chi(\xi)$. This implicit chain can be
+solved by a root-finding algorithm of
+\begin{align}\label{Equ:rootequ}
+  f(\xi)=J(\xi)^2\xi^2-H_{\mu}(\xi)H^{\mu}(\xi)=0.
+\end{align}
+In optically thick regions we find $H_{\mu}\sim0$ and $\chi\sim\frac{1}{3}$, so $P^{ij}\sim P^{ij}_{\mathrm{thick}}$. Conversely, in
+optically thin regions $\chi\sim1$, so $P^{ij}\sim P^{ij}_{\mathrm{thin}}$. Both regimes define the radiation pressure tensor as
+\begin{align}
+  P_{\alpha\beta}^{\mathrm{thin}}=&\frac{E}{F_{\mu}F^{\mu}}F_{\alpha}F_{\beta},\label{Equ:Pthin}\\
+  P_{\alpha\beta}^{\mathrm{thick}}=&\left(\frac{2W^2-1}{2W^2+1}E-2W^2F^{\mu}v_{\mu}\right)(4W^2v_{\alpha}v_{\beta}+g_{\alpha\beta}+n_{\alpha}n_{\beta})\nonumber\\
+  &+W(\gamma^{\kappa}_{\alpha}H_{\kappa}v_{\beta}+\gamma^{\kappa}_{\beta}H_{\kappa}v_{\alpha}),\label{Equ:Pthick}
+\end{align}
+where
+\begin{align}
+  \gamma^{\kappa}_{\alpha}H_{\kappa}=&\frac{F_{\alpha}}{W}+\frac{W}{2W^2+1}v_{\alpha}((4W^2+1)F^{\mu}v_{\mu}-4W^2E).
+\end{align}
+Lastly, instead of the Eulerian number density $N$, we require the one in the fluid frame $n$. Both are connected via the ratio
+\begin{align}
+  \Gamma = \frac{N}{n_{\nu}}=W\frac{E}{J}\left(1-\frac{F_iv^i}{E}\right),
+\end{align}
+which is the generalized Lorentz factor of the radiation. Number is advected along the unit-normalized number-flux direction
+$f^{\mu}_{\nu}=u^{\mu}+H^{\mu}/J$. $N$ for instance is then used to compute the mean neutrino energy $\langle \varepsilon\rangle =J/n_{\nu}$, which is the
+only spectral information the grey scheme has.
+
+\step{implementation}\mbox{}\\
+{\color{gray}radiation\_m1.hpp:} The M1 implementation in \texttt{AthenaK} defines a 5D array for the evolved variables $(E,F^i,N)$ \var{u0}, a similar array for the
+evolved variables at intermediate RK steps \var{u1} and on a two times coarser grid \var{coarse\_u0}. The eddington factor $\chi$ is also stored inside
+a separate 5D array \var{chi}. A 5D array for $\eta_0$ (\var{eta\_0}) and $\kappa_{0,a}$ (\var{abs\_0}), i.e. the neutrino number emissivity/absorptivity coefficients that
+enter the evolution equation for the neutrino number current in Equ.~\eqref{Equ:evoN} is also set. Lastly, the neutrino emissivity coefficient $\eta$ (\var{eta\_1}), the
+absorption coefficient $\kappa_a$ (\var{abs\_1}), and the neutrino scattering coefficient $\kappa_s$ (\var{scat\_1}) which enter the matter-radiation coupling source term
+in Equ.~\eqref{Equ:neutrinomatterS} are also stored in separate arrays. Note: the fluxes of the evolved quantities on cell faces are also
+stored in a separate 5D array \var{uflx}. For more information, see \var{radiation\_m1.hpp}. This header defines all the M1 tasks, communication buffers, container holding
+the task ID's, and some widely-used variables such as the number of evolved variables per species, the number of species etc.\\
+{\color{gray}radiation\_m1\_params.hpp:} In this file, there are set of enumerators and structs to store the parameters of a specific M1 setup:
+\begin{itemize}
+  \item \var{RadiationM1Closure}: defines enumerators for the M1 closure, i.e. \var{Minerbo}, \var{Eddington}, \var{Thin}, and \var{Kershaw}
+  \item \var{RadiationM1OpacityType}: defines enumerators for the neutrino opacity library used, i.e. \var{None}, \var{Toy}, \var{BnsNurates}, and \var{Photons}
+  \item \var{RadiationM1SrcUpdate}: defines enumerators for the method to treat radiation sources, i.e. \var{Explicit}, and \var{Implicit}
+  \item \var{RadiationM1ClosureSolver}: defines enumerators for the root-finder used to determine the closure (Minerbo-only), i.e. \var{ClosureBrent} (safeguarded Brent-Dekker;
+  default), and \var{ClosureNewton} (pure Newton-Raphson)
+  \item \var{RadiationM1Params}: defines a struct that holds all the necessary M1 parameters
+  \begin{tabularx}{\textwidth}{|l|X|}
+    \hline
+    \textbf{Parameter}&\textbf{Description}\\
+    \endfirsthead
+
+    \endhead
+
+    \hline
+    \var{closure\_type} (RadiationM1Closure)&Choice of the closure (see above)\\
+    \hline
+    \var{closure\_solver} (RadiationM1ClosureSolver)&Choice of the root-finder for the solver (see above)\\
+    \hline
+    \var{opacity\_type} (RadiationM1OpacityType)&Choice of the opacity library (see above)\\
+    \hline
+    \var{src\_update} (RadiationM1SrcUpdate)&Choice of the source update (see above)\\
+    \hline
+    \var{gr\_sources} (bool)&Whether to include GR sources\\
+    \hline
+    \var{matter\_sources} (bool)&Whether to include matter sources\\
+    \hline
+    \var{theta\_limiter} (bool)&Whether to activate the $\Theta$ flux limiter (minmod)\\
+    \hline
+    \var{beam\_sources} (bool)&Whether to include beam sources\\
+    \hline
+    \var{backreact} (bool)&Whether to include the matter-radiation backreaction source\\
+    \hline
+    \var{backreact\_tmunu} (bool)&Whether to include the radiation contribution to the stress-energy tensor\\
+    \hline
+    \var{nspecies} (int)&Number of neutrino species (currently 4)\\
+    \hline
+    \var{closure\_epsilon} (Real)&Precision with which to find the closure\\
+    \hline
+    \var{closure\_maxiter} (int)&Maximum number of iterations in closure root finder\\
+    \hline
+    \var{closure\_newton\_bracket} (bool)&Safe-guard for the Newton closure solver\\
+    \hline
+    \var{minmod\_theta} (Real)&Value of $\Theta$ for the minmod limiter\\
+    \hline
+    \var{rad\_E\_floor} (Real)&Radiation energy density $E$ floor\\
+    \hline
+    \var{rad\_N\_floor} (Real)&Radiation number density $N$ floor\\
+    \hline
+    \var{rad\_eps} (Real)&Value for imposing $F_aF^a<(1-rad\_eps)E^2$\\
+    \hline
+    \var{source\_Ye\_max} (Real)&Maximum allowed electron fraction $Y_e$ for matter\\
+    \hline
+    \var{source\_Ye\_min} (Real)&Minimum allowed electron fraction $Y_e$ for matter\\
+    \hline
+    \var{source\_limiter} (Real)&Limiter for matter source (used to avoid negative energies)\\
+    \hline
+    \var{source\_epsabs} (Real)&Target absolute precision for non-linear solver\\
+    \hline
+    \var{source\_epsrel} (Real)&Target relative precision for non-linear solver\\
+    \hline
+    \var{source\_maxiter} (int)&Maximum number of iterations for non-linear solver\\
+    \hline
+    \var{source\_thick\_limit} (Real)&Use optically thick limit, if equilibration time larger than timestep over this factor\\
+    \hline
+    \var{source\_therm\_limit} (Real)&Assume neutrinos to be thermalized above this optical depth\\
+    \hline
+    \var{source\_scat\_limit} (Real)&Use this scattering limit, if isotropization time less than timestep over this factor\\
+    \hline
+  \end{tabularx}
+  \item \var{SrcSignal}: defines enumerators for the source signal, i.e. \var{SrcThin}, \var{SrcEquil}, \var{SrcScat}, \var{SrcOk},
+  \var{SrcEddington}, and \var{SrcFail}
+  \item \var{RadiationM1Beam}: defines a struct holding parameters for radiation beams, i.e. \var{beam\_source\_vals} (1D array),
+  \var{beam\_ymin}, and \var{beam\_ymax}
+  \item \var{SrcParams}: defines a struct with variables and tensors used for the computation of the source terms
+\end{itemize}
+{\color{gray}radiation\_m1.cpp:} Complementing the \var{radiation\_m1.hpp} header, the corresponding \var{radiation\_m1.cpp} defines the M1 constructor/destructor and sets all the necessary parameters
+that exist in the module. Note: the block \var{<adm>} is needed to run with M1, because supported are only dynamical spacetimes. The default values of
+\var{RadiationM1Params} (defined as \var{params} in \var{radiation\_m1.hpp}) are:
+\begin{tabularx}{\textwidth}{|
+>{\raggedright\arraybackslash}X|
+>{\raggedright\arraybackslash}X|
+>{\raggedright\arraybackslash}X|}
+  \hline
+  \textbf{Parameter}&\textbf{Parameter name in parameter file}&\textbf{Default value}\\
+  \hline
+  \endfirsthead
+
+  \endhead
+
+  \var{params.closure\_type} (RadiationM1Closure)&\var{<radiation\_m1>} closure\_fun&"minerbo" (\var{Minerbo}) (choices: "eddington" (\var{Eddington}), "thin" (\var{Thin}), and "kershaw" (\var{Kershaw}))\\
+  \hline
+  \var{params.closure\_solver} (RadiationM1ClosureSolver)&\var{<radiation\_m1>} closure\_solver&"brent" (\var{ClosureBrent}) (choices: "newton" (\var{ClosureNewton}))\\
+  \hline
+  \var{params.opacity\_type} (RadiationM1OpacityType)&\var{<radiation\_m1>} opacity\_type&"none" (choices: "bns-nurates" (\var{BnsNurates}), "toy" (\var{Toy}), "photons" (\var{Photons}))\\
+  \hline
+  \var{params.src\_update} (RadiationM1SrcUpdate)&\var{<radiation\_m1>} src\_update&"implicit" (\var{Implicit}) (choices: "explicit" (\var{Explicit}))\\
+  \hline
+  \var{params.gr\_sources} (bool)&\var{<radiation\_m1>} gr\_sources&true\\
+  \hline
+  \var{params.matter\_sources} (bool)&\var{<radiation\_m1>} matter\_sources&true\\
+  \hline
+  \var{params.theta\_limiter} (bool)&\var{<radiation\_m1>} theta\_limiter&false (recommended: true)\\
+  \hline
+  \var{params.beam\_sources} (bool)&\var{<radiation\_m1>} beam\_sources&false\\
+  \hline
+  \var{params.backreact} (bool)&\var{<radiation\_m1>} backreact&true\\
+  \hline
+  \var{params.backreact\_tmunu} (bool)&\var{<radiation\_m1>} backreact\_tmunu&true\\
+  \hline
+  \var{params.nspecies} (int)&-&\var{M1\_TOTAL\_NUM\_SPECIES} (set to 4 if compiled with \var{-DAthena\_ENABLE\_NURATES=ON} in \var{CMakeLists.txt}, otherwise 1)\\
+  \hline
+  \var{params.closure\_epsilon} (Real)&\var{<radiation\_m1>} closure\_epsilon&$10^{-5}$\\
+  \hline
+  \var{params.closure\_maxiter} (int)&\var{<radiation\_m1>} closure\_maxiter&64\\
+  \hline
+  \var{params.closure\_newton\_bracket} (bool)&\var{<radiation\_m1>} closure\_newton\_bracket&true (only used if the \var{RadiationM1ClosureSolver} is \var{ClosureNewton})\\
+  \hline
+  \var{params.minmod\_theta} (Real)&\var{<radiation\_m1>} minmod\_theta&1.0\\
+  \hline
+  \var{params.rad\_E\_floor} (Real)&\var{<radiation\_m1>} rad\_E\_floor&$10^{-30}$\\
+  \hline
+  \var{params.rad\_N\_floor} (Real)&\var{<radiation\_m1>} rad\_N\_floor&$10^{-77}$\\
+  \hline
+  \var{params.rad\_eps} (Real)&\var{<radiation\_m1>} rad\_eps&$10^{-14}$\\
+  \hline
+  \var{params.source\_Ye\_max} (Real)&\var{<radiation\_m1>} source\_Ye\_max&0.6\\
+  \hline
+  \var{params.source\_Ye\_min} (Real)&\var{<radiation\_m1>} source\_Ye\_min&0.0\\
+  \hline
+  \var{params.source\_limiter} (Real)&\var{<radiation\_m1>} source\_limiter&0.5\\
+  \hline
+  \var{params.source\_epsabs} (Real)&\var{<radiation\_m1>} source\_epsabs&$10^{-15}$\\
+  \hline
+  \var{params.source\_epsrel} (Real)&\var{<radiation\_m1>} source\_epsrel&$10^{-5}$\\
+  \hline
+  \var{params.source\_maxiter} (int)&\var{<radiation\_m1>} source\_maxiter&64\\
+  \hline
+  \var{params.source\_thick\_limit} (Real)&\var{<radiation\_m1>} source\_thick\_limit&20.0\\
+  \hline
+  \var{params.source\_therm\_limit} (Real)&\var{<radiation\_m1>} source\_therm\_limit&-1.0\\
+  \hline
+  \var{params.source\_scat\_limit} (Real)&\var{<radiation\_m1>} source\_scat\_limit&-1.0\\
+  \hline
+\end{tabularx}
+In our case, we are only interested in the connection of M1 with \texttt{BNS\_nurates}. If the opacity library is chosen to be
+\texttt{BNS\_nurates} in the M1 constructor, then a set of separate library specific parameters are set. The specific struct is defined
+in \var{radiation\_m1\_nurates.hpp} as \var{NuratesParams} and gets stored in a \var{nurates\_params} variable if the code is compiled with
+\var{-DAthena\_ENABLE\_NURATES=ON}. For completeness, we also list the parameters of this struct and the default values (defined in \var{radiation\_m1.cpp}) here:
+\begin{tabularx}{\textwidth}{|
+>{\raggedright\arraybackslash}X|
+>{\raggedright\arraybackslash}X|
+>{\raggedright\arraybackslash}X|}
+  \hline
+  \textbf{\raggedright Nurates parameter}&\textbf{\raggedright Parameter name in parameter file}&\textbf{\raggedright Description (Default value)}\\
+  \hline
+  \endfirsthead
+
+  \endhead
+
+  \var{nurates\_params.opacity\_tau\_trap} (Real)&\var{<bns\_nurates>} opacity\_tau\_trap&Include effects of neutrino trapping above this optical depth (1.0)\\
+  \hline
+  \var{nurates\_params.opacity\_tau\_delta} (Real)&\var{<bns\_nurates>} opacity\_tau\_delta&Range of optical depths, over which trapping is introduced (1.0)\\
+  \hline
+  \var{nurates\_params.opacity\_corr\_fac\_max} (Real)&\var{<bns\_nurates>} opacity\_corr\_fac\_max&Maximum correction factor for optically thin regime (3.0)\\
+  \hline
+  \var{nurates\_params.nb\_min} (Real)&\var{<bns\_nurates>} nb\_min\_fm-3&Minimum baryon number density in \texttt{BNS\_nurates} (0.0)\\
+  \hline
+  \var{nurates\_params.temp\_min\_mev} (Real)&\var{<bns\_nurates>} temp\_min\_mev&Minimum temperature in \texttt{BNS\_nurates} (0.0)\\
+  \hline
+  \var{nurates\_params.use\_abs\_em} (bool)&\var{<bns\_nurates>} use\_abs\_em&Enable $\beta$-processes in \texttt{BNS\_nurates} (true)\\
+  \hline
+  \var{nurates\_params.use\_pair} (bool)&\var{<bns\_nurates>} use\_pair&Enable electron-positron annihilation in \texttt{BNS\_nurates} (true)\\
+  \hline
+  \var{nurates\_params.use\_brem} (bool)&\var{<bns\_nurates>} use\_brem&Enable nucleon-nucleon bremsstrahlung in \texttt{BNS\_nurates} (true)\\
+  \hline
+  \var{nurates\_params.use\_iso} (bool)&\var{<bns\_nurates>} use\_iso&Enable isoenergetic scattering of nucleons in \texttt{BNS\_nurates} (true)\\
+  \hline
+  \var{nurates\_params.use\_inelastic\_scatt} (bool)&\var{<bns\_nurates>} use\_inelastic\_scatt&Enable inelastic scattering off electrons/positrons in \texttt{BNS\_nurates} (false)\\
+  \hline
+  \var{nurates\_params.use\_WM\_ab} (bool)&\var{<bns\_nurates>} use\_WM\_ab&Flag for weak magnetism correction on absorption rates (true)\\
+  \hline
+  \var{nurates\_params.use\_WM\_sc} (bool)&\var{<bns\_nurates>} use\_WM\_sc&Flag for weak magnetism correction on scattering rates (true)\\
+  \hline
+  \var{nurates\_params.use\_dU} (bool)&\var{<bns\_nurates>} use\_dU&Flag for the correction $\Delta U=U_n-U_p$, i.e. difference of interaction potential of neutron in dense nuclear matter compared to interaction potential of proton (true)\\
+  \hline
+  \var{nurates\_params.use\_dm\_eff} (bool)&\var{<bns\_nurates>} use\_dm\_eff&Flag for treating the difference of the proton and neutron mass following a RMF approach (true)\\
+  \hline
+  \var{np.use\_equilibrium\_distribution} (bool)&\var{<bns\_nurates>} use\_equilibrium\_distribution&Flag for using a equilibrium distribution for the distribution function (true)\\
+  \hline
+  \var{nurates\_params.use\_kirchhoff\_law} (bool)&\var{<bns\_nurates>} use\_kirchhoff\_law&Flag for using the kirchhoff law (true)\\
+  \hline
+  \var{np.use\_nonthermal\_separated} (bool)&\var{<bns\_nurates>} use\_nonthermal\_separated&Whether to treat inelastic scattering separately from thermal processes (true)\\
+  \hline
+  \var{nurates\_params.use\_NN\_medium\_corr} (bool)&\var{<bns\_nurates>} use\_NN\_medium\_corr&Flag for inclusion of medium correction to HR98 NN bremsstrahlung kernel as in Fischer16 (true)\\
+  \hline
+  \var{nurates\_params.neglect\_blocking} (bool)&\var{<bns\_nurates>} use\_neglect\_blocking&Flag for neglecting the blocking factor of antineutrino in pair processes (false)\\
+  \hline
+  \var{nurates\_params.use\_decay} (bool)&\var{<bns\_nurates>} use\_decay&Flag for inclusion of nucleon decay rates (false)\\
+  \hline
+  \var{nurates\_params.use\_BRT\_brem} (bool)&\var{<bns\_nurates>} use\_BRT\_brem&Flag for using the BRT06 bremsstrahlung implementation; default is HR98 (false)\\
+  \hline
+  \var{nurates\_params.eq\_warmup\_cycles} (int)&\var{<bns\_nurates>} eq\_warmup\_cycles&Number of equilibrium warm-up cycles for reconstruction (1)\\
+  \hline
+\end{tabularx}
+In the constructor, after all the parameters are set, we allocate the necessary memory based on the grid setup for the defined arrays.\\
+{\color{gray}radiation\_m1\_closure.hpp:} This header file defines a function called \var{closure\_fun}, which returns the closure parameter $\chi(\xi)$ based
+on the specified closure. In particular:
+\begin{align}
+  \text{Minerbo:}&\ \chi=\frac{1}{3}+\xi^2\frac{6-2\xi+6\xi^2}{15},\\
+  \text{Thin:}&\ \chi=1.0,\\
+  \text{Eddington:}&\ \chi=\frac{1}{3},\\
+  \text{Kershaw:}&\ \chi=\frac{1}{3}+\frac{2}{3}\xi^2.
+\end{align}
+This function is used to compute the closure in \var{radiation\_m1\_calc\_closure.hpp} and in the root finding algorithm for
+$\xi$ in \var{radiation\_m1\_roots\_fns.hpp}.\\
+{\color{gray}radiation\_m1\_fermi.hpp:} In this header file, approximate Fermi integrals after~\cite{etde_6448430}.
+In particular:
+\begin{align}
+  f^{2p}(\eta)&=\frac{1/3+3.2899/\eta^2}{1-\exp{(-1.8246/\eta)}},\\
+  f^{2m}(\eta)&=\frac{2}{1+0.1092\exp{(0.8908\eta)}},\\
+  f^{2}_{\eta>1e-3}(\eta)&=\eta^3f^{2p}(\eta),\\
+  f^{2}_{\eta<1e-3}(\eta)&=\exp{(\eta)}f^{2m}(\eta),\\
+  f^{3p}(\eta)&=\frac{0.25+4.9348/\eta^2+11.3644/\eta^4}{1+\exp{(-1.9039\eta)}},\\
+  f^{3m}(\eta)&=\frac{6}{1+0.0559\exp{(0.9069\eta)}},\\
+  f^{3}_{\eta>1e-3}(\eta)&=\eta^4f^{3p}(\eta),\\
+  f^{3}_{\eta<1e-3}(\eta)&=\exp{(\eta)}f^{3m}(\eta).
+\end{align}
+Function $f^{2}(\eta)$ is used in \var{radiation\_m1\_nurates.hpp} to compute the number density of the neutrino species in
+[nm$^{-3}$], and $f^{3}(\eta)$ is used in the same file to compute the energy density of the neutrino species in
+[MeV/nm$^3$].\\
+{\color{gray}radiation\_m1\_helpers.hpp:} In this header file a lot of useful helper functions are defined which are frequently used in the
+computation of the closure:
+\begin{itemize}
+  \item \var{minmod2}: compute a double minmod, i.e. $\min{(1,\min{(\Theta r_l, \Theta r_p)})}$ which is used in the computation of the fluxes
+  in \var{radiation\_m1\_fluxes} and uses \var{params.minmod\_theta} ($\Theta$)
+  \item \var{CombinedIdx}: returns a combined index given a flavor index, variable index and the total number of variables, i.e. $I=i_{\text{var}}+i_{\text{flavor}}n_{\text{vars}}$,
+  where $i_{\text{var}}$ is the variable index, $i_{\text{flavor}}$ is the flavor index and $n_{\text{vars}}$ is the total number of variables (defined in
+  \var{radiation\_m1.hpp})
+  \item \var{calc\_proj}: compute the fluid projector in the Eulerian frame $^{\perp}h_{\mu}^{\nu}=\delta^{\nu}_{\mu}+n^{\nu}n_{\mu}$ or in the fluid frame $^{\perp}h_{\mu}^{\nu}=\delta^{\nu}_{\mu}+u^{\nu}u_{\mu}$ which is used in the computation of the radiation flux in the fluid frame, i.e.
+  it is used to project out the stress-energy tensor to obtain the radiation flux in the fluid frame
+  \item \var{calc\_K\_from\_rT}: projects out the radiation pressure tensor in any frame via $K_{\mu\nu}=^{\perp}h^{\kappa}_{\mu} ^{\perp}h^{\rho}_{\nu}T_{\kappa\rho}$ (not used anywhere in the code)
+  \item \var{calc\_Pthin}: computes the radiation pressure tensor in the thin limit in the Eulerian frame via (see Equ.~\eqref{Equ:Pthin}),
+  which is used when computing the closure
+  \item \var{calc\_Pthick}: computes the radiation pressure tensor in the thick limit in the Eulerian frame via (see Equ.~\eqref{Equ:Pthick}),
+  which is used when computing the closure
+  \item \var{flux\_factor}: computes the flux factor $\xi^2=\frac{H_{\mu}H^{\mu}}{J^2}$ (Note: this is not used anywhere in the code, only when computing
+  some derived variables for the tracers, where we use $\xi$, i.e. the square-root of this function)
+  \item \var{assemble\_fnu}: assembles the unit-norm radiation number current as $f_{(\nu)}^{\mu}=u^{\mu}+\frac{H^{\mu}}{J}$, where the second term is dropped if
+  $J$ is below \var{rad\_E\_floor} (it is used for the computation of the fluxes in \var{radiation\_m1\_fluxes.cpp})
+  \item \var{compute\_Gamma}: computes the ratio of the neutrino number densities in the Eulerian and the fluid frame, i.e. $\Gamma=\frac{WE}{J}\left(1-\min{\left((F_iv^i)/E, 1-\var{params.rad\_eps}\right)}\right)$ (used
+  when computing the closure)
+  \item \var{assemble\_rT}: assembles the radiation stress-energy tensor in any frame via Equs.~\eqref{Equ:eulstress}-\eqref{Equ:fluidstress} (used when computing the closure)
+  \item \var{calc\_J\_from\_rT}: projects out the radiation energy in any frame via $E=T_{\mu\nu}n^{\mu}n^{\nu}$ or $J=T_{\mu\nu}u^{\mu}u^{\nu}$ (used when computing the closure)
+  \item \var{calc\_H\_from\_rT}: projects out the radiation fluxes in any frame via $F_{\mu}=-^{\perp}h^{\nu}_{\mu}n^{\kappa}T_{\nu\kappa}$ or $H_{\mu}=-^{\perp}h^{\nu}_{\mu}u^{\kappa}T_{\nu\kappa}$
+  \item \var{apply\_closure}: computes the closure in the Eulerian frame from the Eddington factor $\chi$ via Equ.~\eqref{Equ:minerbo}
+  \item \var{calc\_E\_flux}: computes the radiation energy flux as $\mathbf{F}^i=\alpha F^{i}-\beta^iE$, which enters the evolution equation of the radiation energy (see Equ.~\eqref{Equ:Eevo})
+  \item \var{calc\_F\_flux}: computes the flux of neutrino energy flux as $\mathbf{F}^i=\alpha P^i_k-\beta^iF_k$, which enters the evolution equation for the
+  radiation flux (see Equ.~\eqref{Equ:Fevo}); Note: the variables given in the equation are densitized as they are in the code, but here we drop the tilde
+  \item \var{calc\_rad\_sources}: computes the matter-radiation source via Equ.~\eqref{Equ:neutrinomatterS} (WARNING: be careful with densitization of the variables;
+  used in \var{radiation\_m1\_sources.hpp} and \var{radiation\_m1\_update.cpp})
+  \item \var{calc\_rE\_source}: computes the source term for $E$, i.e. $\mathbf{S}=-\alpha S^{\mu}n_{\mu}$ (see Equ.~\eqref{Equ:Eevo}; again be careful with densitization)
+  \item \var{calc\_rF\_source}: computes the source term for $F_{\mu}$, i.e. $\mathbf{S}_k=\alpha S^{\mu}\gamma_{k\mu}$ (see Equ.~\eqref{Equ:Fevo}; again be careful with densitization)
+  \item \var{apply\_floor}: enforces that $E>\var{rad\_E\_floor}$ and $F_{\mu}F^{\mu}<(1-\var{rad\_eps})E^2$
+\end{itemize}
+{\color{gray}radiation\_m1\_macro.hpp:} This header defines macros for the evolution variables, i.e.
+\begin{verbatim}
+#define M1_E_IDX 0
+#define M1_FX_IDX 1
+#define M1_FY_IDX 2
+#define M1_FZ_IDX 3
+#define M1_N_IDX 4
+\end{verbatim}
+{\color{gray}radiation\_m1\_tensors.hpp:} This header defines important functions for tensor operations and preparing tensors in general:
+\begin{itemize}
+  \item \var{tensor\_dot}: there are different instances of this function with separate function signatures; they compute $g^{\mu\nu}M_{\mu}G_{\nu}$ for some four-vectors $M^{\mu}$
+  and $G^{\nu}$, $g^{ij}M_iG_j$ (spatial), they also compute $P^{\mu\nu}K_{\mu\nu}=g^{\mu\kappa}g^{\nu\rho}P_{\kappa\rho}K_{\mu\nu}$, the Euclidean dot product $M^{\mu}G_{\mu}$ for vectors and for tensors
+  $M^{\mu\nu}G_{\mu\nu}$ (these functions are extensively used)
+  \item \var{tensor\_contract}: there are two instances of this function; the first defines the operation $F_{\mu}=g_{\mu\nu}F^{\nu}$ or the inverse, while
+  the second defines $P^{\mu}_{\nu}=g^{\mu\kappa}P_{\kappa\nu}$ (these functions are extensively used)
+  \item \var{tensor\_contract2}: computes $P^{ij}=g^{ik}g^{jl}P_{kl}$ (this is used once in \var{radiation\_m1\_update.cpp})
+  \item \var{pack\_n\_d}: populates the normal vector $n_{\mu}=(-\alpha,0,0,0)$
+  \item \var{pack\_beta\_u}: populates the shift vector $\beta^{\mu}=(0,\beta^i)$
+  \item \var{pack\_u\_u}: populates the four-velocity $u^{\mu}$ as $(W/\alpha,\tilde{u}^i-W\beta^i/\alpha)$
+  \item \var{pack\_v\_u}: populates $v^{\mu}=(0,u^i/W+\beta^i/\alpha)$, where $u^i$ are packed as the spatial components
+  of \var{pack\_u\_u}
+  \item \var{pack\_F\_d}: populates $F_{\mu}=(\beta^iF_i,F_i)$
+  \item \var{pack\_F\_d}: populates $F_i$
+  \item \var{pack\_P\_dd}:  populates $P_{\mu\nu}$ (not used in the code)
+  \item \var{get\_w\_lorentz}: computes the Lorentz factor from the fluid velocity via $W=\sqrt{1+g_{\mu\nu}\tilde{u}^{\mu}\tilde{u}^{\nu}}$, where
+  $\tilde{u}^{\mu}=(0,Wv^i)$ is the Lorentz-weighted velocity that AthenaK uses
+\end{itemize}
+{\color{gray}radiation\_m1\_linalg.hpp:} This header defines a couple of linear algebra functions and a so-called \var{MathSignal} enumerator which has the fields
+\var{LinalgInvalid}, \var{LinalgEinval}, \var{LinalgSuccess}, \var{LinalgContinue}, \var{LinalgEnoprogj}, \var{LinalgEbadfunc}, and \var{LinalgEbadtol} which are
+primarily used for the root-finders:
+\begin{itemize}
+  \item \var{norm\_l2}: computes the L2-norm of a 4D vector, i.e. $||p||_2=\sqrt{\sum_{i=0}^{4}p_i\cdot p_i}$, and of a
+  3D vector, i.e. $||p||_2=\sqrt{\sum_{i=0}^{3}p_i\cdot p_i}$ (only used for other linalg operations)
+  \item \var{dot}: computes the dot product of two 4D vectors, i.e. $d_i\cdot g_i$ (only used for other linalg operations)
+  \item \var{sign}: returns the sign of a floating point number (only used for other linalg operations)
+  \item \var{dscal}: multiplies the components of a 4D vector with a scalar, i.e. $a\cdot p_i$ (only used for other
+  linalg operations)
+  \item \var{householder\_transform}: performs a transformation on a 4D vector $p$, i.e. it first computes the L2-norm $||x||_2$ of the components $i\neq 0$ (sub-vector $x_i$), then computes
+  $\alpha=p_0$, $\beta=-\mathrm{sign}(\alpha)\cdot \sqrt{\alpha^2+||x||_2^2}$, and $\tau=(\beta-\alpha)/\beta$. The latter is what the function returns, and the $i=0$ component of
+  the vector gets updated by checking $\alpha-\beta$ to be larger than a threshold \var{DBL\_MIN}. If that is the case, then $p_0=\beta$ and $p_i=s^{-1}x_i$, otherwise $p_0=\beta$ and $p_i=\frac{\varepsilon}{s}\frac{1}{\varepsilon}x_i$,
+  for some $\varepsilon$ constant (not used in the code)
+  \item \var{qr\_factorize}: computes the QR decomposition of a square matrix. Given three matrices $\mathbf{A}$, $\mathbf{Q}$, and $\mathbf{R}$ it first sets all the components of
+  $\mathbf{Q}$ and $\mathbf{R}$ to zero and fills a temporary matrix $\mathbf{V}$ with the values of $\mathbf{A}$. From this temporary matrix it takes each row as a sub-vector $\mathbf{V}_i$ and then iterates
+  to fill the entries of this sub-vector with the values from the underlying matrix. The diagonal components of $\mathbf{R}$ get filled with $||V_i||_2$. The entries for the given row $i$ of $\mathbf{Q}$ are filled via
+  $V_i/\mathbf{R}_{ii}$ and each row gets the same values. Lastly, we iterate over the columns of $\mathbf{V}$ to retrieve a subvector $V_k$ which is used to fill the off-diagnoal components of $\mathbf{R}$ via
+  the dot product of $Q_i$ and $V_k$. The off-diagonal components of $\mathbf{V}$ are computed as $\mathbf{V}_{ki}=\mathbf{V}_{ki}-\mathbf{R}_{ij}\mathbf{Q}_i$ (used for the hybrid root-solver)
+  \item \var{givens\_rotation}: generates a Givens rotation of $v=(x,y)$ to $(|v|,0)$ (used for other linalg operations), i.e.
+  \begin{verbatim}
+    KOKKOS_INLINE_FUNCTION
+    void givens_rotation(const Real &a, const Real &b, Real &c, Real &s) {
+      if (b == 0) {
+        c = 1;
+        s = 0;
+      } else if (Kokkos::fabs(b) > Kokkos::fabs(a)) {
+        Real t = -a / b;
+        Real s1 = 1.0 / Kokkos::sqrt(1 + t * t);
+        s = s1;
+        c = s1 * t;
+      } else {
+        Real t = -b / a;
+        Real c1 = 1.0 / Kokkos::sqrt(1. + t * t);
+        c = c1;
+        s = c1 * t;
+      }
+    }
+  \end{verbatim}
+  \item \var{givens\_apply\_gv}: applies a rotation $v'=G^Tv$ (used for other linalg operations)
+  \item \var{givens\_apply\_qr}: applies a rotation $Q'=QG$ (used for other linalg operations)
+  \item \var{qr\_update}: updates a QR factorisation $QR=B$ to $B'=B+uv^T$ and used the givens operations above (used in the hybrid
+  root-solver)
+  \item \var{qr\_R\_solve}: computes the solution to the system $Rx=b$, where $R$ is a right triangular matrix
+\end{itemize}
+{\color{gray}radiation\_m1\_newdt.cpp:} This file computes the minimum time-step based on the new grid setup for the M1 system after AMR.\\
+{\color{gray}radiation\_m1\_roots\_brent.hpp:} Implements the Brent-Dekker root-finder which uses a \var{BrentState} struct with fields
+$a,\ b,\ c,\ d,\ e,\ f_a,\ f_b,\ f_c$. The function \var{BrentInitialize} initializes the root-finder, i.e. it uses $x_l=0.0$ and $x_h=1.0$ in
+\var{radiation\_m1\_calc\_closure.hpp}. In \var{BrentIterate} the main body of the iteration algorithm lives which gets complemented by
+\var{BrentTestInterval} to check whether the iteration should continue or if it is converged.\\
+{\color{gray}radiation\_m1\_roots\_hybridsj.hpp:} Provides functions for Powell's multiroot solver, i.e. for the Newton-Rapshon solver.\\
+{\color{gray}radiation\_m1\_roots\_fns.hpp:} Defines the \var{NewtonClosure} function for the Minerbo closure which solves Equ.~\eqref{Equ:rootequ} for $\xi$.
+Used in \var{radiation\_m1\_calc\_closure.hpp} if \var{ClosureNewton} is selected by the user. A separate flag \var{closure\_newton\_bracket} sets a bracket
+$[x_{\text{lo}}, x_{\text{hi}}]$, such that the residual $f(\xi)$ is bracketed as $f(x_{\text{lo}})\leq 0 \leq f(x_{\text{hi}})$ and the step is the Newton point,
+if it stays inside that bracket. This guarantees convergence to the physical root, because the Minerbo residual is bimodal and this can spoil the closure in the
+core.\\
+{\color{gray}radiation\_m1\_tmunu.cpp:} This file adds the radiation contribution to the stress-energy tensor. It is guarded behind \var{backreact\_tmunu}, which is on
+by default, so the algorithm executes. In essence, we follow the same procedure as elsewhere in the code to compute the radiation pressure tensor from the evolved M1
+variables and then we fill \var{tmunu.E} (energy density) with the radiation energy density $E$, \var{tmunu.S\_d} (momentum density) with radiation flux $\sqrt{\gamma}F_i$, and
+\var{tmunu.S\_dd} (stress-energy tensor) with $T_{\mu\nu}$.\\
+{\color{gray}radiation\_m1\_fluxes.cpp:} This file calculates the 3D fluxes for our grey M1 scheme. \var{CalcFlux} is a wrapper that computes the flux by computing the spacetime
+metric $g_{\mu\nu}$ and $g^{\mu\nu}$, the spatial metric $\gamma^{ij}$, the Lorentz factor and the fluid projector, and it extracts $(E,F_i)$. With this it computes the radiation
+pressure tensor in the Eulerian frame $P_{\mu\nu}$ and computes it contraction $P^{\mu}_{\nu}$ (\var{apply\_closure}). The radiation pressure tensor is the
+last ingredient to assemble the radiation stress-energy tensor $T_{\mu\nu}$ via \var{assemble\_rT}. Projecting out the stress-energy tensor to the fluid frame gains
+the energy density and the radiation flux, i.e. the pair $(J,H_i)$ in the fluid frame. The unit-norm radiation number current $f^{\mu}_{(\nu)}$ (\var{assemble\_fnu}) and the ratio between the neutrino number
+densities in the Eulerian and fluid frame (\var{compute\_Gamma}) are calculated. This is used to compute the neutrino number density in the fluid frame $n_{(\nu)}=\frac{N}{\Gamma}$. Finally, with \var{calc\_E\_flux} and
+\var{calc\_F\_flux} the radiation energy flux and flux of neutrino energy flux are calculated. Another thing that is computed is the maximum value of the speed of light between the right and left cells via
+\begin{align}
+  c_{i+1/2}=\max_{a\in\{i,i+1\}}{\{|\alpha_a\sqrt{\gamma_a^{xx}}\pm \beta^x_a|\}}.
+\end{align}
+The flux of the neutrino number density is calculated via
+$\mathbf{F}^i=\alpha n_{(\nu)}f^i_{(\nu)}$. \var{CalcFlux} is the called inside \var{CalculateFluxes} to calculate the flux in each of the three spatial dimensions. In particular, the flux at the face $x_{i+1/2}$ is computed via
+\begin{align}
+  F_{i+1/2}=F_{i+1/2}^{\mathrm{HO}}-A_{i+1/2}\varphi_{i+1/2}\left(F_{i+1/2}^{\mathrm{HO}}-F_{i-1/2}^{\mathrm{LO}}\right),
+\end{align}
+which is a construction of a non-diffusive second-order flux $F^{\mathrm{HO}}$ and a diffusive first-order correction $F^{\mathrm{LO}}$, whcih are defined via
+\begin{align}
+  F_{i+1/2}^{\mathrm{HO}}&=\frac{f(u_i)+f(u_{i+1})}{2},\\
+  F_{i+1/2}^{\mathrm{LO}}&=\frac{1}{2}[f(u_i)+f(u_{i+1})]-\frac{c_{i+1/2}}{2}[u_{i+1}-u_i].
+\end{align}
+Above $\varphi_{i+1/2}$ is the so-called flux-limiter and $A_{i+1/2}$ is a coefficient to switch off the diffusive correction at high optical depth. The latter is determined based on
+\begin{align}
+  A_{i+1/2}&=\min{\left(1,\frac{1}{\Delta x\kappa_{\mathrm{ave}}}\right)},\\
+  \kappa_{\mathrm{ave}}&=\frac{1}{2}[(\kappa_a)_i+(\kappa_a)_{i+1}+(\kappa_s)_i+(\kappa_s)_{i+1}],
+\end{align}
+such that the coefficient is around one in optically thin regions while it is way less than one in optically thick regions. The flux-limiter is computed using a standard minmod approach (\var{minmod2} in helpers)
+\begin{align}
+  \varphi_{i+1/2}=\min{\left[1,\min{\left(\frac{u_i-u_{i-1}}{u_{i+1}-u_i},\frac{u_{i+2}-u_{i+1}}{u_{i+1}-u_i}\right)}\right]}.
+\end{align}
+The above discretized fluxes at faces are used to compute the approximate derivative
+of the fluxes via $\partial_xf(u)\approx \frac{F_{i-1/2}+F_{i+1/2}}{\Delta x}$. To sum up, the above routine in \var{CalculateFluxes} for each direction computes the flux $f(u_i)$ and $f(u_{i+1})$, then computes $\kappa_{\mathrm{ave}}$ used for
+$A_{i+1/2}$. Determining $\varphi_{i+1/2}$ and assembling everything using the definitions for the high-order and low-order fluxes yields $F_{i-1/2}$ and $F_{i+1/2}$. This
+routine is called in \var{radiation\_m1\_tasks.cpp}.\\
+{\color{gray}radiation\_m1\_calc\_closure.hpp:} Defines one Kokkos inline function called \var{calc\_closure}, which is wrapper to \var{calc\_closure} (defined in \var{radiation\_m1\_helpers.hpp}).
+Based on the specified closure, it determines $\chi$ where in the case of the Minerbo closure it uses either the Newton or the Brent-Decker rootfinder. If the initialization of the latter
+yields no root, then $\chi$ either is set to the lower limit of $\frac{1}{3}$ or to $1$ depending on the outcome. Otherwise \var{BrentIterate} tries to determine the root and \var{closure\_fun} (in \var{radiation\_m1\_closure.hpp})
+computes $\chi$ based on the root $\xi$.\\
+{\color{gray}radiation\_m1\_calc\_closure.cpp:} Defines one routine called \var{FloorAndCalcClosure} (used in \var{dyn\_grmhd.cpp}) which computes the closure $\chi$ using \var{calc\_closure} from \var{radiation\_m1\_calc\_closure.hpp} at every grid point,
+except the point is inside the radiation mask. The flag \var{is\_chi\_updated} is set to true if $\chi$ was determined.\\
+{\color{gray}radiation\_m1\_sources.hpp:} This header file prepares a couple of functions for the sources (most of the source-specific parameters are stored in a struct of \var{SrcParams}):
+\begin{itemize}
+  \item \var{prepare\_closure}: Packs a vector $F_{\mu}$ with \var{pack\_F\_d} and contracts to get $F^{\mu}$. Finally, the closure parameter is computed with \var{calc\_closure}.
+  \item \var{prepare\_sources}: Assembles the stress-energy tensor $T_{\mu\nu}$ with \var{assemble\_rT}, computes $J$ with \var{calc\_J\_from\_rT} and $H_{\mu}$ with
+  \var{calc\_H\_from\_rT} and stores both in a \var{SrcParams} struct called \var{src\_params}. It applies the floors on $J$ and $H_{\mu}$ and the calculates the radiation sources with
+  \var{calc\_rad\_sources} (defined in \var{radiation\_m1\_helpers.hpp} and implements Equ.~\eqref{Equ:neutrinomatterS}). Using $S_{\mu}$ from the previous step, the sources $\mathbf{S}$ of $E$ and $F_{\mu}$ are calculated.
+  \item \var{prepare}: Calls \var{prepare\_closure} and \var{prepare\_sources} (used in the root-finders).
+  \item \var{explicit\_update}: Computes the explicit update $(E/F)_{\mathrm{new}}=(E/F)^*+c\Delta t\cdot tS_{\mu}[E/F]$ (only used in \var{radiation\_m1\_sources.hpp}).
+  \item \var{source\_update\_ll}: Implements the main driver function to solve the implicit problem $q^{\mathrm{new}}=q^*+\Delta tS[q^{\mathrm{new}}]$, where the source term is defined by Equ.~\eqref{Equ:neutrinomatterS}.
+  In the non-stiff limit, i.e. $c\Delta t\kappa_a<1$ and $c\Delta t \kappa_s<1$, the function calls \var{prepare} to prepare the closure and the sources and then computes the explicit update via
+  \var{explicit\_update}. It then calls \var{prepare\_closure} again on the new M1 variables. In the thick and scattering dominated limit it returns. Otherwise the multiroots solver is used to determine the solution to the
+  implicit problem.
+  \item \var{source\_update}: Is a wrapper to \var{source\_update\_ll} and first computes the source update based on the specified solver and if the multiroots solver was not
+  able to find a solution then \var{source\_update\_ll} is called again with the Eddington closure (called in \var{radiation\_m1\_update.cpp}).
+\end{itemize}
+{\color{gray}radiation\_m1\_update.cpp:} The \var{TimeUpdate} function is the main routine that performs the M1 time update. It calls a wrapper function \var{TimeUpdate\_} based on the specified equation of state type
+(\var{NormalLogs} or \var{NQTLogs}, as well as the number ghost zones; if MHD and hydro are Null \var{NQTLogs} are used), which does most of the heavy lifting. The wrapper function performs updates of an implicit problem
+$F=F^*+c\Delta tS[F]$ where $F^*=F^k+c\Delta t A$ of the form:
+\begin{align}
+  F^m&=F^k+\frac{\Delta t}{2}[A[F^k]+S[F^m]],\\
+  F^{k+1}&=F^k+\Delta t[A[F^m]+S[F^{k+1}]].
+\end{align}
+The computation in \var{TimeUpdate\_} is as follows:
+\begin{enumerate}
+  \item In excised cells, set the M1 variables to 0 and skip the flux divergence, geometric, and matter-source updates (as in THC).
+  \item A couple of GR-quantities are set up: Compute the spacetime-metric $g_{\mu\nu}$ and $g^{\mu\nu}$, as well as the spatial metric $\gamma^{ij}$ plus fill the extrinsic curvature tensor $K_{ij}$.
+  Pack a normal vector $n_{\mu}$ (using \var{pack\_n\_d}) and contract with \var{tensor\_contract} to get $n^{\mu}$. Both normal vectors are used to compute $\gamma^{\mu}_{\nu}$ via
+  $\gamma^{\mu}_{\nu}=\delta^{\mu}_{\nu}+n^{\mu}n_{\nu}$. Furthermore, we pack a shift vector $\beta^{\mu}$ via \var{pack\_beta\_u} and contract this with \var{tensor\_contract} to get
+  $\beta_{\mu}$. Lastly, $\sqrt{\gamma}$ is computed using \var{adm::SpatialDet}.
+  \item Compute the derivatives of these GR-quantities, i.e. compute derivative of the lapse $\partial_i\alpha$, derivative of the shift $\partial_i\beta^j$, and
+  the derivative of the spatial metric $\partial_k\gamma_{ij}$.
+  \item Compute the fluid quantities such as the Lorentz factor, the four-velocity $u^{\mu}$ (and its contraction), the three-velocity $v^i$ (and its contraction), and
+  the fluid projector $^{\perp}h^{\mu}_{\nu}$.
+  \item Compute the contribution from the flux and geometric sources: the first is computed as $\partial_jf(u)\approx \frac{F_{i-1/2}-F_{i+1/2}}{\Delta x_j}$, where the flux sources are
+  \begin{align}
+    \mathbf{U}&=\left(\begin{array}{c}
+      \sqrt{\gamma}n\Gamma\\
+      \sqrt{\gamma}E\\
+      \sqrt{\gamma}F_k
+    \end{array}\right),\\
+    \mathbf{F}&=\left(\begin{array}{c}
+      \alpha\sqrt{\gamma}nf^i\\
+      \sqrt{\gamma}[\alpha F^i-\beta^iE]\\
+      \sqrt{\gamma}[\alpha P^i_k-\beta^iF_k]
+    \end{array}\right).
+  \end{align}
+  For the latter we extract the evolved M1 variables
+  $(E,F_i)$, apply the closure with \var{apply\_closure} to get $P_{\mu\nu}$, get the spatial components of both the radiation flux and the radiation pressure tensor and then computed the geometric sources according to
+  Equ.~\eqref{Equ:Eevo} for $E$ and Equ.~\eqref{Equ:Fevo} for $F_i$ (also see~\cite{Radice:2021jtw} for the full form of the sources). In full generality:
+  \begin{align}
+    \mathbf{G}&=\left(\begin{array}{c}
+      0\\
+      \alpha\sqrt{\gamma}[P^{ik}K_{ik}-F^i\partial_i\log{\alpha}]\\
+      \sqrt{\gamma}[F_i\partial_k\beta^i-E\partial_k\alpha+\frac{\alpha}{2}P^{ij}\partial_k\gamma_{ji}]
+    \end{array}\right).
+  \end{align}
+  \item Lastly, the contribution from the matter sources is computed: for that evolved variables are first extracted $(E,F_i)$ and the closure $P_{\mu\nu}$ is calculated via
+  \var{apply\_closure}. The stress-energy tensor $T_{\mu\nu}$ is assembled with \var{assemble\_rT} and the fluid frame quantities $(J,H_i)$ (plus $H^i$) are computed using
+  \var{calc\_J\_from\_rT} and \var{calc\_H\_from\_rT} (which are floored right after if necessary; $\Gamma$ is also computed using \var{compute\_Gamma}).
+  The radiation source $S_{\mu}$ defined in Equ.~\eqref{Equ:neutrinomatterS} is calculated via \var{calc\_rad\_sources}. With that the matter-coupling sources are computed as
+  \begin{align}
+    \mathbf{S}=\left(\begin{array}{c}
+      \alpha\sqrt{\gamma}[\eta^0-\kappa_a^0n]\\
+      -\alpha\sqrt{\gamma}S^{\mu}n_{\mu}\\
+      \alpha\sqrt{\gamma}S^{\mu}\gamma_{k\mu}
+    \end{array}\right).
+  \end{align}
+  \item If the source update is implict, then we boost to the fluid frame and compute the fluid matter interaction and at the end boost back. These values are used for the implicit solve. In
+  general we compute
+  \begin{align}
+    E^*&=E+\Delta t\mathbf{G}[E],\\
+    F_i^*&=F_i+\Delta t\mathbf{G}[F_i],\\
+    N^*&=N+\Delta t\mathbf{G}[N].
+  \end{align}
+  The pack $(E^*,F_i^*,N^*)$ is used to compute the closure $P_{\mu\nu}$, to assemble the stress-energy tensor $T_{\mu\nu}$, and the fluid frame quantities, i.e.
+  $(J^*,H^*_{\mu})$. With that we can estimate $T_{\mu\nu}$ and then boost back to the lab frame to get the new M1 variables $(E,F_i)$ based on the updated stress-energy tensor.
+  We then compute the source update wtih \var{source\_update}, update the closure and compute the new radiation energy density in the fluid frame.
+  \item After the sources are computed we limit them using the specified limiters.
+  \item Lastly, we update the fields of the state vector $\mathbf{U}$.
+\end{enumerate}
+{\color{gray}radiation\_m1\_nurates.hpp:} Defines the \var{NuratesParams} struct which is filled in the \var{radiation\_m1.cpp} constructor if \texttt{BNS\_nurates} is enabled. It also defines
+a function called \var{bns\_nurates} which sets nurates specific things that are fed into\\ \var{radiation\_m1\_calc\_opacities\_nurates.cpp}:
+\begin{itemize}
+  \item Defines some unit conversions between code units and \texttt{BNS\_nurates}.
+  \item Fills variables for the four neutrino species with the inputs of $\eta_0$, $\eta_1$, $\kappa_{a,0}$, $\kappa_{a,1}$, $\kappa_{s,0}$ etc. Splits the
+  thermal from the non-thermal contribution for $\kappa_{a,0/1}$ and $\eta_{0/1}$. The non-thermal parts from NEPS are currently being zerod right afterwards.
+  \item The function also reads the baryon-number density and the temperature. If one of these is below \var{nb\_min\_fm-3} or \var{temp\_min\_mev}, then the emissivity/absorptivity/scattering coefficients
+  are set to zero.
+  \item The opacity parameter struct \var{GreyOpacityParams} from \texttt{BNS\_nurates} is filled with the nurates parameters set in the M1 constructor on start-up, i.e.
+  with all the flags for the corrections, reactions, etc. This struct also takes EOS quantities. If the reconstructed distribution is used, the fluid frame variables, i.e.
+  $(J,n,\chi)$ and it then computes the reconstructed distribution function with \var{CalculateDistrParamsFromM1} inside \texttt{BNS\_nurates}. This function calls
+  \var{CalculateThinParamsFromM1} and \var{CalculateThickParamsFromM1} using the input parameters and stores the output in a struct called \var{NuDistributionParams}.
+  For the equilibrium distribution we call \var{NuEquilibriumParams} instead which is followed by a call to \var{ComputeM1DensitiesEq} that computes
+  gray neutrino number and energy densities under the assumption of equilibrium. The eddington factor $\chi$ for all species is subsequently set to $\frac{1}{3}$.
+  \item If the non-thermal separation is used between NEPS and the rest of the reactions, then we use \\
+  \var{ComputeM1OpacitiesNonThermalSeparated} to treat NEPS separately
+  from the thermal processes. As such NEPS is not included in the number emissivity $\eta_0$ and absorption $\kappa_{0,a}$. This function calls all the integrands/kernels that are specified
+  by the user, i.e. for isoenergetic scattering off nucleons nurates calls \var{Scattering1DIntegrand} with \var{GaussLegendreIntegrate1DMatrix} and similar for beta-processes etc. This call returns
+  the number emissivity and absorption coefficient, as well as energy emissivity, absorption, and scattering coefficients between thermal and non-thermal process and assigns them split
+  onto the processes. If we are not using non-thermal separation, we then use \var{ComputeM1Opacities} which essentially does the same thing but does not split into
+  thermal and non-thermal processes.
+  \item Assert that the opacities are finite.
+  \item Convert the opacities to code units.
+\end{itemize}
+The function \var{NeutrinoDens} computes the neutrino number and energy density with the approximate Fermi integrals in \var{radiation\_m1\_fermi.hpp}.\\
+{\color{gray}radiation\_m1\_calc\_opacities\_nurates.cpp:} Defines a function called \var{CalcOpacityNurates} which wraps \var{CalcOpacityNurates\_} based on the specified equation of state
+format. The wrapped function does the following:
+\begin{itemize}
+  \item On the first specified warm-up cycles the equilibrium distribution is turned on, because the M1 moments are floored and a reconstucted distribution would yield
+  garbage. This is only important of the reconstructed distribution is used.
+  \item Collect the solution arrays, unit conversions etc.
+  \item The Kokkos kernel that performs the opacity calculation first zeroes the number/energy emissivity/absorptivity coefficients as well as the energy scattering coefficient if we
+  are inside an excision mask. Otherwise the spacetime metric $g_{\mu\nu}$ and $g^{\mu\nu}$ is calculated as well as the the volume factor $\sqrt{\gamma}$. Using helper functions to
+  compute the Lorentz factor $W$, the four-velocity $u^{\mu}$, the three-velocity $v^i$ (as well as their contractions), and the fluid projector $^{\perp}h^{\mu}_{\nu}$ enables us to
+  calculate the fluid frame M1 variables $(J,H_{i},n)$ from the Eulerian frame $(E,F_i,N)$ using the closure $P_{\mu\nu}$. The computation proceeds as elsewhere in the code by computing the closure, assembling
+  the stress-energy tensor and then projecting out the Eulerian variables into the fluid frame. Both $J$ and $n$ are undensitized afterwards.
+  \item From the EOS the kernel fetches the baryon number density $n_b$, the pressure $p$, the electron fraction $Y_e$, the temperature $T$ by inverting $p$ (\var{GetTemperatureFromP}),
+  the proton fraction $Y_p$ with \var{GetProtonFraction}, the neutron fraction $Y_n$ with \var{GetNeutronFraction}, the baryon chemical potential $\mu_b$ with \var{GetBaryonChemicalPotential},
+  the charge chemical potential $\mu_q$ with \var{GetChargeChemicalPotential}, and the electron-lepton chemical potential $\mu_{le}$ with \var{GetElectronLeptonChemicalPotential}. The neutron chemical potential $\mu_n$ is
+  subsequently set to the baryon chemical potential $\mu_b$, while the proton chemical potential is set to $\mu_p=\mu_b+\mu_q$, and lastly the electron chemical potential to $\mu_e=\mu_{le}+\mu_q$.
+  \item The call to \var{bns\_nurates} in \var{radiation\_m1\_nurates.hpp} gets the emissivities and opacities from \texttt{BNS\_nurates} and stores the locally inside the kernel separated into energy and number, as well as
+  thermal and non-thermal. If the non-thermal components is zero, then so are the opacities and emissivities. Asserting finiteness and non-negativeness is done afterwards for all components and for all species.
+  \item If the kirchhoff law is used or the equilibrium distribution, then a new set of operations is performed: the effective optical depth $\tau=\min{\left(\sqrt{\kappa_{a,\nu_e}\cdot(\kappa_{a,\nu_e}+\kappa_{s,\nu_e})},\sqrt{\kappa_{a,\bar{\nu}_e}\cdot(\kappa_{a,\bar{\nu}_e}+\kappa_{s,\bar{\nu}_e})}\right)}\Delta t$
+  is computed to decide, whether to compute the black body function for neutrinos assuming neutrino trapping or at fixed temperature and electron fraction. If $\tau$ is larger than the user set \var{opacity\_tau\_trap} then
+  the neutrino black body function assuming trapped neutrinos is computed with \var{GetBetaEquilibriumTrapped} in \var{primitive-solver/eos.hpp} (if it fails the first time it is recomputed neglecting
+  current neutrino data). Once weak equilibrium is found, the baryon/charge/electron-lepton chemical potentials are re-computed with the new charge fractions and then from there
+  with \var{NeutrinoDens} the neutrino number and energy densities are calculated and asserted for finiteness. If we are not in a trapped regime, we compute the black body function assuming a fixed temperature and
+  electron fraction and call \var{NeutrinoDens} directly, which internally calls the approximate Fermi integrals. After that the opacities and emissivities are stored in the solution arrays and combine the optically thick and
+  thin limits. In case of the equilibrium distribution we apply a correction factor for the absorption opacities for non-LTE effects to the electron-lepton neutrinos (this correction factor is applied to all species for the scattering coefficient).
+  Also, in case of NEPS and equilibrium distribution we apply a correction to the NEPS emissivity because equilibrium over-populates the neutrino field in the decoupling region. If kirchhoff's law is enabled we apply the non-LTE correction
+  only to the thermal part and keep the non-thermal NEPS number absorption as is.
+\end{itemize}
+{\color{gray}radiation\_m1\_tasks.cpp:} This sets the tasklist map which is called in \var{MeshBlockPack::AddPhysics()}. The tasks that are listed are:
+\begin{itemize}
+  \item \var{InitRecv} (operator split before stagen): function to post non-blocking receives with MPI and initialize all boundary receive status flags to waiting
+  \item \var{CopyCons} (operator split stagen): simply function that copies \var{u0} into \var{u1} in the first RK stage
+  \item \var{SetMask} (operator split stagen): sets the radiation excision mask from the coordinate excision mask and zeroes the radiation fields in masked cells (runs each stage
+  before the closure) - depends on \var{CopyCons}
+  \item \var{FloorAndCalcClosure} (operator split stagen): computes $\chi$ with the function defined in \var{radiation\_m1\_calc\_closure.cpp} - depends on the \var{SetMask} task
+  \item \var{CalcOpacityNurates} (operator split stagen): computes the opacities and emissivities with \texttt{BNS\_nurates} - depends on \var{FloorAndCalcClosure}
+  \item \var{CalculateFluxes} (operator split stagen): calculates the fluxes $\mathbf{F}$ - depends on \var{CalcOpacityNurates}
+  \item \var{SendFlux} (operator split stagen): pack/send restricted values of fluxes of conserved variables at fine/coarse boundaries - depends on \var{CalculateFluxes}
+  \item \var{RecvFlux} (operator split stagen): receive/unpack restricted values of fluxes of conserved variables at fine/coarse boundaries - depends on \var{SendFlux}
+  \item \var{TimeUpdate} (operator split stagen): performs the implicit time update to compute the new solution - depends on \var{RecvFlux}
+  \item Post-processing: after the time update the usual operations such as restriction/prolongation and applying physical boundary conditions are performed.
+\end{itemize}
+
+\step{Workflow}\mbox{}\\
+Here we summarize the process above for one cycle, and one cell:
+\begin{enumerate}
+  \item The contribution of radiation to the stress-energy tensor is set via \var{SetTmunu} of the M1 scheme.
+  \item M1 operator split stage 1 ($\beta=1/2$):
+  \begin{enumerate}
+    \item Copy solution array \var{u0} into intermediate stage array \var{u1} via \var{CopyCons}.
+    \item Set the radiation excision mask and ensure physicality via flooring.
+    \item Compute the closure $\chi$ from the root $\xi$ of $f(\xi)$ with \var{FloorAndCalcClosure}.
+    \item \var{CalcOpacityNurates} takes the evolved M1 variables in the fluid frame, constructs the fluid frame variables via the radiation pressure tensor and
+    the stress-energy tensor assembly and together with the equation of state vector and chemical potentials it is fed into \var{bns\_nurates}. The latter calls \texttt{BNS\_nurates} constructs
+    the distribution function and by integration computes the opacities and emissivities, i.e. $\eta_0,\ \kappa_0,\ \eta_1,\ \kappa_{1,a},\ \kappa_{1,s}$. In the case of the
+    equilibrium function we apply correction factors to the opacities and emissivities depending on the regime we are in.
+    \item Calculate the fluxes $\mathbf{F}$ via \var{CalculateFluxes} using the linear combination of high- and low-order fluxes.
+    \item \var{TimeUpdate} implicitely solves for the solution without fluid backreaction.
+  \end{enumerate}
+  \item M1 operator split stage 2 ($\beta=1$):
+  \begin{enumerate}
+    \item $\chi$ is recomputed from the solution of the previous step and the opacities are re-used.
+    \item Update the solution with the solution of the implicit solve and turn on backreaction, i.e. add neutrino-matter coupling.
+    \item Call the C2P inversion.
+  \end{enumerate}
+\end{enumerate}
+In one sentence: M1 evolves grey moments and therefore cannot know its own energy spectrum; \texttt{BNS\_nurates} takes M1's three grey numbers per
+species $(n_{\nu},J,\chi)$ plus the fluid's thermodynamic state, rebuilds a spectrum consistent with them, integrates energy-dependent cross-sections over it, and
+returns the spectrum-averaged $(\eta,\kappa_a,\kappa_s)$ that close M1's source term $S^{\mu}=(\eta-\kappa_aJ)u^{\mu}-(\kappa_a+\kappa_s)H^{\mu}$.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+
+
+\end{document}
+
