@@ -5,33 +5,31 @@
 
 # Import the waveform reader class.
 from kplot import Waveform
+from kplot.sphere.mergertime import merger_time
 
 # Import necessary third-party libraries.
 import matplotlib.pyplot as plt
 import numpy as np
 
+# Built-in libraries.
+import os
+
 # Call the Waveform constructor.
-waveform = Waveform('data/batch/output-0001/waveforms')
-waveform.load_waveform_data()
-data = waveform.waveform_data
+path = '/home/no96soq/athenak/runs/PhysicsComparisonBHNS/Res_MHD_M1/'
+waveform = Waveform(os.path.join(path, 'output-0000/waveforms'), '0400', 6.373609, 0.007871519412915)
+waveform.load_psi4_data()
 
-# Convert to retarded time.
-waveform.retarded_time(300.0, 4.4)
+# Compute the kick.
+t_merge, _ = merger_time(path, 400.0)
+waveform.compute_kick(
+  t_merge=t_merge,
+  insp_min=300.0,
+  insp_max=-200.0,
+  cutoff=None,
+  hodograph=True,
+  output_dir='/home/no96soq/athenak/runs/PhysicsComparisonBHNS/Res_MHD_M1'
+)
 
-# Plot the waveform data.
-radius = "0300"
-fig, ax = plt.subplots(1,1,figsize=(12,6))
-ax.plot(data[radius]["time"], data[radius]["real"]["22"], color="red", linestyle="dashed", label=r"$\Re{(\Psi_4)}$")
-ax.plot(data[radius]["time"], data[radius]["imag"]["22"], color="blue", linestyle="dashed", label=r"$\Im{(\Psi_4)}$")
-ax.set_xlim([np.min(data[radius]["time"]), np.max(data[radius]["time"])])
-ax.set_xlabel(r"$u$")
-ax.set_ylabel(r"$\Psi_4$")
-ax.legend()
+waveform.strain(mode_key='22')
+waveform.plot_strain(0.0, 2000.0)
 
-fig.tight_layout()
-plt.show()
-plt.close()
-
-# Compute the strain.
-strain = Waveform.strain(data[radius]["time"], data[radius]["real"]["22"], data[radius]["imag"]["22"],
-                         300.0, 0.007072211146992, 4.4)
