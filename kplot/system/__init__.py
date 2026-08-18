@@ -13,6 +13,7 @@ A ready-to-edit driver lives in ``scripts/system/plot_system.sh``.
 """
 
 from .horizon import HorizonFinder
+from .tracker import Tracker
 from .batchmerge import BatchMerger
 from .waveforms import Waveform
 from .seriesplot import SeriesPlot
@@ -24,6 +25,7 @@ from . import athenak_units
 
 __all__ = [
     "HorizonFinder",
+    "Tracker",
     "BatchMerger",
     "Waveform",
     "SeriesPlot",

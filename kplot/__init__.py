@@ -13,6 +13,7 @@ keeps working.
 
 from .system import (
     HorizonFinder,
+    Tracker,
     BatchMerger,
     Waveform,
     SeriesPlot,
@@ -32,6 +33,7 @@ from . import sphere
 
 __all__ = [
     "HorizonFinder",
+    "Tracker",
     "BatchMerger",
     "Waveform",
     "SeriesPlot",

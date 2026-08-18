@@ -36,10 +36,25 @@ MSUN_TO_MS = G * M_SUN / C**3 * 1e3
 G_CGS = 6.67430e-8
 C_CGS = 2.99792458e10
 
+YE_AVG_RATE_FLOOR = 1e-3
+
 
 def cumulative(arr):
     t = arr[:, 0]; r = arr[:, 1]; dt = np.diff(t)
     return t[1:], np.cumsum(0.5 * (r[:-1] + r[1:]) * dt)
+
+
+def mask_by_rate(avg, rate, floor=YE_AVG_RATE_FLOOR):
+    """Blank a mass-weighted average where its weight has run out.
+    """
+    if avg.shape[0] != rate.shape[0]:
+        raise ValueError(f"average has {avg.shape[0]} samples but the rate has "
+                         f"{rate.shape[0]}; they must share a time grid")
+
+    peak = np.max(rate[:, 1])
+    out = np.where(rate[:, 1] >= floor * peak, avg[:, 1], np.nan)
+
+    return out
 
 
 _POYNTING_WORKER_DATA = None
@@ -132,11 +147,16 @@ def plot_ejecta(adir, t_ms, radius, poynting, ye_evo, ye_theta_evo, nprocs=1):
     ax.set_xlim(left=0, right=np.max(t_ms(t_geo_cum))); ax.set_title('Cumulative ejecta mass')
 
     ax = axes[0, 2]
-    ax.plot(t_ms(Ye_avg_geo[:, 0]), Ye_avg_geo[:, 1], color='tab:blue', label='geodesic', lw=1.2)
-    ax.plot(t_ms(Ye_avg_Ber[:, 0]), Ye_avg_Ber[:, 1], color='tab:orange', ls='--', label='Bernoulli', lw=1.2)
+    ye_geo = mask_by_rate(Ye_avg_geo, Mej_rate_geo)
+    ye_Ber = mask_by_rate(Ye_avg_Ber, Mej_rate_Ber)
+    ax.plot(t_ms(Ye_avg_geo[:, 0]), ye_geo, color='tab:blue', label='geodesic', lw=1.2)
+    ax.plot(t_ms(Ye_avg_Ber[:, 0]), ye_Ber, color='tab:orange', ls='--', label='Bernoulli', lw=1.2)
     ax.axhline(0.5, color='gray', ls=':', lw=0.8)
     ax.set_xlabel(r'$t - t_\mathrm{merger}$ [ms]'); ax.set_ylabel(r'$\langle Y_e \rangle_\mathrm{ej}$')
-    ax.set_xlim(left=0, right=np.max(t_ms(Ye_avg_geo[:, 0]))); ax.set_ylim(0, 0.6); ax.set_title(r'Mass-weighted $\langle Y_e \rangle$')
+    ax.set_xlim(left=0, right=np.max(t_ms(Mej_rate_geo[:, 0])))
+    ax.set_ylim(0, max(0.1, 1.15 * np.nanmax([np.nanmax(ye_geo), np.nanmax(ye_Ber)])))
+    ax.set_title(rf'Mass-weighted $\langle Y_e \rangle$ '
+                 rf'($\dot{{M}}_\mathrm{{ej}} > 10^{{{np.log10(YE_AVG_RATE_FLOOR):.0f}}}$ peak)')
 
     ax = axes[1, 0]
     dv = np.diff(Mej_vinf_geo[:, 0]); dv = np.append(dv, dv[-1])

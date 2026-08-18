@@ -53,10 +53,16 @@ variables (\var{mhd\_w\_bcc}), the ADM three-metric $\gamma_{ij}$ (\var{adm}),
 the lapse $\alpha$ (\var{z4c\_alpha}), and the three shift components $\beta^i$
 (\var{z4c\_betax}, \var{z4c\_betay}, \var{z4c\_betaz}). AthenaK names the resulting
 files \var{<job>.r=<radius>.<variable>.<counter>.vtk}, where \var{<job>} is the job
-name of the run; the pipeline reproduces that pattern from its \var{-{}-jobname} and
-\var{-{}-radius} arguments. The blocks must therefore all use the same \var{radius},
-since the pipeline matches files by the radius string in the file name. Useful radii
-are $300.0$ and $400.0$ (code units, $M_\odot$).
+name of the run. A block asking for several radii at once (\var{radii}, or
+\var{nradii} together with \var{r\_min} and \var{r\_max}, in place of \var{radius})
+bundles them into one dump named
+\var{<job>.r=<rmin>-<rmax>.<variable>.<counter>.vtk} instead, holding every surface
+on the same angular grid. The pipeline reads both forms: it scans the sph directories
+for the dumps of each variable and takes the surface at \var{-{}-radius} out of
+whichever dump holds it. The blocks therefore need not agree on how they group their
+radii---only on covering the requested one---and a run that switched form across a
+restart is still analysed as one run. Useful radii are $300.0$ and $400.0$
+(code units, $M_\odot$).
 Spherical output is storage intensive, so \var{dt} should be chosen as a
 compromise: small enough to resolve the ejecta rate in time, large enough to
 keep the data volume manageable.

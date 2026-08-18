@@ -48,16 +48,8 @@ plt.show()
 
 # Use the built in plot-function.
 horizon_finder.plot_horizon(
-  variable="mass",
   output_path=None,
   save=False,
-  xmin=None,
-  xmax=None,
-  ymin=None,
-  ymax=None,
-  logx=False,
-  logy=True,
-  xlabel=r"$t$",
-  ylabel=r"$M_{AH}$",
-  color="red"
-)
+  xmin=0.0,
+  xmax=7000.0,
+  t_merger=1519.0)

@@ -51,57 +51,66 @@ class HorizonFinder:
     data_dict = {name: data[:, i] for i, name in enumerate(headers)}
     self.horizon_data = data_dict
 
-  def plot_horizon(self, variable=None, output_path=None, save=False,
-                   xmin=None, xmax=None, ymin=None, ymax=None,
-                   logx=False, logy=False, xlabel="", ylabel="", color="red"):
+  def plot_horizon(self, output_path=None, save=False,
+                   xmin=None, xmax=None, t_merger=None):
     """
-    Simple function that plots a horizon variable.
+    Simple function that plots irreducible mass, spin parameter, and minimum radius.
 
     Parameters:
-    variable (str): One of the keys of the horizon dict.
     output_path (str): Path where to store the plot.
     save (bool): Whether to store the plot or not.
     xmin (float): Minimum value on x.
     xmax (float): Maximum value on x.
-    ymin (float): Minimum value on y.
-    ymax (float): Maximum value on y.
-    logx (bool): Whether to plot x-axis in log-scale.
-    logy (bool): Whether to plot y-axis in log-scale.
-    xlabel (str): Label for the x-axis.
-    ylabel (str): Label for the y-axis.
-    color (str): Color of the plot.
+    t_merger (float): Time of merger.
     """
-    # Check if variable exists.
-    if variable not in self.horizon_data.keys():
-      raise ValueError("Specified variable does not exist in the horizon data.\n" \
-                       "First load the data or check the headers.")
+    if self.horizon_data is None:
+      raise ValueError("Horizon data not loaded. Call load_horizon_data() first.")
+    
+    # Plot style.
+    mpl.rcParams['lines.linewidth'] = 1.5
+    mpl.rcParams['lines.linestyle'] = 'solid'
+    mpl.rcParams['axes.labelsize']  = 16
+    mpl.rcParams['text.usetex']     = True
+    mpl.rcParams['font.family']     = 'Computer Modern Serif'
+    mpl.rcParams['xtick.labelsize'] = 16
+    mpl.rcParams['ytick.labelsize'] = 16
 
-    # Plotting canvas.
-    data = self.horizon_data
-    fig, ax = plt.subplots(1,1,figsize=(8,4))
-    ax.plot(data["time"], data[variable], color=color, linestyle="solid")
-    if xmin != None and xmax != None:
-      ax.set_xmin([xmin,xmax])
-    else:
-      ax.set_xlim([np.min(data["time"]),np.max(data["time"])])
+    # Load the data.
+    hor = self.horizon_data
+    t_lim = (xmin, xmax)
+    colors = ['#F0A860', '#D55E00', '#009E73']
+    labels = [r'$M_{\mathrm{BH,irr}}$', r'$a_{\mathrm{BH}}$', r'$\min{\left(r_{\mathrm{BH}}\right)}$']
+    
+    # Plot the data.
+    fig, ax = plt.subplots(3,1,figsize=(8,10), sharex=True, gridspec_kw=dict(hspace=0.08))
 
-    if ymin != None and ymax != None:
-      ax.set_ymin([ymin,ymax])
-    else:
-      pass
+    # Irreducible mass.
+    mass = np.sqrt(hor['area'] / (16 * np.pi))
+    ax[0].plot(hor['time'], mass, color=colors[0])
 
-    if logx:
-      ax.set_xscale("log")
+    # Spin parameter.
+    spin = hor['S'] / hor['mass']**2
+    ax[1].plot(hor['time'], spin, color=colors[1])
 
-    if logy:
-      ax.set_yscale("log")
+    # Minimum radius.
+    ax[2].plot(hor['time'], hor['minradius'], color=colors[2])
 
-    ax.set_xlabel(xlabel, fontsize=14)
-    ax.set_ylabel(ylabel, fontsize=14)
+    for i, a in enumerate(ax):
+      if t_merger is not None:
+        a.axvline(t_merger, color='grey', alpha=0.5)
+      a.set_xlim(*t_lim)
+      a.set_ylabel(labels[i])
 
-    fig.tight_layout()
+      if i == 2:
+        a.set_xlabel(r'$t\ [M_{\odot}]$')
 
+    # Annotate.
+    if t_merger is not None:
+      ax[0].annotate('merger', xy=(t_merger, np.nanmax(mass)-0.05), xytext=(-4, -10), 
+                     textcoords='offset points', ha='right', va='top', fontsize=11, color='grey')
+
+    fig.subplots_adjust(left=0.115, right=0.965, top=0.96, bottom=0.085, hspace=0.06)
     if save:
-      plt.savefig(output_path, dpi=200)
+      plt.savefig(output_path, dpi=150)
     else:
       plt.show()

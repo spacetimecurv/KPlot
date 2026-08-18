@@ -25,7 +25,7 @@ Outputs (written to --output-dir):
 Command line:
     kplot-sphere-ejecta --sph-dir DIR [--sph-dir DIR ...] --eos-table TABLE.h5 \
         --output-dir DIR --radius 300 [--t-merger T --t-post-ms 25] \
-        --per-iteration-output True
+        [--per_iteration_out True]
 """
 
 import argparse
