@@ -143,7 +143,7 @@ class Waveform:
 
   # Compute the strain and frequency.
   @staticmethod
-  def strain(time, Rerpsi4, Imrpsi4, radius, Omega, Mass):
+  def strain(time, Rerpsi4, Imrpsi4, radius, Omega, Mass, cutoff=None):
     """
     Compute the strain and the frequency from the real and imaginary
       part of the psi4.
@@ -155,9 +155,10 @@ class Waveform:
     radius: Extraction radius of the wave.
     Omega: Initial orbital frequency.
     Mass: Total gravitational mass of the system.
+    cutoff: FFI cutoff frequency nu_0. Defaults to Omega/pi.
     """
     # Cutoff-frequency.
-    f0 = Omega / np.pi
+    f0 = Omega / np.pi if cutoff is None else cutoff
     strain_data = {}
 
     # Compute rpsi4, the retarded time and strain.
@@ -171,5 +172,6 @@ class Waveform:
     strain_data["Momega"] = Waveform.phi_dot(u,h)
     strain_data["Ret. time"] = u
     strain_data["Sim. time"] = time
+    strain_data["Cutoff"] = f0
 
     return strain_data
