@@ -293,7 +293,7 @@ def _process_snapshot_ejecta(args):
 
     result = {
         'time':         time,
-        'Mej_rate':     _np.where(mask_out, base_integrand, 0.0).sum() * riemann_weights.sum(),
+        'Mej_rate':     _np.where(mask_out, cell_rate, 0.0).sum(),
         'Mej_rate_geo': total_geo,
         'Mej_rate_Ber': total_Ber,
         'vinf_avg_geo': (_np.sum(vinf_geo * flux_rate_geo) / total_geo if total_geo > 0 else 0.0),
