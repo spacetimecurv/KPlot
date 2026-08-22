@@ -76,6 +76,7 @@ Output files (written to --output-dir):
     Lnu_E_total.txt       time, sum over all 4 species         [M_sun], [erg/s]
     Eav_{sp}.txt          time, flux-weighted mean energy       [M_sun], [MeV]
     dEnu_dtheta_{sp}.txt  θ, time-integrated dE_ν/dθ           [rad],   [erg/rad]
+    sphere_center_neutrino.txt  t, center of the extraction surface  [M_sun]
 
 Command line:
     kplot-sphere-neutrinos --sph-dir DIR [--sph-dir DIR ...] --output-dir DIR \
@@ -233,7 +234,9 @@ def _process_snapshot(args):
                                     conv_energy as _conv_e, \
                                     cactus as _cactus, cgs as _cgs
 
-    from ._files import Shell as _Shell
+    import os as _os
+
+    from ._files import Shell as _Shell, CENTER_TOL as _CENTER_TOL
 
     # Every entry is (path, surface index): a dump may hold more than one radius.
     flux_vtk  = _Shell(*flux_file)
@@ -250,6 +253,18 @@ def _process_snapshot(args):
     theta = flux_vtk.theta
     phi   = flux_vtk.phi
     surface_weights = flux_vtk.shell('weights')
+
+    shells  = (flux_vtk, ener_vtk, nden_vtk, adm_vtk, alpha_vtk,
+               betax_vtk, betay_vtk, betaz_vtk)
+    centers = _np.array([sh.center for sh in shells])
+    if not _np.allclose(centers, centers[0], rtol=0.0, atol=_CENTER_TOL):
+        detail = '\n'.join(f'  {_os.path.basename(sh.path)}: '
+                           f'({c[0]:.6g}, {c[1]:.6g}, {c[2]:.6g})'
+                           for sh, c in zip(shells, centers))
+        raise RuntimeError(
+            f'Sphere centers disagree at t = {time:g} M_sun:\n{detail}\n'
+            'Every sph output block feeding the neutrino analysis must use the same '
+            'center_tracker.')
 
     # -- Duplication correction --
     z4c_alpha_raw = alpha_vtk.shell('z4c_alpha')
@@ -323,7 +338,7 @@ def _process_snapshot(args):
         )
         dLdtheta_list.append(dL_theta / dtheta)
 
-    return {'time': time, 'Lnu_E': Lnu_E_list,
+    return {'time': time, 'center': centers[0], 'Lnu_E': Lnu_E_list,
             'Eav': Eav_list, 'dLdtheta': dLdtheta_list}
 
 
@@ -448,6 +463,13 @@ def analyze(sph_dirs, output_dir, radius=DEFAULT_RADIUS, jobname=DEFAULT_JOBNAME
     # Unpack results into time-sorted accumulators
     # ------------------------------------------------------------------
     time_arr     = np.array([r['time']    for r in results])
+    center_arr   = np.array([r['center']  for r in results])
+
+    center_shift = np.linalg.norm(center_arr - center_arr[0], axis=1).max()
+    print(f"Sphere center: ({center_arr[0][0]:.6g}, {center_arr[0][1]:.6g}, "
+          f"{center_arr[0][2]:.6g}) -> ({center_arr[-1][0]:.6g}, "
+          f"{center_arr[-1][1]:.6g}, {center_arr[-1][2]:.6g}) M_sun, "
+          f"max excursion {center_shift:.6g}")
     Lnu_E_snap   = [np.array([r['Lnu_E'][s]   for r in results]) for s in range(NSPECIES)]
     Eav_snap     = [np.array([r['Eav'][s]     for r in results]) for s in range(NSPECIES)]
     dLdtheta_snap = [np.array([r['dLdtheta'][s] for r in results]) for s in range(NSPECIES)]
@@ -502,6 +524,13 @@ def analyze(sph_dirs, output_dir, radius=DEFAULT_RADIUS, jobname=DEFAULT_JOBNAME
             header=f'theta[rad]    dEnu_dtheta_{sp}[erg/rad]  (time-integrated, outgoing only)',
             fmt='%.6e',
         )
+
+    np.savetxt(
+        os.path.join(output_dir, 'sphere_center_neutrino.txt'),
+        np.column_stack((time_arr, center_arr)),
+        header='time[M_sun]    xc[M_sun]    yc[M_sun]    zc[M_sun]',
+        fmt='%.6e',
+    )
 
     np.savetxt(
         os.path.join(output_dir, 'Lnu_E_total.txt'),

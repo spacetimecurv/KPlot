@@ -10,6 +10,7 @@ and rhoej_theta outputs: its marginals reproduce both.
 
 Outputs (written to --output-dir):
   Mej_rate.txt, Mej_rate_Ber.txt, Mej_rate_geo.txt
+  sphere_center.txt                            t, center of the extraction surface
   Mej_vinf_geo.txt, Mej_vinf_Ber.txt          (vinf marginal, dM per v-bin)
   rhoej_theta_Ber.txt, rhoej_theta_geo.txt     (theta marginal, dM/dtheta)
   Mej_vinf_theta_geo.npy, Mej_vinf_theta_Ber.npy   (full 2D arrays, shape Nv x Ntheta)
@@ -153,7 +154,9 @@ def _process_snapshot_ejecta(args):
     from athplot.utils.units import (conv_dens as _conv_dens,
                                      cactus as _cactus, cgs as _cgs)
 
-    from ._files import Shell as _Shell
+    import os as _os
+
+    from ._files import Shell as _Shell, CENTER_TOL as _CENTER_TOL
     from ._integrate import calc_ur as _calc_ur, sqrt_det_metric_adm as _sqrt_det
 
     # ------- EJECTA -------
@@ -172,6 +175,17 @@ def _process_snapshot_ejecta(args):
     r     = mhd.radius
     theta = mhd.theta
     phi   = mhd.phi
+
+    shells  = (mhd, adm, alpha, betax, betay, betaz)
+    centers = _np.array([sh.center for sh in shells])
+    if not _np.allclose(centers, centers[0], rtol=0.0, atol=_CENTER_TOL):
+        detail = '\n'.join(f'  {_os.path.basename(sh.path)}: '
+                           f'({c[0]:.6g}, {c[1]:.6g}, {c[2]:.6g})'
+                           for sh, c in zip(shells, centers))
+        raise RuntimeError(
+            f'Sphere centers disagree at t = {time:g} M_sun:\n{detail}\n'
+            'Every sph output block feeding the ejecta analysis must use the same '
+            'center_tracker.')
 
     z4c_alpha_raw = alpha.shell('z4c_alpha')
     phi_zero    = (phi == phi.min())
@@ -293,6 +307,7 @@ def _process_snapshot_ejecta(args):
 
     result = {
         'time':         time,
+        'center':       centers[0],
         'Mej_rate':     _np.where(mask_out, cell_rate, 0.0).sum(),
         'Mej_rate_geo': total_geo,
         'Mej_rate_Ber': total_Ber,
@@ -459,6 +474,13 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
     ye_avg_Ber_arr   = np.array([r['ye_avg_Ber']   for r in results])
     poynt_flux_arr   = np.array([r['poynt_flux']   for r in results])
     poynt_map_arr    = np.array([r['poynt_map']    for r in results])  # (Nt, Nphi, Ntheta)
+    center_arr       = np.array([r['center']       for r in results])  # (Nt, 3)
+
+    center_shift = np.linalg.norm(center_arr - center_arr[0], axis=1).max()
+    print(f"Sphere center: ({center_arr[0][0]:.6g}, {center_arr[0][1]:.6g}, "
+          f"{center_arr[0][2]:.6g}) -> ({center_arr[-1][0]:.6g}, "
+          f"{center_arr[-1][1]:.6g}, {center_arr[-1][2]:.6g}) M_sun, "
+          f"max excursion {center_shift:.6g}")
 
     res_2d           = [r for r in results if r['in_2d']]
     if len(res_2d) < 2:
@@ -547,6 +569,11 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
         f.write('# time(Msun)    Mej_rate_geo(Msun/Msun)\n')
         for t, rate in zip(time_arr, Mej_rate_geo_arr):
             f.write(f'{t:.6e}    {rate:.6e}\n')
+
+    np.savetxt(os.path.join(output_dir, 'sphere_center.txt'),
+               np.column_stack((time_arr, center_arr)),
+               header='time(Msun)    xc(Msun)    yc(Msun)    zc(Msun)',
+               fmt='%.6e')
 
     # -- Mass-averaged vinf --
     np.savetxt(os.path.join(output_dir, 'vinf_avg_geo.txt'),

@@ -18,6 +18,8 @@ from athplot.load_sph_vtk import SphericalData
 # [M_sun].  File names carry two decimals, so anything looser would be guesswork.
 RADIUS_TOL = 0.05
 
+CENTER_TOL = 0.5
+
 
 # ===================================================================
 # File names and metadata
@@ -254,9 +256,10 @@ def locate(sph_dirs, jobname, variable, radius, tol=RADIUS_TOL, hint=''):
 class Shell:
     """One extraction surface of an sph dump, however many surfaces the file holds.
 
-    Exposes what the analyses need — ``time``, ``theta``, ``phi``, ``radius`` and
-    ``shell(var)`` — with ``shell`` always returning the ``(Nphi, Ntheta)`` array of
-    the selected surface, so single-radius and multi-radius dumps read alike.
+    Exposes what the analyses need — ``time``, ``theta``, ``phi``, ``radius``,
+    ``center`` and ``shell(var)`` — with ``shell`` always returning the
+    ``(Nphi, Ntheta)`` array of the selected surface, so single-radius and
+    multi-radius dumps read alike.
     """
 
     def __init__(self, path, iradius=0):
@@ -269,6 +272,8 @@ class Shell:
         self.iradius = iradius
         self.nradii = self._data.nradii
         self.radius = float(self._data.radii[iradius])
+        self.center = np.array([getattr(self._data, k, 0.0)
+                                for k in ('xc', 'yc', 'zc')])
         self.time = self._data.time
         self.cycle = self._data.cycle
         self.theta = self._data.theta
