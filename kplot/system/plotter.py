@@ -737,7 +737,7 @@ def _render_frame_worker_all(kw):
       draw_horizons(ax_xy, horizons, trackers, data_xy.time, plane="xy", coord_scale=coord_scale)
 
     if xlim is not None: ax_xz.set_xlim(*xlim); ax_xy.set_xlim(*xlim)
-    ax_xz.set_ylim(*zlim)
+    if zlim is not None: ax_xz.set_ylim(*zlim)
     if ylim is not None: ax_xy.set_ylim(*ylim)
     plt.setp(ax_xz.get_xticklabels(), visible=False)
     ax_xz.set_xlabel(""); ax_xz.set_ylabel(rf"$z~[{coord_label}]$")
@@ -825,7 +825,7 @@ def render_frames_all(output_dirs, figpath, file_prefix, var_name,
       return
     print(f"  Skipping existing, rendering {len(frames)} new frame(s)")
 
-  zlim = (0, ylim[1]) if ylim is not None else (0, None)
+  zlim = (0, ylim[1]) if ylim is not None else None
   plot_kwargs = dict(cmap=cmap, interpolation="nearest", rescale=scale_factor)
   if norm is not None: plot_kwargs["norm"] = norm
   if vmin is not None: plot_kwargs["vmin"] = vmin
@@ -950,7 +950,7 @@ def _render_avg_energy_worker_all(kw):
       draw_horizons(ax_xy, horizons, trackers, data_xy.datasets[0].time, plane="xy", coord_scale=coord_scale)
 
     if xlim is not None: ax_xz.set_xlim(*xlim); ax_xy.set_xlim(*xlim)
-    ax_xz.set_ylim(*zlim)
+    if zlim is not None: ax_xz.set_ylim(*zlim)
     if ylim is not None: ax_xy.set_ylim(*ylim)
     plt.setp(ax_xz.get_xticklabels(), visible=False)
     ax_xz.set_xlabel(""); ax_xz.set_ylabel(rf"$z~[{coord_label}]$")
@@ -1031,7 +1031,7 @@ def render_avg_energy_all(output_dirs, figpath, print_minmax=False,
   outdir = os.path.join(figpath, subdir) if subdir else figpath
   os.makedirs(outdir, exist_ok=True)
 
-  zlim = (0, ylim[1]) if ylim is not None else (0, None)
+  zlim = (0, ylim[1]) if ylim is not None else None
   worker_args = [
     dict(global_idx=idx,
          xy_n_fpath=t_to_n[t], xy_e_fpath=t_to_e[t],
