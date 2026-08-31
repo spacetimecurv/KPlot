@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# plot_system.sh — KPlot full-run visualization driver
+# plot_system.sh — KPlot full-run visualization script
 # ----------------------------------------------------
 # Thin wrapper around the KPlot full-run visualizer (kplot.system /
 # SystemPlotter).  All plotting logic lives in the installed KPlot package, so

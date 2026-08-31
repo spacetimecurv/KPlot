@@ -581,6 +581,51 @@ def plot_neutrino(adir, t_ms, t_merger_ms, nu_xlabel, nu_xlim, radius):
     print(f'Saved {out}')
 
 
+def plot_butterfly(adir, t_ms, radius):
+    """Butterfly diagram: density-weighted <b^phi>(theta, t), cf. Hayashi et al.
+    (arXiv:2211.07158). Diverging colormap centered at zero on a symlog scale,
+    since the toroidal field reverses sign (dynamo polarity flips) across
+    orders of magnitude.
+    """
+    path = os.path.join(adir, 'butterfly_bphi.npy')
+    if not os.path.exists(path):
+        print("  No butterfly diagram output found; skipping.")
+        return
+
+    from matplotlib.colors import SymLogNorm
+
+    bphi  = np.load(path)                                                     # (Nt, Ntheta)
+    time  = np.loadtxt(os.path.join(adir, 'time_sph_butterfly.txt'))
+    theta = np.loadtxt(os.path.join(adir, 'theta_centers_sph_butterfly.txt'))
+
+    vmax = np.abs(bphi).max()
+    if vmax <= 0:
+        print("  Butterfly diagram is all zero; skipping.")
+        return
+    norm = SymLogNorm(linthresh=vmax / 1e3, vmin=-vmax, vmax=vmax, base=10)
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    mesh = ax.pcolormesh(edges_from_centers(t_ms(time)), edges_from_centers(theta),
+                         bphi.T, cmap='RdBu_r', norm=norm, shading='flat')
+    ax.set_xlabel(r'$t - t_\mathrm{merger}$ [ms]')
+    ax.set_ylabel(r'$\theta$')
+    ax.set_ylim(0.0, np.pi)
+    ax.set_yticks([0, np.pi/4, np.pi/2, 3*np.pi/4, np.pi])
+    ax.set_yticklabels([r'$0$', r'$\frac{\pi}{4}$', r'$\pi/2$', r'$\frac{3\pi}{4}$', r'$\pi$'])
+
+    cbar = fig.colorbar(mesh, ax=ax, pad=0.01)
+    cbar.set_label(r'$\langle b^\phi \rangle$  [code units]')
+
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+    fig.text(0.01, 0.99, f'R = {radius:g} $M_\\odot$', fontsize=12,
+            ha='left', verticalalignment='top', bbox=props)
+
+    fig.tight_layout()
+    out = os.path.join(adir, 'fig_butterfly.png')
+    fig.savefig(out, dpi=150, bbox_inches='tight')
+    print(f'Saved {out}')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -595,6 +640,7 @@ def main(argv=None):
                              "instead of absolute time.")
     parser.add_argument("--no-ejecta", action="store_true", help="Skip the ejecta figure.")
     parser.add_argument("--no-neutrino", action="store_true", help="Skip the neutrino figure.")
+    parser.add_argument("--no-butterfly", action="store_true", help="Skip the butterfly diagram figure.")
     parser.add_argument("--poynting", action="store_true", help="Make Poynting flux analysis.")
     parser.add_argument("--nprocs", type=int, default=1,
                         help="Worker processes for rendering Poynting-flux frames. Default: 1.")
@@ -623,6 +669,8 @@ def main(argv=None):
                     args.ye_evo, args.ye_theta_evo, args.nprocs)
     if not args.no_neutrino:
         plot_neutrino(adir, nu_t_ms, t_merger_ms, nu_xlabel, nu_xlim, args.radius)
+    if not args.no_butterfly:
+        plot_butterfly(adir, t_ms_merger, args.radius)
 
 
 if __name__ == "__main__":

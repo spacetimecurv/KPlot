@@ -4,7 +4,7 @@
 #########################################################################
 
 # Import the batch merger class.
-from kplot import BatchMerger
+from kplot.system.batchmerge import BatchMerger
 
 # Create a BatchMerger instance.
 merger = BatchMerger()

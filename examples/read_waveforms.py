@@ -4,7 +4,7 @@
 #########################################################################
 
 # Import the waveform reader class.
-from kplot import Waveform
+from kplot.system.waveforms import Waveform
 from kplot.sphere.mergertime import merger_time
 
 # Import necessary third-party libraries.

@@ -41,20 +41,23 @@ Currently supported are the following classes:
 - ```Units``` (creates a unit conversion system for derived variables)
 - ```SystemPlotter``` (full-run simulation visualizer spanning all ```output-XXXX``` restart segments)
 - ```kplot.sphere``` (ejecta, neutrino and merger-time analysis of spherical-surface extraction output)
-Some examples outline the usage. Once built, the utilities can be called with:
+- ```kplot.volume``` (post-merger disk diagnostics from 3D volume-domain snapshots)
+Some examples outline the usage. Once built, the utilities can be called with, e.g.:
 ```python
-from kplot import *
+from kplot.system.plotter import SystemPlotter
+from kplot.system.horizon import HorizonFinder
 ```
 
-The two main workflows each have a runnable example and a shell driver:
+Each workflow has a shell driver, and the older two also have a runnable example:
 
 | Workflow | Example | Driver |
 |---|---|---|
 | Full-run visualization | [```examples/plot_system.py```](examples/plot_system.py) | [```scripts/system/plot_system.sh```](scripts/system/plot_system.sh) |
 | Ejecta + neutrino analysis | [```examples/analyze_sphere.py```](examples/analyze_sphere.py) | [```scripts/sphere/run_analysis.sh```](scripts/sphere/run_analysis.sh) |
+| Post-merger disk analysis | *(none yet)* | [```scripts/volume/run_analysis.sh```](scripts/volume/run_analysis.sh) |
 
 ### Repository layout
-The package is split into two subpackages, each with a matching driver folder in
+The package is split into three subpackages, each with a matching driver folder in
 ```scripts/```:
 
 ```
@@ -62,22 +65,25 @@ kplot/              the installed Python package
   system/           whole-run diagnostics
                       plotter.py (SystemPlotter), history.py, horizon.py,
                       waveforms.py, seriesplot.py, batchmerge.py,
-                      units.py, athenak_units.py
+                      units.py, athenak_units.py, bin_convert.py
   sphere/           spherical-surface (sph) extraction analysis
-                      ejecta.py, neutrinos.py, mergertime.py,
-                      accretion.py, plots.py, comparison.py
+                      ejecta.py, neutrinos.py, mergertime.py, poynting.py,
+                      butterfly.py, accretion.py, plots.py, comparison.py
+  volume/           3D volume-domain (bin) analysis
+                      disk.py, plots.py
 scripts/            ready-to-edit shell drivers, one folder per workflow
   system/           plot_system.sh, make_movies.sh                  -> kplot.system
   sphere/           run_analysis.sh, run_comparison.sh, config.ini  -> kplot.sphere
+  volume/           run_analysis.sh, config.ini                     -> kplot.volume
 examples/           small, self-contained usage examples
 external/           plot-tools submodule (athplot)
 ```
 
 ```kplot.system``` covers the simulation as a whole (history files, trackers,
 horizons, waveforms, slice series); ```kplot.sphere``` covers what crosses a
-spherical extraction surface (ejecta, neutrinos). Every ```kplot.system``` name is
-re-exported at the top level, so ```from kplot import SystemPlotter``` and
-```from kplot.system import SystemPlotter``` are equivalent.
+spherical extraction surface (ejecta, neutrinos); ```kplot.volume``` covers the
+3D volume domain (currently the post-merger disk). Names live under their
+subpackage and submodule, e.g. ```from kplot.system.plotter import SystemPlotter```.
 
 ### Full-run simulation visualization
 ```SystemPlotter``` combines every ```output-XXXX``` restart segment of an AthenaK
@@ -97,7 +103,7 @@ and ```scripts/system/make_movies.sh``` builds one movie per folder into
 
 It can be driven programmatically:
 ```python
-from kplot import SystemPlotter
+from kplot.system.plotter import SystemPlotter
 SystemPlotter(simpath="/path/to/sim", units="cgs", jobname="bhns",
               plane="xy", show_horizon=True).run(["density", "history"])
 ```
@@ -135,7 +141,12 @@ otherwise default values will be applied.
   (geodesic and Bernoulli criteria; needs a PyCompOSE HDF5 EOS table)
 - ```kplot.sphere.neutrinos``` — M1 neutrino luminosities and flux-weighted mean
   energies per species (```rad_m1_E/F/N``` output)
-- ```kplot.sphere.plots``` / ```kplot.sphere.comparison``` — summary figures, and
+- ```kplot.sphere.poynting``` — sphere-integrated Poynting luminosity and its
+  angular map vs time
+- ```kplot.sphere.butterfly``` — density-weighted, azimuthally-averaged toroidal
+  field vs theta and time (dynamo polarity reversals, cf. arXiv:2211.07158)
+- ```kplot.sphere.plots``` / ```kplot.sphere.comparison``` — summary figures
+  (```fig_ejecta```, ```fig_neutrino```, ```fig_butterfly```, ...), and
   multi-model overlays
 - ```kplot.sphere.accretion``` — post-merger accretion rate from baryon bookkeeping
 
@@ -209,3 +220,32 @@ dEnu_dtheta_{...}.txt                  time-integrated angular neutrino emission
 ```
 ```geo``` marks the geodesic unbound criterion (```u_t < -1```), ```Ber``` the
 Bernoulli one (```h*u_t < -1```).
+
+### Post-merger disk analysis (volume)
+```kplot.volume``` analyses AthenaK's 3D volume-domain output (```file_type = bin```)
+directly, rather than a spherical extraction surface:
+- ```kplot.volume.disk``` — per-snapshot post-merger disk diagnostics (mass,
+  angular momentum, MRI quality factor, ...) from ```mhd_w_bcc```/```adm```/```z4c_alpha```/
+  ```z4c_betax/y/z``` 3D snapshots, an EOS table and a tracker/horizon file
+  (or a manual center) to locate the compact object
+- ```kplot.volume.plots``` — one histogram/profile frame per snapshot (```Ye```,
+  entropy, temperature histograms; ```Sigma```, ```rho```, ```Ye```, ```T```,
+  ```H/R```, ```Omega``` radial profiles), with fixed, log-scaled axes so
+  ```make_movies.sh``` can turn them into an evolution movie
+
+The driver lives in [```scripts/volume/```](scripts/volume/):
+```bash
+cd scripts/volume
+cp config.example.ini config.ini    # set bindir + eos_table for your machine
+bash run_analysis.sh                # disk analysis + plots + movies
+bash run_analysis.sh --disk         # or run individual steps
+bash run_analysis.sh --plot         # re-plot without re-running the analysis
+```
+Results are written to ```<bindir>/disk/```:
+```
+scalars/disk_scalars_<snap>.json       disk mass, angular momentum, MRI Q_z, ...
+profiles/disk_profiles_<snap>.csv      radial profiles (Sigma, rho, Ye, T, H/R, Omega, ...)
+histograms/disk_histograms_<snap>.csv  Ye/entropy/temperature histograms
+frames/{histograms,profiles}/*.png     one frame per snapshot
+frames/all_movies/*.mp4                stitched by scripts/system/make_movies.sh
+```

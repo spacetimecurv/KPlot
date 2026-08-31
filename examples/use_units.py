@@ -4,7 +4,7 @@
 #########################################################################
 
 # Import the Units class.
-from kplot import Units, CGS, MKS, GEOMETRIC_SOLAR
+from kplot.system.units import Units, CGS, MKS, GEOMETRIC_SOLAR
 
 # Define the units systems.
 cgs = CGS

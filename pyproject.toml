@@ -21,10 +21,14 @@ kplot-system = "kplot.system.plotter:main"
 kplot-checkpoints = "kplot.system.checkpoints:main"
 kplot-sphere-mergertime = "kplot.sphere.mergertime:main"
 kplot-sphere-ejecta = "kplot.sphere.ejecta:main"
+kplot-sphere-poynting = "kplot.sphere.poynting:main"
+kplot-sphere-butterfly = "kplot.sphere.butterfly:main"
 kplot-sphere-neutrinos = "kplot.sphere.neutrinos:main"
 kplot-sphere-plot = "kplot.sphere.plots:main"
 kplot-sphere-compare = "kplot.sphere.comparison:main"
 kplot-sphere-accretion = "kplot.sphere.accretion:main"
+kplot-volume-disk = "kplot.volume.disk:main"
+kplot-volume-plot = "kplot.volume.plots:main"
 
 [tool.setuptools]
-packages = ["kplot", "kplot.system", "kplot.sphere"]
+packages = ["kplot", "kplot.system", "kplot.sphere", "kplot.volume"]

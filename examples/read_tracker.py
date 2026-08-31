@@ -4,7 +4,7 @@
 #########################################################################
 
 # Import the horizon finder class.
-from kplot import Tracker
+from kplot.system.tracker import Tracker
 
 # Import necessary third-party libraries.
 import matplotlib.pyplot as plt

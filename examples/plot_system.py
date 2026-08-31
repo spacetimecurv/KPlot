@@ -4,7 +4,7 @@
 #########################################################################
 
 # Import the full-run system plotter class.
-from kplot import SystemPlotter
+from kplot.system.plotter import SystemPlotter
 
 # Point at the parent directory that contains the output-XXXX restart
 # segments.  Frames repeated at restart boundaries are deduplicated by

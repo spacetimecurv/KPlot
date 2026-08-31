@@ -29,7 +29,7 @@
 # Each frame series is written to its own figpath/<diagnostic>_<plane>/ subfolder.
 #
 # Programmatic use:
-#     from kplot import SystemPlotter
+#     from kplot.system.plotter import SystemPlotter
 #     SystemPlotter(simpath="/path/to/sim", units="cgs").run(["density", "history"])
 
 # Import necessary standard libraries.

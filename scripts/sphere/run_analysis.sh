@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_analysis.sh  —  KPlot spherical-surface ejecta + neutrino analysis driver
+# run_analysis.sh  —  KPlot spherical-surface ejecta + Poynting + neutrino analysis script
 #
 # Usage:
-#   bash run_analysis.sh [--ejecta] [--neutrino] [--plot] [--all]
+#   bash run_analysis.sh [--ejecta] [--poynting] [--butterfly] [--neutrino] [--plot] [--all]
 #
-# With no flags all steps (merger time, ejecta, neutrino, plot) are run.
+# With no flags all steps (merger time, ejecta, poynting, butterfly, neutrino, plot) are run.
 #
 # Thin wrapper around the kplot.sphere analysis modules.  All analysis logic
 # lives in the installed KPlot package, so this shell script is the only file
@@ -14,10 +14,6 @@
 # Requires KPlot to be installed in the active Python environment:
 #   pip install -e external/plot-tools   # (from the KPlot checkout)
 #   pip install -e .
-#
-# Machine-specific PATHS (simpath, eos_table, optional pythonpath_extra) are
-# read from config.ini next to this script.  The run settings below stay in
-# this script — edit per run.
 # =============================================================================
 
 set -euo pipefail
@@ -29,28 +25,28 @@ CONFIG_FILE="${SCRIPT_DIR}/config.ini"
 # Read paths from config.ini  (plain INI: parsed, never executed)
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ ! -f "${CONFIG_FILE}" ]]; then
-    echo "ERROR: ${CONFIG_FILE} not found."
-    echo "       Copy config.example.ini to config.ini and set 'simpath' + 'eos_table'."
-    exit 1
+  echo "ERROR: ${CONFIG_FILE} not found."
+  echo "       Copy config.example.ini to config.ini and set 'simpath' + 'eos_table'."
+  exit 1
 fi
 
 # Scalar `key = value`.  A trailing inline comment (whitespace followed by # or
 # ;) is stripped, so a '#' inside a path is still safe.
 _cfg_get() {
-    awk -v key="$1" '
-        /^[[:space:]]*[#;]/ { next }
-        /^[[:space:]]*\[/   { next }
-        {
-            k = $0; sub(/=.*/, "", k)
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
-            if (k == key && index($0, "=")) {
-                v = substr($0, index($0, "=") + 1)
-                sub(/[[:space:]]+[#;].*/, "", v)
-                gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
-                print v; exit
-            }
-        }
-    ' "${CONFIG_FILE}"
+  awk -v key="$1" '
+    /^[[:space:]]*[#;]/ { next }
+    /^[[:space:]]*\[/   { next }
+    {
+      k = $0; sub(/=.*/, "", k)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+      if (k == key && index($0, "=")) {
+        v = substr($0, index($0, "=") + 1)
+        sub(/[[:space:]]+[#;].*/, "", v)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+        print v; exit
+      }
+    }
+  ' "${CONFIG_FILE}"
 }
 
 SIMPATH="$(_cfg_get simpath)"
@@ -58,7 +54,7 @@ EOS_TABLE="$(_cfg_get eos_table)"
 PYTHONPATH_EXTRA="$(_cfg_get pythonpath_extra)"   # optional (e.g. a vtk install)
 
 if [[ -z "${SIMPATH}" ]]; then
-    echo "ERROR: 'simpath' is not set in ${CONFIG_FILE}."; exit 1
+  echo "ERROR: 'simpath' is not set in ${CONFIG_FILE}."; exit 1
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,27 +80,29 @@ YE_THETA_EVO="$(_cfg_get ye_theta_evo)"
 # ── auto-discover all output-*/sph directories (sorted) ──────────────────────
 SPH_DIRS=()
 for d in "${SIMPATH}"/output-*/sph; do
-    [[ -d "$d" ]] && SPH_DIRS+=("$d")
+  [[ -d "$d" ]] && SPH_DIRS+=("$d")
 done
 if [[ ${#SPH_DIRS[@]} -eq 0 ]]; then
-    echo "ERROR: no output-*/sph directories found under ${SIMPATH}"; exit 1
+  echo "ERROR: no output-*/sph directories found under ${SIMPATH}"; exit 1
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ARG PARSING
 # ─────────────────────────────────────────────────────────────────────────────
-RUN_EJECTA=0; RUN_NEUTRINO=0; RUN_PLOT=0
+RUN_EJECTA=0; RUN_POYNTING=0; RUN_BUTTERFLY=0; RUN_NEUTRINO=0; RUN_PLOT=0
 if [[ $# -eq 0 ]]; then
-    RUN_EJECTA=1; RUN_NEUTRINO=1; RUN_PLOT=1
+  RUN_EJECTA=1; RUN_POYNTING=1; RUN_BUTTERFLY=1; RUN_NEUTRINO=1; RUN_PLOT=1
 fi
 for arg in "$@"; do
-    case "$arg" in
-        --ejecta)   RUN_EJECTA=1   ;;
-        --neutrino) RUN_NEUTRINO=1 ;;
-        --plot)     RUN_PLOT=1     ;;
-        --all)      RUN_EJECTA=1; RUN_NEUTRINO=1; RUN_PLOT=1 ;;
-        *) echo "Unknown flag: $arg"; echo "Usage: $0 [--ejecta] [--neutrino] [--plot] [--all]"; exit 1 ;;
-    esac
+  case "$arg" in
+    --ejecta)    RUN_EJECTA=1    ;;
+    --poynting)  RUN_POYNTING=1  ;;
+    --butterfly) RUN_BUTTERFLY=1 ;;
+    --neutrino)  RUN_NEUTRINO=1  ;;
+    --plot)      RUN_PLOT=1      ;;
+    --all)       RUN_EJECTA=1; RUN_POYNTING=1; RUN_BUTTERFLY=1; RUN_NEUTRINO=1; RUN_PLOT=1 ;;
+    *) echo "Unknown flag: $arg"; echo "Usage: $0 [--ejecta] [--poynting] [--butterfly] [--neutrino] [--plot] [--all]"; exit 1 ;;
+  esac
 done
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,12 +128,12 @@ done
 # Prefer the installed console scripts; fall back to the module form if KPlot
 # has not been reinstalled since the kplot.sphere entry points were added.
 _kplot() {
-    local script="$1" module="$2"; shift 2
-    if command -v "${script}" >/dev/null 2>&1; then
-        "${script}" "$@"
-    else
-        python3 -m "${module}" "$@"
-    fi
+  local script="$1" module="$2"; shift 2
+  if command -v "${script}" >/dev/null 2>&1; then
+    "${script}" "$@"
+  else
+    python3 -m "${module}" "$@"
+  fi
 }
 
 mkdir -p "${OUTPUT_DIR}"
@@ -177,62 +175,87 @@ _kplot kplot-sphere-mergertime kplot.sphere.mergertime \
 # Read the merger time (first non-comment numeric line) from the file.
 T_MERGER_MSUN="$(awk '!/^#/ && NF {print $1; exit}' "${MERGER_FILE}")"
 if [[ -z "${T_MERGER_MSUN}" ]]; then
-    echo "ERROR: could not read merger time from ${MERGER_FILE}"; exit 1
+  echo "ERROR: could not read merger time from ${MERGER_FILE}"; exit 1
 fi
 echo "  T_merger = ${T_MERGER_MSUN} M_sun"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 1 + 2: EJECTA and NEUTRINO  (run concurrently — they share no state)
+# STEP 1 + 2 + 3 + 4: EJECTA, POYNTING, BUTTERFLY and NEUTRINO  (run
+# concurrently — they share no state)
 # ─────────────────────────────────────────────────────────────────────────────
-EJECTA_PID=""; NEUTRINO_PID=""
+EJECTA_PID=""; POYNTING_PID=""; BUTTERFLY_PID=""; NEUTRINO_PID=""
 
 if [[ $RUN_EJECTA -eq 1 ]]; then
-    echo ""
-    echo "── Ejecta analysis (background) ─────────────────────────────"
-    if [[ -z "${EOS_TABLE}" ]]; then
-        echo "ERROR: 'eos_table' is not set in ${CONFIG_FILE} (required for ejecta)."; exit 1
-    fi
-    _kplot kplot-sphere-ejecta kplot.sphere.ejecta \
-        "${SPH_ARGS[@]}" \
-        --eos-table  "${EOS_TABLE}" \
-        --output-dir "${OUTPUT_DIR}" \
-        --t-merger   "${T_MERGER_MSUN}" \
-        "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" \
-        "${EJECTA_ARGS[@]+"${EJECTA_ARGS[@]}"}" &
-    EJECTA_PID=$!
+  echo ""
+  echo "── Ejecta analysis (background) ─────────────────────────────"
+  if [[ -z "${EOS_TABLE}" ]]; then
+    echo "ERROR: 'eos_table' is not set in ${CONFIG_FILE} (required for ejecta)."; exit 1
+  fi
+  _kplot kplot-sphere-ejecta kplot.sphere.ejecta \
+    "${SPH_ARGS[@]}" \
+    --eos-table  "${EOS_TABLE}" \
+    --output-dir "${OUTPUT_DIR}" \
+    --t-merger   "${T_MERGER_MSUN}" \
+    "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" \
+    "${EJECTA_ARGS[@]+"${EJECTA_ARGS[@]}"}" &
+  EJECTA_PID=$!
+fi
+
+if [[ $RUN_POYNTING -eq 1 ]]; then
+  echo "── Poynting-flux analysis (background) ──────────────────────"
+  _kplot kplot-sphere-poynting kplot.sphere.poynting \
+    "${SPH_ARGS[@]}" \
+    --output-dir "${OUTPUT_DIR}" \
+    "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" &
+  POYNTING_PID=$!
+fi
+
+if [[ $RUN_BUTTERFLY -eq 1 ]]; then
+  echo "── Butterfly diagram analysis (background) ──────────────────"
+  _kplot kplot-sphere-butterfly kplot.sphere.butterfly \
+    "${SPH_ARGS[@]}" \
+    --output-dir "${OUTPUT_DIR}" \
+    "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" &
+  BUTTERFLY_PID=$!
 fi
 
 if [[ $RUN_NEUTRINO -eq 1 ]]; then
-    echo "── Neutrino analysis (background) ───────────────────────────"
-    _kplot kplot-sphere-neutrinos kplot.sphere.neutrinos \
-        "${SPH_ARGS[@]}" \
-        --output-dir "${OUTPUT_DIR}" \
-        "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" &
-    NEUTRINO_PID=$!
+  echo "── Neutrino analysis (background) ───────────────────────────"
+  _kplot kplot-sphere-neutrinos kplot.sphere.neutrinos \
+    "${SPH_ARGS[@]}" \
+    --output-dir "${OUTPUT_DIR}" \
+    "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" &
+  NEUTRINO_PID=$!
 fi
 
 if [[ -n "${EJECTA_PID}" ]]; then
-    wait "${EJECTA_PID}" && echo "── Ejecta done ──" || { echo "ERROR: ejecta failed"; exit 1; }
+  wait "${EJECTA_PID}" && echo "── Ejecta done ──" || { echo "ERROR: ejecta failed"; exit 1; }
+fi
+if [[ -n "${POYNTING_PID}" ]]; then
+  wait "${POYNTING_PID}" && echo "── Poynting-flux done ──" || { echo "ERROR: poynting failed"; exit 1; }
+fi
+if [[ -n "${BUTTERFLY_PID}" ]]; then
+  wait "${BUTTERFLY_PID}" && echo "── Butterfly diagram done ──" || { echo "ERROR: butterfly failed"; exit 1; }
 fi
 if [[ -n "${NEUTRINO_PID}" ]]; then
-    wait "${NEUTRINO_PID}" && echo "── Neutrino done ──" || { echo "ERROR: neutrino failed"; exit 1; }
+  wait "${NEUTRINO_PID}" && echo "── Neutrino done ──" || { echo "ERROR: neutrino failed"; exit 1; }
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 3: PLOT
+# STEP 4: PLOT
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ $RUN_PLOT -eq 1 ]]; then
-    echo ""
-    echo "── Plotting ─────────────────────────────────────────────────"
-    PLOT_ARGS=(--output-dir "${OUTPUT_DIR}" --t-merger "${T_MERGER_MSUN}")
-    [[ -n "${RADIUS}" ]] && PLOT_ARGS+=(--radius "${RADIUS}")
-    [[ "${PLOT_FROM_MERGER}" == "1" ]] && PLOT_ARGS+=(--from-merger)
-    [[ -n "${N_WORKERS}" ]] && PLOT_ARGS+=(--nprocs "${N_WORKERS}")
-    [[ "${POYNTING}" == "1" ]] && PLOT_ARGS+=(--poynting)
-    [[ "${YE_EVO}" == "1" ]] && PLOT_ARGS+=(--ye-evo)
-    [[ "${YE_THETA_EVO}" == "1" ]] && PLOT_ARGS+=(--ye-theta-evo)
-    _kplot kplot-sphere-plot kplot.sphere.plots "${PLOT_ARGS[@]}"
-    echo "── Plotting done ────────────────────────────────────────────"
+  echo ""
+  echo "── Plotting ─────────────────────────────────────────────────"
+  PLOT_ARGS=(--output-dir "${OUTPUT_DIR}" --t-merger "${T_MERGER_MSUN}")
+  [[ -n "${RADIUS}" ]] && PLOT_ARGS+=(--radius "${RADIUS}")
+  [[ "${PLOT_FROM_MERGER}" == "1" ]] && PLOT_ARGS+=(--from-merger)
+  [[ -n "${N_WORKERS}" ]] && PLOT_ARGS+=(--nprocs "${N_WORKERS}")
+  [[ "${POYNTING}" == "1" ]] && PLOT_ARGS+=(--poynting)
+  [[ "${YE_EVO}" == "1" ]] && PLOT_ARGS+=(--ye-evo)
+  [[ "${YE_THETA_EVO}" == "1" ]] && PLOT_ARGS+=(--ye-theta-evo)
+  _kplot kplot-sphere-plot kplot.sphere.plots "${PLOT_ARGS[@]}"
+  echo "── Plotting done ────────────────────────────────────────────"
 fi
 
 echo ""

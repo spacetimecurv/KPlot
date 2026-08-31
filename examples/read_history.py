@@ -4,7 +4,7 @@
 #########################################################################
 
 # Import the History class.
-from kplot import History
+from kplot.system.history import History
 
 # Import necessary third-party libraries.
 import matplotlib.pyplot as plt

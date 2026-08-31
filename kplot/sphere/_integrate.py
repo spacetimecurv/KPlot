@@ -26,6 +26,10 @@ def calc_ur(ux, uy, uz, theta, phi):
             uz * np.cos(theta))
 
 
+def calc_uphi(ux, uy, phi):
+    return -ux * np.sin(phi) + uy * np.cos(phi)
+
+
 def sqrt_det_metric_adm(gxx, gyy, gzz, gxy, gxz, gyz, alpha):
     gamma_det = (gxx * gyy * gzz +
                  2 * gxy * gxz * gyz -

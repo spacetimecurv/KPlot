@@ -4,11 +4,10 @@
 #########################################################################
 
 # Analysis of AthenaK's spherical-surface extraction output (file_type = sph):
-# what crosses the extraction sphere.  Mirrors what scripts/sphere/run_analysis.sh
-# does, but driven from Python.
+# what crosses the extraction sphere.
 import glob
 
-from kplot.sphere import ejecta, mergertime, neutrinos, plots
+from kplot.sphere import ejecta, mergertime, neutrinos, plots, poynting
 
 SIMPATH = "/path/to/sim"          # parent dir holding the output-XXXX segments
 EOS_TABLE = "/path/to/DD2.h5"     # PyCompOSE HDF5 table matching the simulation EOS
@@ -50,10 +49,21 @@ neutrinos.analyze(
   n_workers=8,
 )
 
-# --- Step 3: summary figures -> fig_ejecta.pdf and fig_neutrino.pdf ---
+# --- Step 3: Poynting flux ---
+poynting.analyze(
+  sph_dirs,
+  OUTPUT_DIR,
+  radius=RADIUS,
+  jobname=JOBNAME,
+  n_workers=8,
+)
+
+# --- Step 4: summary figures -> fig_ejecta.pdf, fig_neutrino.pdf, ... ---
 plots.main([
   "--output-dir", OUTPUT_DIR,
   "--t-merger", str(t_merger),
   "--radius", str(RADIUS),
   "--from-merger",     # x-axis as t - t_merger [ms] instead of absolute time
+  "--poynting",
+  "--nprocs", 8,
 ])

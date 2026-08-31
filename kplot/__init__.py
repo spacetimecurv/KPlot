@@ -1,52 +1,25 @@
 """Plotting utilities and tools for AthenaK, interfacing plot-tools.
 
-Two subpackages, mirrored by the drivers in ``scripts/``:
+Three subpackages, mirrored by the drivers in ``scripts/``:
 
 - :mod:`kplot.system` — whole-run diagnostics (history, trackers, horizons,
   waveforms, slice series, the full-run ``SystemPlotter``).
 - :mod:`kplot.sphere` — analysis of spherical-surface (``sph``) extraction
   output: ejecta, neutrinos, merger time.
+- :mod:`kplot.volume` — analysis of 3D volume-domain output: post-merger disk
+  diagnostics.
 
-The :mod:`kplot.system` names are re-exported here, so ``from kplot import *``
-keeps working.
+Names live under their subpackage and submodule: ``from kplot.system.plotter
+import SystemPlotter``, ``from kplot.sphere import ejecta``, ``from
+kplot.volume import disk``.
 """
 
-from .system import (
-    HorizonFinder,
-    Tracker,
-    BatchMerger,
-    Waveform,
-    SeriesPlot,
-    History,
-    list_checkpoints,
-    read_checkpoint,
-    Units,
-    CGS,
-    MKS,
-    GEOMETRIC_SOLAR,
-    SystemPlotter,
-    use_latex,
-    athenak_units,
-)
 from . import system
 from . import sphere
+from . import volume
 
 __all__ = [
-    "HorizonFinder",
-    "Tracker",
-    "BatchMerger",
-    "Waveform",
-    "SeriesPlot",
-    "History",
-    "list_checkpoints",
-    "read_checkpoint",
-    "Units",
-    "CGS",
-    "MKS",
-    "GEOMETRIC_SOLAR",
-    "SystemPlotter",
-    "use_latex",
-    "athenak_units",
     "system",
     "sphere",
+    "volume",
 ]
