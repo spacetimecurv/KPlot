@@ -41,6 +41,17 @@ PROFILE_PANELS = [
     ("Omega_rad_s", r"$\Omega$  [rad/s]", True),
 ]
 
+SPECTRUM_CURVES = [
+    ("P_v", r"$P_v(k)$", "tab:blue"),
+    ("P_B", r"$P_B(k)$", "tab:red"),
+    ("P_KE", r"$P_{KE}(k)$", "tab:green"),
+]
+
+SPECTRUM_REFS = [
+    ("P_v", -5.0 / 3.0, "Kolmogorov"),
+    ("P_B", 3.0 / 2.0, "Kazantsev"),
+]
+
 SCALAR_PANELS = [
     ("mass_msun", r"$M_{\mathrm{disk}}\ [M_\odot]$", False),
     ("Ye_mean", r"$\langle Y_e\rangle$", False),
@@ -90,6 +101,21 @@ def load_histograms(path):
 def load_profile(path):
   """Structured array of a disk_profiles_<snap>.csv file, keyed by column name."""
   return np.genfromtxt(path, delimiter=",", names=True)
+
+
+def find_spectrum_snapshots(outdir):
+  """Snapshot ids for which a spectrum_<snap>.txt file exists."""
+  pat = os.path.join(outdir, "spectra", "spectrum_*.txt")
+  ids = [re.search(r"spectrum_(.+)\.txt$", f).group(1) for f in glob.glob(pat)]
+  return sorted(ids)
+
+
+def load_spectrum(path):
+  """(time, {P_v, P_B, P_KE}) from a spectrum_<snap>.txt file."""
+  with open(path) as fp:
+    time = float(fp.readline().split("=")[1])
+  k, Pv, PB, PKE = np.loadtxt(path, unpack=True)
+  return time, k, {"P_v": Pv, "P_B": PB, "P_KE": PKE}
 
 
 def hist_ylim(outdir, snaps):
@@ -202,10 +228,43 @@ def plot_scalars(data, outfile):
   plt.close(fig)
 
 
-def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=False):
+def plot_spectrum(k, spectra, snap, time, outfile):
+  """Plot the isotropic power spectra with Kolmogorov/Kazantsev reference slopes."""
+  fig, ax = plt.subplots(figsize=(6, 5))
+  for key, label, color in SPECTRUM_CURVES:
+    ax.plot(k, spectra[key], color=color, label=label)
+
+  # Reference slopes, anchored to the spectrum a third of the way into the
+  # resolved k-range.
+  for key, exponent, name in SPECTRUM_REFS:
+    finite = (k > 0) & np.isfinite(spectra[key]) & (spectra[key] > 0)
+    if finite.sum() < 4:
+      continue
+    kk, ss = k[finite], spectra[key][finite]
+    i_ref = len(kk) // 3
+    amp = ss[i_ref] / kk[i_ref]**exponent
+    k_line = kk[[0, -1]]
+    ax.plot(k_line, amp * k_line**exponent, ls="--", lw=1, color="gray",
+            label=rf"{name} ($k^{{{exponent:+.2f}}}$)".replace("+", ""))
+
+  ax.set_xscale("log")
+  ax.set_yscale("log")
+  ax.set_xlabel(r"$k$  [code units]")
+  ax.set_ylabel(r"$P(k)$")
+  ax.legend(fontsize=8, loc="upper right")
+  ax.set_title(f"snapshot {snap}, t = {time:.2f} code units")
+
+  fig.tight_layout()
+  fig.savefig(outfile, dpi=150)
+  plt.close(fig)
+
+
+def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=False,
+             no_spectra=False):
   os.makedirs(os.path.join(figdir, "histograms"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "profiles"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "scalars"), exist_ok=True)
+  os.makedirs(os.path.join(figdir, "spectra"), exist_ok=True)
 
   if not no_histograms:
     snaps = find_snapshots(outdir, "histograms", "csv")
@@ -249,6 +308,14 @@ def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=
     outfile = os.path.join(figdir, "scalars", f"disk_scalars.png")
     plot_scalars(d, outfile)
 
+  if not no_spectra:
+    snaps = find_spectrum_snapshots(outdir)
+    print(f"$ Plotting {len(snaps)} spectrum frames...")
+    for snap in snaps:
+      time, k, spectra = load_spectrum(os.path.join(outdir, "spectra", f"spectrum_{snap}.txt"))
+      outfile = os.path.join(figdir, "spectra", f"spectrum_{snap}.png")
+      plot_spectrum(k, spectra, snap, time, outfile)
+
 
 def main(argv=None):
   ap = argparse.ArgumentParser(description=__doc__,
@@ -260,10 +327,12 @@ def main(argv=None):
   ap.add_argument("--no-histograms", action="store_true", help="skip histogram frames")
   ap.add_argument("--no-profiles", action="store_true", help="skip profile frames")
   ap.add_argument("--no-scalars", action="store_true", help="skip scalar evolution")
+  ap.add_argument("--no-spectra", action="store_true", help="skip spectrum frames")
   args = ap.parse_args(argv)
 
   figdir = args.figdir or os.path.join(args.outdir, "frames")
-  plot_all(args.outdir, figdir, args.no_histograms, args.no_profiles)
+  plot_all(args.outdir, figdir, args.no_histograms, args.no_profiles, args.no_scalars,
+           args.no_spectra)
 
 
 if __name__ == "__main__":

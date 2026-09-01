@@ -3,9 +3,9 @@
 # run_analysis.sh  —  KPlot post-merger disk analysis script
 #
 # Usage:
-#   bash run_analysis.sh [--disk] [--plot] [--all]
+#   bash run_analysis.sh [--disk] [--spectra] [--plot] [--all]
 #
-# With no flags both steps (disk, plot) are run.
+# With no flags all steps (disk, spectra, plot) are run.
 #
 # Thin wrapper around the kplot.volume analysis + plotting modules.  All
 # analysis logic lives in the installed KPlot package, so this shell script
@@ -61,15 +61,16 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # ARG PARSING
 # ─────────────────────────────────────────────────────────────────────────────
-RUN_DISK=0; RUN_PLOT=0
+RUN_DISK=0; RUN_SPECTRA=0; RUN_PLOT=0
 if [[ $# -eq 0 ]]; then
-    RUN_DISK=1; RUN_PLOT=1
+    RUN_DISK=1; RUN_SPECTRA=1; RUN_PLOT=1
 fi
 for arg in "$@"; do
     case "$arg" in
         --disk) RUN_DISK=1 ;;
+        --spectra) RUN_SPECTRA=1 ;;
         --plot) RUN_PLOT=1 ;;
-        --all)  RUN_DISK=1; RUN_PLOT=1 ;;
+        --all)  RUN_DISK=1; RUN_SPECTRA=1; RUN_PLOT=1 ;;
         *) echo "Unknown flag: $arg"; echo "Usage: $0 [--disk] [--plot] [--all]"; exit 1 ;;
     esac
 done
@@ -98,7 +99,11 @@ BOUND_CRITERION="$(_cfg_get bound_criterion)"
 R_DISK_MAX="$(_cfg_get r_disk_max)"
 NBINS="$(_cfg_get nbins)"
 RMAX="$(_cfg_get rmax)"
+WIN_RAD="$(_cfg_get window_radius)"
+TAR_DX="$(_cfg_get target_dx)"
 N_WORKERS="$(_cfg_get n_workers)"
+MOV_FPS="$(_cfg_get movie_fps)"
+MOV_STR="$(_cfg_get movie_stride)"
 
 if [[ $RUN_DISK -eq 1 && -z "${TRACKER}" && -z "${CENTER}" ]]; then
     echo "ERROR: either 'tracker' or 'center' must be set in ${CONFIG_FILE} (required for --disk)."; exit 1
@@ -153,8 +158,19 @@ DISK_ARGS=()
 [[ -n "${RMAX}"            ]] && DISK_ARGS+=(--rmax            "${RMAX}")
 [[ -n "${N_WORKERS}"       ]] && DISK_ARGS+=(--n-workers       "${N_WORKERS}")
 if [[ -n "${CENTER}" ]]; then
-    read -ra CENTER_ARR <<< "${CENTER}"
-    DISK_ARGS+=(--center "${CENTER_ARR[@]}")
+  read -ra CENTER_ARR <<< "${CENTER}"
+  DISK_ARGS+=(--center "${CENTER_ARR[@]}")
+fi
+
+SPECTRA_ARGS=()
+[[ -n "${DROP_FIRST_BINS}" ]] && SPECTRA_ARGS+=(--drop-first-bins "${DROP_FIRST_BINS}")
+[[ -n "${WIN_RAD}"   ]] && SPECTRA_ARGS+=(--win-radius "${WIN_RAD}")
+[[ -n "${TAR_DX}"    ]] && SPECTRA_ARGS+=(--target-dx   "${TAR_DX}")
+[[ -n "${TRACKER}"   ]] && SPECTRA_ARGS+=(--tracker     "${TRACKER}")
+[[ -n "${N_WORKERS}" ]] && SPECTRA_ARGS+=(--n-workers   "${N_WORKERS}")
+if [[ -n "${CENTER}" ]]; then
+  read -ra CENTER_ARR <<< "${CENTER}"
+  DISK_ARGS+=(--center "${CENTER_ARR[@]}")
 fi
 
 echo "============================================================"
@@ -178,7 +194,20 @@ if [[ $RUN_DISK -eq 1 ]]; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 2: PLOTS — one histogram/profile frame per snapshot, stitched into movies.
+# STEP 2: SPECTRA ANALYSIS
+# ─────────────────────────────────────────────────────────────────────────────
+if [[ $RUN_SPECTRA -eq 1 ]]; then
+    echo ""
+    echo "── Spectra analysis ─────────────────────────────────────────────"
+    _kplot kplot-volume-spectra kplot.volume.spectra \
+        --bindir       "${BINDIR}" \
+        --outdir       "${OUTPUT_DIR}" \
+        "${SPECTRA_ARGS[@]+"${SPECTRA_ARGS[@]}"}"
+    echo "── Spectra analysis done ───────────────────────────────────────"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 3: PLOTS — one histogram/profile frame per snapshot, stitched into movies.
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ $RUN_PLOT -eq 1 ]]; then
     FIGDIR="${OUTPUT_DIR}/frames"
@@ -189,8 +218,8 @@ if [[ $RUN_PLOT -eq 1 ]]; then
         --outdir "${OUTPUT_DIR}" \
         --figdir "${FIGDIR}"
 
-    MOVIE_FPS=10       # frames per second
-    MOVIE_STRIDE=1     # use every Nth frame (1 = all)
+    MOVIE_FPS="${MOV_FPS}"       # frames per second
+    MOVIE_STRIDE="${MOV_STR}"    # use every Nth frame (1 = all)
 
     echo ""
     echo "=== Making movies from ${FIGDIR} ==="

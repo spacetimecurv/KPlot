@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Global properties of the post-merger disk from an AthenaK BHNS 3D snapshot.
 
@@ -128,7 +127,6 @@ def _process_snapshot_disk(args):
   time          = fd["time"]                   # Time of the snapshot.
   nx1, nx2, nx3 = fd["nx1_out_mb"], fd["nx2_out_mb"], fd["nx3_out_mb"]
   ncell_block   = nx1 * nx2 * nx3              # Points per meshblock.
-  levels        = fd["mb_logical"][:, 3]       # Logical level of meshblock.
 
   dfloor = par(pars, "mhd", "dfloor", float, 1.0e-14)   # Density floor from parfile.
   xv, yv, zv, dvol, _, _, dzv = block_cell_geometry(fd) # CC-coordinates and volume for each MB.

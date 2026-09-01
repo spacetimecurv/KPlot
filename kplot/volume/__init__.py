@@ -10,7 +10,7 @@ An automated script lives in ``scripts/volume/run_analysis.sh``.
 
 import importlib
 
-__all__ = ["disk", "plots"]
+__all__ = ["disk", "plots", "spectra"]
 
 
 def __getattr__(name):

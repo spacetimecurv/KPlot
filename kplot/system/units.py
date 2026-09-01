@@ -3,12 +3,6 @@
 # Description: Unit conversions for AthenaK data.                       #
 #########################################################################
 
-# Import necessary standard libraries.
-
-
-# Import necessary third-party libraries.
-
-
 # Define the Units class.
 class Units:
   """

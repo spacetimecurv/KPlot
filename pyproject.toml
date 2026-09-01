@@ -28,6 +28,7 @@ kplot-sphere-plot = "kplot.sphere.plots:main"
 kplot-sphere-compare = "kplot.sphere.comparison:main"
 kplot-sphere-accretion = "kplot.sphere.accretion:main"
 kplot-volume-disk = "kplot.volume.disk:main"
+kplot-volume-spectrum = "kplot.volume.spectrum:main"
 kplot-volume-plot = "kplot.volume.plots:main"
 
 [tool.setuptools]
