@@ -49,6 +49,28 @@ Outputs (written to --outdir):
   histograms/disk_histograms_<snapshot>.csv: histograms of M_disk vs. Ye, etc.
   profiles/disk_profiles_<profiles>.csv: radial profiles of important quantities, i.e.
                                          temperature etc.
+
+The written scalars are:
+  j_mean - mass-weighted mean specific angular momentum (J/M)
+  Ye_mean - mass-weighted mean electron fraction
+  s_mean - mass-weighted mean entropy
+  T_mean_MeV - mass-weighted mean temperature (MeV)
+  rho_mean_cgs - mass-weighted mean density (in cgs)
+  rho_max_cgs - max density in the mask (in cgs)
+  T_max_MeV - max temperature in the mask (MeV)
+  Rcyl_mean - mass-weighted mean cylindrical radius
+  rsph_mean - mass-weighted mean spherical radius
+  z_rms - RMS height above/below equatorial plane (mass-weighted)
+  z_half - mass-weighted median of |z| (half-mass height)
+  Omega_mean - mass-weighted mean angular velocity
+  bsq_mean - mass-weighted mean magnetic field squared (code units)
+  beta_plasma_mean - mass-weighted mean plasma beta (2*press/b^2)
+  sigma_mean - mass-weighted mean magnetization (b^2/rho)
+  Q_z_mean, Q_z_pct, Q_z_f10 - precomputed quality-factor (mean, percentiles, fraction of mass below 10)
+  B_rms_G - RMS magnetic field strength (in Gauss)
+  B_max_G - max magnetic field strength (in Gauss)
+  E_mag - total magnetic energy (integral of 0.5*b^2*W*sqrt(g)*dV)
+  Ye_pct, s_pct, T_pct, R_pct - weighted 5/25/50/75/95 percentiles of Ye, entropy, temperature, and cylindrical radius
 """
 
 # Built-in libraries.
@@ -336,8 +358,8 @@ def _process_snapshot_disk(args):
   # Angular velocity Omega = dphi/dt.
   Rsafe = np.maximum(Rcyl, 1e-30)
   with np.errstate(divide="ignore", invalid="ignore"):
-      omega = ((xg * vcy - yg * vcx) / Rsafe**2).astype(np.float32)
-      v_rad = ((xg * vcx + yg * vcy) / Rsafe).astype(np.float32)
+    omega = ((xg * vcy - yg * vcx) / Rsafe**2).astype(np.float32)
+    v_rad = ((xg * vcx + yg * vcy) / Rsafe).astype(np.float32)
   del vcx, vcy, ux_d, uy_d, bx_d, by_d, u_phi, Rsafe # Free up memory.
 
   # ======================================================================
@@ -361,7 +383,7 @@ def _process_snapshot_disk(args):
   not_remnant = rho < rho_rem_code
   disk = dense & not_remnant & outside_bh & ~unbound
   if r_disk_max is not None:
-      disk &= Rcyl < r_disk_max
+    disk &= Rcyl < r_disk_max
 
   # ======================================================================
   # MRI ANALYSIS
@@ -610,7 +632,7 @@ def find_snapshots(tag: str, bindir: str):
   pat = f"*{tag}_3D.*.bin"
   hits = sorted(glob.glob(os.path.join(bindir, pat)))
   if not hits:
-      raise SystemExit(f"No file matching {pat} in {bindir}!")
+    raise SystemExit(f"No file matching {pat} in {bindir}!")
 
   return hits
 
@@ -698,42 +720,42 @@ class EOSTable:
 # WEIGHTED STATISTICS HELPER
 # ======================================================================
 def wmean(x, w):
-    tot = w.sum()
-    return float((x * w).sum() / tot) if tot > 0 else float("nan")
+  tot = w.sum()
+  return float((x * w).sum() / tot) if tot > 0 else float("nan")
 
 
 def binned_wquantile(idx, x, w, nbins, q):
-    """Weighted quantile of x within each bin, in one pass.
+  """Weighted quantile of x within each bin, in one pass.
 
     Used for the half-mass scale height: rms(z) is badly inflated by the
     low-density polar material that shares a cylindrical radius with the disk,
     so the |z| containing half the shell mass is the more robust thickness.
     """
-    order = np.lexsort((x, idx))
-    xs, ws, bs = x[order], w[order], idx[order]
-    cum = np.cumsum(ws)
-    start = np.searchsorted(bs, np.arange(nbins), side="left")
-    stop = np.searchsorted(bs, np.arange(nbins), side="right")
-    out = np.full(nbins, np.nan)
-    for b in range(nbins):
-        lo, hi = start[b], stop[b]
-        if hi <= lo:
-            continue
-        base = cum[lo - 1] if lo > 0 else 0.0
-        target = base + q * (cum[hi - 1] - base)
-        out[b] = xs[min(np.searchsorted(cum[lo:hi], target) + lo, hi - 1)]
-    return out
+  order = np.lexsort((x, idx))
+  xs, ws, bs = x[order], w[order], idx[order]
+  cum = np.cumsum(ws)
+  start = np.searchsorted(bs, np.arange(nbins), side="left")
+  stop = np.searchsorted(bs, np.arange(nbins), side="right")
+  out = np.full(nbins, np.nan)
+  for b in range(nbins):
+    lo, hi = start[b], stop[b]
+    if hi <= lo:
+      continue
+    base = cum[lo - 1] if lo > 0 else 0.0
+    target = base + q * (cum[hi - 1] - base)
+    out[b] = xs[min(np.searchsorted(cum[lo:hi], target) + lo, hi - 1)]
+  return out
 
 
 def wpercentile(x, w, q):
-    """Weighted percentiles; q in percent."""
-    if x.size == 0 or w.sum() <= 0:
-        return np.full(np.shape(q), np.nan)
-    order = np.argsort(x)
-    xs, ws = x[order], w[order]
-    cdf = np.cumsum(ws) - 0.5 * ws
-    cdf /= ws.sum()
-    return np.interp(np.asarray(q, dtype=float) / 100.0, cdf, xs)
+  """Weighted percentiles; q in percent."""
+  if x.size == 0 or w.sum() <= 0:
+    return np.full(np.shape(q), np.nan)
+  order = np.argsort(x)
+  xs, ws = x[order], w[order]
+  cdf = np.cumsum(ws) - 0.5 * ws
+  cdf /= ws.sum()
+  return np.interp(np.asarray(q, dtype=float) / 100.0, cdf, xs)
 
 
 def analyze(args):

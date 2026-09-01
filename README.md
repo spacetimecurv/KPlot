@@ -3,17 +3,10 @@ Interfacing plot-tools to create some plotting utilities for commonly used Athen
 
 ## Credits
 The spherical-surface analysis in ```kplot.sphere``` and ```scripts/sphere/```
-(ejecta, neutrino and merger-time diagnostics) is integrated from
-[AthenaK_BNS_visualization](https://github.com/yiqiu0714/AthenaK_BNS_visualization),
-where it lived as the ```sph_data_analysis``` scripts. The full-run visualizer
-```kplot.system``` likewise originates from that repository's ```BNS_all.py```.
-The scripts have been reworked into an installed package here: the plot-tools
-```sys.path``` bootstrapping is gone (```athplot``` is a proper dependency), the
-per-run configuration moved from module-level globals into command-line
-arguments, and each step is exposed as a console script.
-
-```kplot``` builds on [plot-tools](https://github.com/jfields7/plot-tools)
-(```athplot```), vendored as a submodule in ```external/```.
+(ejecta, neutrino and merger-time diagnostics) is taken from
+[AthenaK_BNS_visualization](https://github.com/yiqiu0714/AthenaK_BNS_visualization). The full-run plotter ```kplot.system``` is likewise adapted from that repository's ```BNS_all.py```.
+```kplot``` also builds on [plot-tools](https://github.com/jfields7/plot-tools)
+(```athplot```), imported as a submodule in ```external/```.
 
 ## Build
 We first clone the repository to the local workstation with:
@@ -29,7 +22,8 @@ Next, we built plot-tools followed by KPlot:
 pip install -e external/plot-tools
 pip install -e .
 ```
-The packages are now built and can be used elsewhere.
+The packages are now built and can be used elsewhere. It is recommended to do this in a separate
+environment to keep it from the global PATH.
 
 ## Usage
 Currently supported are the following classes:
@@ -42,13 +36,14 @@ Currently supported are the following classes:
 - ```SystemPlotter``` (full-run simulation visualizer spanning all ```output-XXXX``` restart segments)
 - ```kplot.sphere``` (ejecta, neutrino and merger-time analysis of spherical-surface extraction output)
 - ```kplot.volume``` (post-merger disk diagnostics from 3D volume-domain snapshots)
+
 Some examples outline the usage. Once built, the utilities can be called with, e.g.:
 ```python
 from kplot.system.plotter import SystemPlotter
 from kplot.system.horizon import HorizonFinder
 ```
 
-Each workflow has a shell driver, and the older two also have a runnable example:
+Each workflow has a shell driver (and there are also selected examples for usage):
 
 | Workflow | Example | Driver |
 |---|---|---|
@@ -82,26 +77,26 @@ external/           plot-tools submodule (athplot)
 ```kplot.system``` covers the simulation as a whole (history files, trackers,
 horizons, waveforms, slice series); ```kplot.sphere``` covers what crosses a
 spherical extraction surface (ejecta, neutrinos); ```kplot.volume``` covers the
-3D volume domain (currently the post-merger disk). Names live under their
-subpackage and submodule, e.g. ```from kplot.system.plotter import SystemPlotter```.
+3D volume domain (currently the post-merger disk). IMPORTANT: the ```kplot.system``` and
+```kplot.sphere``` modules require the data to be stored inside batchtools like arrangement, i.e.
+in folders with the signature ```output-XXXX```. If this is not the case, then one segment has to be created and the data has to be moved there manually such that these modules can be found. For
+```kplot.volume``` this currently is not a requirement, it is even recommended to store the 3D data
+in one directory.
 
 ### Full-run simulation visualization
-```SystemPlotter``` combines every ```output-XXXX``` restart segment of an AthenaK
-run and renders 1-D history/time-series plots plus parallel 2-D slice frames
+```SystemPlotter``` combines every batchtools ```output-XXXX``` restart segment (see note above) of an AthenaK run and renders 1-D history/time-series plots plus parallel 2-D slice frames
 (density, temperature, Y_e, radiation-M1 fields, neutrino energies) with optional
 compact-object tracker, black-hole apparent-horizon and AMR-grid overlays.
 Physical quantities are converted through ```kplot.athenak_units```
-(```code```/```cgs```/```ngs```). All file names are keyed on the AthenaK job name
-(```jobname```, default ```bhns```), so the same driver serves BNS, BHNS, BBH, etc.;
-sections whose input files are absent are skipped. The slice plane is selectable
-(```plane```: ```xy``` [default, auto-adds an xz companion panel], ```xz```, ```yz```)
+(```code```/```cgs```/```ngs```). The slice plane is selectable
+(```plane```: ```xy```, ```xz```, ```yz```)
 and the time axis/title units can be ```Msun``` (default) or ```ms```
 (```time_units```). Each frame series is written to its own
 ```<figpath>/<diagnostic>_<plane>/``` subfolder (e.g. ```Figs/temperature_xy/```),
 and ```scripts/system/make_movies.sh``` builds one movie per folder into
 ```<figpath>/all_movies/```.
 
-It can be driven programmatically:
+It can be driven by the following python command:
 ```python
 from kplot.system.plotter import SystemPlotter
 SystemPlotter(simpath="/path/to/sim", units="cgs", jobname="bhns",
@@ -115,27 +110,20 @@ python3 -m kplot.system --simpath /path/to/sim --units cgs \
 kplot-system --simpath /path/to/sim --units cgs --sections density history
 ```
 
-A ready-to-edit driver (plus an ffmpeg movie-maker) lives in
-[```scripts/system/```](scripts/system/): edit ```scripts/system/plot_system.sh```
-(SIMPATH, JOBNAME, PLANE, TIME_UNITS, SECTIONS, ...) and run it; it calls
-```kplot-system``` and then ```scripts/system/make_movies.sh``` to assemble a movie
-per series into ```all_movies/```. Set ```DELETE_FRAMES=true``` in the driver to
-remove the rendered frame PNGs afterwards (the movies are kept).
-
-The above workflow is simplified by making use of the ```scripts/system/config.example.ini``` 
-file:
+A automated script lives in
+[```scripts/system/```](scripts/system/). Configuration goes through ```scripts/system/config.example.ini```:
 ```bash
 cd scripts/system
-cp config.example.ini config.ini    # set simpath for your machine
-bash plot_system.sh                 # plotting-specific parameters
+cp config.example.ini config.ini    # set parameters
+bash plot_system.sh
 ```
-Make sure to modify the ```config.ini``` file, before running the bash script, since 
+Make sure to modify the ```config.ini``` file, before running the bash script, since
 otherwise default values will be applied.
 
 ### Spherical-surface analysis (ejecta + neutrinos)
 ```kplot.sphere``` analyses AthenaK's spherical-surface extraction output
 (```file_type = sph```) — what crosses the extraction sphere, spanning all
-```output-XXXX``` restart segments:
+batchtools ```output-XXXX``` restart segments:
 - ```kplot.sphere.mergertime``` — merger time from max ```|psi4_22|^2``` of the GW (2,2) mode
 - ```kplot.sphere.ejecta``` — ejecta mass flux, ```v_inf```/```theta```/```Y_e``` distributions
   (geodesic and Bernoulli criteria; needs a PyCompOSE HDF5 EOS table)
@@ -149,19 +137,13 @@ otherwise default values will be applied.
   (```fig_ejecta```, ```fig_neutrino```, ```fig_butterfly```, ...), and
   multi-model overlays
 - ```kplot.sphere.accretion``` — post-merger accretion rate from baryon bookkeeping
-
-The usual entry point is the driver in [```scripts/sphere/```](scripts/sphere/):
+Also here a pipeline exists under [```scripts/sphere/```](scripts/sphere/):
 ```bash
 cd scripts/sphere
-cp config.example.ini config.ini    # set simpath + eos_table for your machine
+cp config.example.ini config.ini    # set parameteres
 bash run_analysis.sh                # merger time + ejecta + neutrino + plots
 bash run_analysis.sh --ejecta       # or run individual steps
 ```
-```config.ini``` holds only machine-specific paths and is gitignored; run settings
-(RADIUS, JOBNAME, N_WORKERS, T_POST_MS, ...) live at the top of ```run_analysis.sh```.
-It auto-discovers every ```<simpath>/output-*/sph``` segment and writes all results to
-```<simpath>/analysis/```. ```bash run_comparison.sh``` overlays the neutrino
-diagnostics of 2–4 finished models (reusing their existing ```analysis/``` outputs).
 
 Each step is also an installed console script, so it can be run directly:
 ```bash
@@ -204,22 +186,7 @@ neutrinos.analyze(sph_dirs, f"{simpath}/analysis", radius=radius, n_workers=8)
 
 Outputs land in ```<simpath>/analysis/``` as plain text (plus ```.npy``` for the 2-D
 ```v_inf```–```theta``` histograms), so they can be re-plotted or compared later
-without re-reading the VTK files:
-```
-merger_time.txt                        t_merger [M_sun]
-Mej_rate{,_geo,_Ber}.txt               ejecta mass flux vs time
-Mej_vinf_{geo,Ber}.txt                 v_inf distribution
-rhoej_theta_{geo,Ber}.txt              angular distribution dM/dtheta
-Ye_avg_{geo,Ber}.txt, Mej_Ye_*.txt     Y_e evolution and distribution
-Mej_vinf_theta_{geo,Ber}.npy           full 2-D histogram (Nv x Ntheta)
-vinf_centers.txt, theta_centers_2d.txt, Ye_centers.txt
-                                       bin centers labelling the axes above
-Lnu_E_{nue,nua,nux,anux,total}.txt     neutrino energy luminosity vs time
-Eav_{nue,nua,nux,anux}.txt             flux-weighted mean neutrino energy
-dEnu_dtheta_{...}.txt                  time-integrated angular neutrino emission
-```
-```geo``` marks the geodesic unbound criterion (```u_t < -1```), ```Ber``` the
-Bernoulli one (```h*u_t < -1```).
+without re-reading the VTK files.
 
 ### Post-merger disk analysis (volume)
 ```kplot.volume``` analyses AthenaK's 3D volume-domain output (```file_type = bin```)
@@ -243,9 +210,9 @@ bash run_analysis.sh --plot         # re-plot without re-running the analysis
 ```
 Results are written to ```<bindir>/disk/```:
 ```
-scalars/disk_scalars_<snap>.json       disk mass, angular momentum, MRI Q_z, ...
-profiles/disk_profiles_<snap>.csv      radial profiles (Sigma, rho, Ye, T, H/R, Omega, ...)
-histograms/disk_histograms_<snap>.csv  Ye/entropy/temperature histograms
-frames/{histograms,profiles}/*.png     one frame per snapshot
-frames/all_movies/*.mp4                stitched by scripts/system/make_movies.sh
+scalars/disk_scalars_<snap>.json               disk mass, angular momentum, MRI Q_z, ...
+profiles/disk_profiles_<snap>.csv              radial profiles (Sigma, rho, Ye, T, H/R, Omega, ...)
+histograms/disk_histograms_<snap>.csv          Ye/entropy/temperature histograms
+frames/{histograms,profiles,scalars}/*.png     one frame per snapshot
+frames/all_movies/*.mp4                        stitched by scripts/system/make_movies.sh
 ```

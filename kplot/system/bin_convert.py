@@ -35,21 +35,21 @@ def read_binary(filename):
   # load header information and validate file format
   code_header = fp.readline().split()
   if len(code_header) < 1:
-      raise TypeError("unknown file format")
+    raise TypeError("unknown file format")
   if code_header[0] != b"Athena":
-      raise TypeError(
-          f"bad file format \"{code_header[0].decode('utf-8')}\" "
-          + '(should be "Athena")'
-      )
+    raise TypeError(
+        f"bad file format \"{code_header[0].decode('utf-8')}\" "
+        + '(should be "Athena")'
+    )
   version = code_header[-1].split(b"=")[-1]
   if version != b"1.1":
-      raise TypeError(f"unsupported file format version {version.decode('utf-8')}")
+    raise TypeError(f"unsupported file format version {version.decode('utf-8')}")
 
   pheader_count = int(fp.readline().split(b"=")[-1])
   pheader = {}
   for _ in range(pheader_count - 1):
-      key, val = [x.strip() for x in fp.readline().decode("utf-8").split("=")]
-      pheader[key] = val
+    key, val = [x.strip() for x in fp.readline().decode("utf-8").split("=")]
+    pheader[key] = val
   time = float(pheader["time"])
   cycle = int(pheader["cycle"])
   locsizebytes = int(pheader["size of location"])
@@ -65,30 +65,30 @@ def read_binary(filename):
   header = [line for line in header if len(line) > 0]
 
   if locsizebytes not in [4, 8]:
-      raise ValueError(f"unsupported location size (in bytes) {locsizebytes}")
+    raise ValueError(f"unsupported location size (in bytes) {locsizebytes}")
   if varsizebytes not in [4, 8]:
-      raise ValueError(f"unsupported variable size (in bytes) {varsizebytes}")
+    raise ValueError(f"unsupported variable size (in bytes) {varsizebytes}")
 
   locfmt = "d" if locsizebytes == 8 else "f"
   varfmt = "d" if varsizebytes == 8 else "f"
 
   # load grid information from header and validate
   def get_from_header(header, blockname, keyname):
-      blockname = blockname.strip()
-      keyname = keyname.strip()
-      if not blockname.startswith("<"):
-          blockname = "<" + blockname
-      if blockname[-1] != ">":
-          blockname += ">"
-      block = "<none>"
-      for line in [entry for entry in header]:
-          if line.startswith("<"):
-              block = line
-              continue
-          key, value = line.split("=")
-          if block == blockname and key.strip() == keyname:
-              return value
-      raise KeyError(f"no parameter called {blockname}/{keyname}")
+    blockname = blockname.strip()
+    keyname = keyname.strip()
+    if not blockname.startswith("<"):
+      blockname = "<" + blockname
+    if blockname[-1] != ">":
+      blockname += ">"
+    block = "<none>"
+    for line in [entry for entry in header]:
+      if line.startswith("<"):
+        block = line
+        continue
+      key, value = line.split("=")
+      if block == blockname and key.strip() == keyname:
+        return value
+    raise KeyError(f"no parameter called {blockname}/{keyname}")
 
   Nx1 = int(get_from_header(header, "<mesh>", "nx1"))
   Nx2 = int(get_from_header(header, "<mesh>", "nx2"))
@@ -116,31 +116,31 @@ def read_binary(filename):
 
   mb_data = {}
   for var in var_list:
-      mb_data[var] = []
+    mb_data[var] = []
   while fp.tell() < filesize:
-      mb_index.append(
-          np.frombuffer(fp.read(24), dtype=np.int32).astype(np.int64) - nghost
-      )
-      nx1_out = (mb_index[mb_count][1] - mb_index[mb_count][0]) + 1
-      nx2_out = (mb_index[mb_count][3] - mb_index[mb_count][2]) + 1
-      nx3_out = (mb_index[mb_count][5] - mb_index[mb_count][4]) + 1
-      mb_logical.append(np.frombuffer(fp.read(16), dtype=np.int32))
-      mb_geometry.append(
-          np.frombuffer(
-              fp.read(6 * locsizebytes),
-              dtype=np.float64 if locfmt == "d" else np.float32,
-          )
-      )
+    mb_index.append(
+        np.frombuffer(fp.read(24), dtype=np.int32).astype(np.int64) - nghost
+    )
+    nx1_out = (mb_index[mb_count][1] - mb_index[mb_count][0]) + 1
+    nx2_out = (mb_index[mb_count][3] - mb_index[mb_count][2]) + 1
+    nx3_out = (mb_index[mb_count][5] - mb_index[mb_count][4]) + 1
+    mb_logical.append(np.frombuffer(fp.read(16), dtype=np.int32))
+    mb_geometry.append(
+        np.frombuffer(
+            fp.read(6 * locsizebytes),
+            dtype=np.float64 if locfmt == "d" else np.float32,
+        )
+    )
 
-      data = np.fromfile(
-          fp,
-          dtype=np.float64 if varfmt == "d" else np.float32,
-          count=nx1_out * nx2_out * nx3_out * n_vars,
-      )
-      data = data.reshape(nvars, nx3_out, nx2_out, nx1_out)
-      for vari, var in enumerate(var_list):
-          mb_data[var].append(data[vari])
-      mb_count += 1
+    data = np.fromfile(
+        fp,
+        dtype=np.float64 if varfmt == "d" else np.float32,
+        count=nx1_out * nx2_out * nx3_out * n_vars,
+    )
+    data = data.reshape(nvars, nx3_out, nx2_out, nx1_out)
+    for vari, var in enumerate(var_list):
+      mb_data[var].append(data[vari])
+    mb_count += 1
 
   fp.close()
 

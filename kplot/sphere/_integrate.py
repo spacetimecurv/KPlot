@@ -1,51 +1,47 @@
-"""Quadrature helpers for integrals over an AthenaK spherical extraction surface.
-
-Shared by :mod:`kplot.sphere.ejecta` and :mod:`kplot.sphere.neutrinos`.
-"""
+"""Quadrature helpers for integrals over an AthenaK spherical extraction surface."""
 
 import numpy as np
 from scipy.integrate import simpson
 
 
 def integrate_over_phi(integrand, phi):
-    return simpson(y=integrand, x=phi, axis=0)
+  return simpson(y=integrand, x=phi, axis=0)
 
 
 def integrate_over_theta(integrand, theta):
-    return simpson(y=integrand, x=theta, axis=1)
+  return simpson(y=integrand, x=theta, axis=1)
 
 
 def integrate_2d_sph(integrand, theta, phi):
-    integral_theta = simpson(y=integrand, x=theta, axis=1)
-    return simpson(y=integral_theta, x=phi)
+  integral_theta = simpson(y=integrand, x=theta, axis=1)
+  return simpson(y=integral_theta, x=phi)
 
 
 def calc_ur(ux, uy, uz, theta, phi):
-    return (ux * np.sin(theta) * np.cos(phi) +
-            uy * np.sin(theta) * np.sin(phi) +
-            uz * np.cos(theta))
+  return (ux * np.sin(theta) * np.cos(phi) +
+          uy * np.sin(theta) * np.sin(phi) +
+          uz * np.cos(theta))
 
 
 def calc_uphi(ux, uy, phi):
-    return -ux * np.sin(phi) + uy * np.cos(phi)
+  return -ux * np.sin(phi) + uy * np.cos(phi)
 
 
 def sqrt_det_metric_adm(gxx, gyy, gzz, gxy, gxz, gyz, alpha):
-    gamma_det = (gxx * gyy * gzz +
-                 2 * gxy * gxz * gyz -
-                 gxx * gyz**2 -
-                 gyy * gxz**2 -
-                 gzz * gxy**2)
-    return np.sqrt(gamma_det) * alpha
+  gamma_det = (gxx * gyy * gzz +
+               2 * gxy * gxz * gyz -
+               gxx * gyz**2 -
+               gyy * gxz**2 -
+               gzz * gxy**2)
+  return np.sqrt(gamma_det) * alpha
 
 
 def sum_over_time(arr, time):
-    """
+  """
     Integrate arr over time using a midpoint Riemann sum.
 
     Each snapshot contributes arr[i] * dt[i], where dt[i] is the midpoint
-    width of the time interval around snapshot i.  More robust than Simpson's
-    rule when the signal changes rapidly between snapshots.
+    width of the time interval around snapshot i.
 
     Parameters
     ----------
@@ -56,55 +52,55 @@ def sum_over_time(arr, time):
     -------
     ndarray, shape (...,)
     """
-    dt = np.empty_like(time)
-    dt[0]    = time[1] - time[0]
-    dt[-1]   = time[-1] - time[-2]
-    dt[1:-1] = 0.5 * (time[2:] - time[:-2])
-    return np.sum(arr * dt[(slice(None),) + (None,) * (arr.ndim - 1)], axis=0)
+  dt = np.empty_like(time)
+  dt[0]    = time[1] - time[0]
+  dt[-1]   = time[-1] - time[-2]
+  dt[1:-1] = 0.5 * (time[2:] - time[:-2])
+  return np.sum(arr * dt[(slice(None),) + (None,) * (arr.ndim - 1)], axis=0)
 
 
 def _get_widths(c):
-    """Cell widths from center coordinates via midpoint rule."""
-    e = np.zeros(len(c) + 1)
-    e[1:-1] = 0.5 * (c[:-1] + c[1:])
-    e[0]  = c[0]  - (e[1]  - c[0])
-    e[-1] = c[-1] + (c[-1] - e[-2])
-    return np.abs(np.diff(e))
+  """Cell widths from center coordinates via midpoint rule."""
+  e = np.zeros(len(c) + 1)
+  e[1:-1] = 0.5 * (c[:-1] + c[1:])
+  e[0]  = c[0]  - (e[1]  - c[0])
+  e[-1] = c[-1] + (c[-1] - e[-2])
+  return np.abs(np.diff(e))
 
 
 def get_riemann_weights(integrand, theta_1d, phi_1d):
-    """
+  """
     Per-cell Riemann integration weights for a 2D spherical surface integral.
 
     Returns an array of shape (Nphi, Ntheta) containing dtheta * dphi for each
     cell, with pole cells divided by Nphi to avoid double-counting the singular
     axis.
     """
-    dt = _get_widths(theta_1d)   # (Ntheta,)
-    dp = _get_widths(phi_1d)     # (Nphi,)
+  dt = _get_widths(theta_1d)   # (Ntheta,)
+  dp = _get_widths(phi_1d)     # (Nphi,)
 
-    weights = np.ones_like(integrand)
-    is_pole = np.isclose(theta_1d, 0, atol=1e-7) | np.isclose(theta_1d, np.pi, atol=1e-7)
-    weights[:, is_pole] /= len(phi_1d)
+  weights = np.ones_like(integrand)
+  is_pole = np.isclose(theta_1d, 0, atol=1e-7) | np.isclose(theta_1d, np.pi, atol=1e-7)
+  weights[:, is_pole] /= len(phi_1d)
 
-    return weights * dt[None, :] * dp[:, None]
+  return weights * dt[None, :] * dp[:, None]
 
 
 def calculate_Mej_rate_riemann(integrand, theta_1d, phi_1d):
-    return np.sum(integrand * get_riemann_weights(integrand, theta_1d, phi_1d))
+  return np.sum(integrand * get_riemann_weights(integrand, theta_1d, phi_1d))
 
 
 def integrate_over_phi_riemann(integrand, theta_1d, phi_1d):
-    """
+  """
     Calculates d(dM/dtheta)/dt by integrating the 2D integrand over phi
     using a Riemann sum with polar weighting.
     """
-    dp = _get_widths(phi_1d)   # Shape (Nphi,)
+  dp = _get_widths(phi_1d)   # Shape (Nphi,)
 
-    # Divide the pole columns by Nphi: summing over phi only averages the
-    # contribution at the singular poles.
-    weights = np.ones_like(integrand)
-    is_pole = (np.isclose(theta_1d, 0, atol=1e-7)) | (np.isclose(theta_1d, np.pi, atol=1e-7))
-    weights[:, is_pole] /= len(phi_1d)
+  # Divide the pole columns by Nphi: summing over phi only averages the
+  # contribution at the singular poles.
+  weights = np.ones_like(integrand)
+  is_pole = (np.isclose(theta_1d, 0, atol=1e-7)) | (np.isclose(theta_1d, np.pi, atol=1e-7))
+  weights[:, is_pole] /= len(phi_1d)
 
-    return np.sum(integrand * weights * dp[:, None], axis=0)
+  return np.sum(integrand * weights * dp[:, None], axis=0)

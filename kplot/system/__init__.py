@@ -19,15 +19,15 @@ from . import units
 from . import waveforms
 
 __all__ = [
-    "athenak_units",
-    "batchmerge",
-    "bin_convert",
-    "checkpoints",
-    "history",
-    "horizon",
-    "plotter",
-    "seriesplot",
-    "tracker",
-    "units",
-    "waveforms",
+  "athenak_units",
+  "batchmerge",
+  "bin_convert",
+  "checkpoints",
+  "history",
+  "horizon",
+  "plotter",
+  "seriesplot",
+  "tracker",
+  "units",
+  "waveforms",
 ]

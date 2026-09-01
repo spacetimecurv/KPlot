@@ -162,7 +162,7 @@ class SeriesPlot:
                          extent=image.extent)
 
       if self.slice is not None:
-          slice_dim, slice_pos = self.slice
+        slice_dim, slice_pos = self.slice
 
       if self.plotblocks:
         for block in image.data.blocks:

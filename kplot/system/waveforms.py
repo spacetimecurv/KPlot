@@ -289,7 +289,7 @@ class Waveform:
     for name in self.psi4_data[self.radius_key]['real']:
       l, m = int(name[0]), int(name[1:])
       if l > lmax:
-          continue
+        continue
       rpsi4 = (self.psi4_data[self.radius_key]['real'][name] + 1j * self.psi4_data[self.radius_key]['imag'][name]) / self.Mass
       out[(l, m)] = fixed_freq_int_1(rpsi4, cutoff=cutoff, dt=dt)
 
@@ -310,7 +310,7 @@ class Waveform:
       for m in range(-l, l+1):
         hlm = g(l, m)
         if np.isscalar(hlm):
-            continue
+          continue
         Pxy = Pxy + hlm * (self._a(l,m)     * np.conj(g(l,m+1))
                          + self._b(l,-m)    * np.conj(g(l-1,m+1))
                          - self._b(l+1,m+1) * np.conj(g(l+1,m+1)))

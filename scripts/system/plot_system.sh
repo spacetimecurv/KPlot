@@ -147,8 +147,8 @@ fi
 # ---------------------------------------------------------------------------
 # Movie generation — automatically create MP4s from rendered frames
 # ---------------------------------------------------------------------------
-MOVIE_FPS=24       # frames per second
-MOVIE_STRIDE=2     # use every Nth frame (1 = all)
+MOVIE_FPS="$(_cfg_get movie_fps)"       # frames per second
+MOVIE_STRIDE="$(_cfg_get movie_stride)"     # use every Nth frame (1 = all)
 
 echo ""
 echo "=== Making movies from ${FIGPATH} ==="

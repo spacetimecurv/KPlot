@@ -2,8 +2,11 @@
 Ejecta analysis on an AthenaK spherical extraction surface: Mej_rate + 2D
 ejecta histogram (vinf x theta).
 
-Each snapshot's VTK files are loaded once and all shared intermediate
-quantities (nb, e, h, W, u_t, u^r, sqrt_det, masks) are computed once.
+Per snapshot, loads 6 VTK files:
+  <job>.r=R.mhd_w_bcc.NNNNN.vtk — primitives dens, s_00, T (primitive variables)
+  <job>.r=R.adm.NNNNN.vtk       — adm_gxx..gyz             (ADM 3-metric)
+  <job>.r=R.z4c_alpha.NNNNN.vtk — z4c_alpha                (lapse)
+  <job>.r=R.z4c_beta*.NNNNN.vtk — z4c_beta*                (shift)
 
 The 2D histogram dMej[i_v, i_theta] unifies the former separate vinf histogram
 and rhoej_theta outputs: its marginals reproduce both.
@@ -175,22 +178,22 @@ def _process_snapshot_ejecta(args):
   shells  = (mhd, adm, alpha, betax, betay, betaz)
   centers = _np.array([sh.center for sh in shells])
   if not _np.allclose(centers, centers[0], rtol=0.0, atol=_CENTER_TOL):
-      detail = '\n'.join(f'  {_os.path.basename(sh.path)}: '
-                          f'({c[0]:.6g}, {c[1]:.6g}, {c[2]:.6g})'
-                          for sh, c in zip(shells, centers))
-      raise RuntimeError(
-          f'Sphere centers disagree at t = {time:g} M_sun:\n{detail}\n'
-          'Every sph output block feeding the ejecta analysis must use the same '
-          'center_tracker.')
+    detail = '\n'.join(f'  {_os.path.basename(sh.path)}: '
+                        f'({c[0]:.6g}, {c[1]:.6g}, {c[2]:.6g})'
+                        for sh, c in zip(shells, centers))
+    raise RuntimeError(
+        f'Sphere centers disagree at t = {time:g} M_sun:\n{detail}\n'
+        'Every sph output block feeding the ejecta analysis must use the same '
+        'center_tracker.')
 
   z4c_alpha_raw = alpha.shell('z4c_alpha')
   phi_zero    = (phi == phi.min())
   theta_north = (theta == theta.min())
   dup_corr = _np.ones(z4c_alpha_raw.shape)
   if z4c_alpha_raw[phi_zero & ~theta_north].max() > 1.0:
-      dup_corr[phi_zero] = 0.5
+    dup_corr[phi_zero] = 0.5
   if z4c_alpha_raw[theta_north].max() > 1.0:
-      dup_corr[theta_north] = 0.25
+    dup_corr[theta_north] = 0.25
 
   dens        = mhd.shell('dens')        * dup_corr
   ye          = mhd.shell('s_00')        * dup_corr
@@ -400,9 +403,9 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
     with Pool(n_workers,
               initializer=_init_ejecta_worker,
               initargs=init_args) as pool:
-        results = list(pool.imap_unordered(
-            _process_snapshot_ejecta, worker_args,
-            chunksize=max(1, len(worker_args) // (n_workers * 4))))
+      results = list(pool.imap_unordered(
+          _process_snapshot_ejecta, worker_args,
+          chunksize=max(1, len(worker_args) // (n_workers * 4))))
   else:
     _init_ejecta_worker(*init_args)
     results = [_process_snapshot_ejecta(a) for a in worker_args]
@@ -592,9 +595,9 @@ def _bool_arg(value):
   """
   v = value.strip().lower()
   if v in ('1', 'true', 'yes', 'on'):
-      return True
+    return True
   if v in ('0', 'false', 'no', 'off', ''):
-      return False
+    return False
   raise argparse.ArgumentTypeError(f"expected a boolean, got '{value}'")
 
 
@@ -636,9 +639,9 @@ def main(argv=None):
   args = p.parse_args(argv)
 
   if args.t_merger is None:
-      t_stop = np.inf
+    t_stop = np.inf
   else:
-      t_stop = args.t_merger + args.t_post_ms * 1e-3 / MSUN_TO_S
+    t_stop = args.t_merger + args.t_post_ms * 1e-3 / MSUN_TO_S
 
   analyze(args.sph_dirs, args.eos_table, args.output_dir,
           radius=args.radius, dfloor=args.dfloor, t_stop=t_stop,
