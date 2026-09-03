@@ -45,9 +45,12 @@ class Waveform:
 
     # Waveform-specific data.
     self.psi4_data     = None
+    self.load_psi4_data()
+
     self.strain_data   = None
     self.strain_dot    = None
     self.mom_flux      = None
+    self.t_merger      = None
 
     # Kick intrinsic parameters. Computed downstream.
     self.vxy           = None
@@ -129,6 +132,18 @@ class Waveform:
       if "time" in self.psi4_data[radius]:
         self.psi4_data[radius]["time"] -= rs
 
+  def merger_time(self):
+    """Compute the merger time [M_sun] from the (2,2) GW mode at `radius`."""
+    if self.psi4_data is None:
+      raise SystemExit("Load psi4 data first with load_psi4_data()!")
+
+    rstr = self.radius_key
+    amp2 = self.psi4_data[rstr]['real']['22']**2 + self.psi4_data[rstr]['imag']['22']**2
+
+    i_peak = int(np.argmax(amp2))
+    t_merger = float(self.psi4_data[rstr]['time'][i_peak])
+    self.t_merger = t_merger
+
   # Some waveform utility.
   @staticmethod
   def phase(signal):
@@ -201,7 +216,7 @@ class Waveform:
     strain_data["Amplitude"] = self.amplitude(h)
     strain_data["Phase"]     = self.phase(h)
     strain_data["Strain"]    = h
-    strain_data["Momega"]    = self.phi_dot(u,h)
+    strain_data["Momega"]    = Mass * self.phi_dot(u,h)
     strain_data["Ret. time"] = u
     strain_data["Sim. time"] = time
     strain_data["Cutoff"]    = f0
