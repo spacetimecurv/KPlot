@@ -444,6 +444,29 @@ def _process_snapshot_disk(args):
     return out
 
   res_disk        = integrate(disk)
+
+  Rcyl_km  = Rcyl * L_UNIT / KM
+  disk_ext = disk & (Rcyl_km >= JRHO_R_INT_KM)
+  disk_int = disk & (Rcyl_km <  JRHO_R_INT_KM)
+
+  rho_cgs    = rho * RHO_UNIT
+  jspec_cgs  = j_spec * JSPEC_UNIT
+  jdens_cgs  = rho_cgs * jspec_cgs
+  jspec_1e16 = jspec_cgs * 1.0e-16
+
+  M_disk = res_disk["M_MSUN_CGS"]
+
+  def jrho_hist(mask, yvals, ybins):
+    w = dM[mask] / M_disk if M_disk > 0 else dM[mask]
+    return np.histogram2d(rho_cgs[mask], yvals[mask], bins=(JRHO_XBINS, ybins), weights=w)[0]
+
+  jrho_hists = {
+    "top_ext": jrho_hist(disk_ext, jdens_cgs, JRHO_YBINS_TOP),
+    "top_int": jrho_hist(disk_int, jdens_cgs, JRHO_YBINS_TOP),
+    "bot_ext": jrho_hist(disk_ext, jspec_1e16, JRHO_YBINS_BOT),
+    "bot_int": jrho_hist(disk_int, jspec_1e16, JRHO_YBINS_BOT),
+  }
+
   # res_ejecta_bern = integrate(dense & outside_bh & unbound_bern)
   # res_ejecta_geo  = integrate(dense & outside_bh & unbound_geo)
   # res_all_out     = integrate(dense & outside_bh)
@@ -567,6 +590,8 @@ def _process_snapshot_disk(args):
       for b in range(len(hh)):
         fp.write(f"{name},{ee[b]:.8e},{ee[b + 1]:.8e},{hh[b]:.8e}\n")
 
+  np.savez(os.path.join(outdir, "jrho", f"disk_jrho_{snapshot}.npz"), **jrho_hists)
+
 # ======================================================================
 # CONSTANTS AND CONVERSIONS
 # ======================================================================
@@ -582,7 +607,14 @@ RHO_UNIT = MSUN_CGS / L_UNIT**3                 # g/cm^3
 P_UNIT   = RHO_UNIT * CLIGHT_CGS**2             # erg/cm^3
 B_UNIT   = np.sqrt(4.0 * np.pi * P_UNIT)        # Gauss
 J_UNIT   = GNEWT_CGS * MSUN_CGS**2 / CLIGHT_CGS # g cm^2 / s
+JSPEC_UNIT = L_UNIT * CLIGHT_CGS
 KM       = 1.0e5
+
+JRHO_XBINS     = np.geomspace(1.0e7, 1.0e13, 60)
+JRHO_YBINS_TOP = np.geomspace(1.0e20, 1.0e31, 60)
+JRHO_YBINS_BOT = np.linspace(0.0, 20.0, 60)
+JRHO_R_INT_KM  = 10.0
+JRHO_THRESHOLD = 1.0e-5
 
 MN_MEV = 939.56535                # neutron mass, must match the table's `mn` scalar
 MEV_PER_FM3_TO_CGS = MEV * 1.0e39 # erg/cm^3 per MeV/fm^3
@@ -843,6 +875,7 @@ def analyze(args):
   os.makedirs(os.path.join(args.outdir, "scalars"), exist_ok=True)
   os.makedirs(os.path.join(args.outdir, "profiles"), exist_ok=True)
   os.makedirs(os.path.join(args.outdir, "histograms"), exist_ok=True)
+  os.makedirs(os.path.join(args.outdir, "jrho"), exist_ok=True)
 
   # Parallel snapshot loop.
   if n_workers > 1:

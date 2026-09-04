@@ -25,6 +25,12 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm, ListedColormap
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
+
+from kplot.volume.disk import (JRHO_XBINS, JRHO_YBINS_TOP, JRHO_YBINS_BOT, JRHO_R_INT_KM,
+                                JRHO_THRESHOLD, JSPEC_UNIT)
 
 HIST_QUANTITIES = [
     ("Ye", r"$Y_e$", False),
@@ -78,6 +84,18 @@ def load_time_ms(outdir, snap):
     return float("nan")
   with open(path) as fp:
     return json.load(fp)["time_ms"]
+
+
+def load_jrho(path):
+  return dict(np.load(path))
+
+
+def load_j_mean(outdir, snap):
+  path = os.path.join(outdir, "scalars", f"disk_scalars_{snap}.json")
+  if not os.path.exists(path):
+    return float("nan")
+  with open(path) as fp:
+    return json.load(fp)["disk"].get("j_mean", float("nan"))
 
 
 def load_histograms(path):
@@ -190,6 +208,53 @@ def plot_histograms(hist, snap, time_ms, ylim, outfile):
   plt.close(fig)
 
 
+def _plot_jrho_panel(ax, H_ext, H_int, ybins):
+  cmap = plt.get_cmap("magma").copy()
+  cmap.set_under("0.75")
+  im = ax.pcolormesh(JRHO_XBINS, ybins, np.where(H_ext > 0, H_ext, np.nan).T,
+                      norm=LogNorm(vmin=JRHO_THRESHOLD), cmap=cmap, shading="auto")
+  ax.pcolormesh(JRHO_XBINS, ybins, np.where(H_int > 0, 1.0, np.nan).T,
+                cmap=ListedColormap(["lightskyblue"]), alpha=0.6, shading="auto")
+  ax.set_xscale("log")
+  ax.set_xlim(JRHO_XBINS[0], JRHO_XBINS[-1])
+  ax.set_ylim(ybins[0], ybins[-1])
+  ax.tick_params(which="both", direction="in", top=True, right=True)
+  return im
+
+
+def plot_jrho(hists, snap, time_ms, j_mean_code, outfile):
+  a = j_mean_code * JSPEC_UNIT
+  fig, axs = plt.subplots(2, sharex=True, figsize=(6, 8),
+                           gridspec_kw={"height_ratios": [2, 1]})
+  fig.subplots_adjust(hspace=0.05)
+
+  im = _plot_jrho_panel(axs[0], hists["top_ext"], hists["top_int"], JRHO_YBINS_TOP)
+  _plot_jrho_panel(axs[1], hists["bot_ext"], hists["bot_int"], JRHO_YBINS_BOT)
+
+  axs[0].set_yscale("log")
+  axs[0].set_ylabel(r"$j$  [g cm$^{-1}$ s$^{-1}$]")
+  axs[1].set_xlabel(r"$\rho$  [g cm$^{-3}$]")
+  axs[1].set_ylabel(r"$j/\rho$  [$10^{16}$ cm$^2$ s$^{-1}$]")
+
+  if np.isfinite(a):
+    axs[0].plot(JRHO_XBINS, a * JRHO_XBINS, "g--")
+    axs[1].axhline(a * 1.0e-16, color="g", ls="--")
+
+  legend_handles = [
+    Line2D([0], [0], color="g", ls="--", label=r"$j=a\rho$"),
+    Patch(facecolor="lightskyblue", label=rf"$r<{JRHO_R_INT_KM:.1f}$ km"),
+  ]
+  axs[0].legend(handles=legend_handles, loc="upper left", fontsize=8, frameon=False)
+
+  cbar = fig.colorbar(im, ax=axs, location="top", orientation="horizontal",
+                       pad=0.02, aspect=40, extend="min")
+  cbar.set_label("mass fraction")
+
+  fig.text(0.5, 0.005, f"snapshot {snap}, t = {time_ms:.2f} ms", ha="center", fontsize=9)
+  fig.savefig(outfile, dpi=150)
+  plt.close(fig)
+
+
 def plot_profiles(R, prof, snap, time_ms, ylim, outfile):
   """Plot the radial profiles at the current snapshot."""
   fig, axes = plt.subplots(2, 3, figsize=(13, 7))
@@ -260,11 +325,12 @@ def plot_spectrum(k, spectra, snap, time, outfile):
 
 
 def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=False,
-             no_spectra=False):
+             no_spectra=False, no_jrho=False):
   os.makedirs(os.path.join(figdir, "histograms"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "profiles"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "scalars"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "spectra"), exist_ok=True)
+  os.makedirs(os.path.join(figdir, "jrho"), exist_ok=True)
 
   if not no_histograms:
     snaps = find_snapshots(outdir, "histograms", "csv")
@@ -274,6 +340,15 @@ def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=
       hist = load_histograms(os.path.join(outdir, "histograms", f"disk_histograms_{snap}.csv"))
       outfile = os.path.join(figdir, "histograms", f"disk_histograms_{snap}.png")
       plot_histograms(hist, snap, load_time_ms(outdir, snap), ylim, outfile)
+
+  if not no_jrho:
+    snaps = find_snapshots(outdir, "jrho", "npz")
+    print(f"$ Plotting {len(snaps)} j-rho frames...")
+    for snap in snaps:
+      hists = load_jrho(os.path.join(outdir, "jrho", f"disk_jrho_{snap}.npz"))
+      j_mean = load_j_mean(outdir, snap)
+      outfile = os.path.join(figdir, "jrho", f"disk_jrho_{snap}.png")
+      plot_jrho(hists, snap, load_time_ms(outdir, snap), j_mean, outfile)
 
   if not no_profiles:
     snaps = find_snapshots(outdir, "profiles", "csv")
@@ -328,11 +403,12 @@ def main(argv=None):
   ap.add_argument("--no-profiles", action="store_true", help="skip profile frames")
   ap.add_argument("--no-scalars", action="store_true", help="skip scalar evolution")
   ap.add_argument("--no-spectra", action="store_true", help="skip spectrum frames")
+  ap.add_argument("--no-jrho", action="store_true", help="skip j-rho frames")
   args = ap.parse_args(argv)
 
   figdir = args.figdir or os.path.join(args.outdir, "frames")
   plot_all(args.outdir, figdir, args.no_histograms, args.no_profiles, args.no_scalars,
-           args.no_spectra)
+           args.no_spectra, args.no_jrho)
 
 
 if __name__ == "__main__":
