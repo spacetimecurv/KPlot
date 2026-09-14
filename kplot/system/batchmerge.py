@@ -21,7 +21,7 @@ class BatchMerger:
   A class to merge output files from batchtools output folders.
   """
 
-  def __init__(self, base_pattern="output-*"):
+  def __init__(self, base_pattern="output-*", batchtools=True):
     """
     Initialize the BatchMerger with the path to the batch folders.
 
@@ -29,6 +29,7 @@ class BatchMerger:
     base_pattern (str): The pattern to match the batch folders.
     """
     self.base_pattern = base_pattern
+    self.batchtools = batchtools
 
   def merge(self, file_glob, output_file, strip_header=True, group_regex=None,
     output_dir=".", input_dir="."):
@@ -48,7 +49,7 @@ class BatchMerger:
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    folders = sorted(input_dir.glob(self.base_pattern))
+    folders = sorted(input_dir.glob(self.base_pattern)) if self.batchtools else [input_dir]
 
     grouped = defaultdict(list)
     headers = {}

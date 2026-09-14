@@ -37,15 +37,16 @@ def _load_segment(real_path, imag_path):
   return t, real[:, COL_22], imag[:, COL_22]
 
 
-def merger_time(simpath, radius):
+def merger_time(simpath, radius, batchtools=True):
   """Compute the merger time [M_sun] from the (2,2) GW mode at `radius`."""
   rstr = f"{int(round(radius)):04d}"
-  real_files = sorted(glob.glob(
-      os.path.join(simpath, "output-*", "waveforms", f"rpsi4_real_{rstr}.txt")))
+  wfdir = (os.path.join(simpath, "output-*", "waveforms") if batchtools
+           else os.path.join(simpath, "waveforms"))
+  real_files = sorted(glob.glob(os.path.join(wfdir, f"rpsi4_real_{rstr}.txt")))
   if not real_files:
     raise FileNotFoundError(
         f"No rpsi4_real_{rstr}.txt files found under "
-        f"{simpath}/output-*/waveforms . "
+        f"{wfdir} . "
         f"Check the simpath and the waveform extraction radius.")
 
   # Merge segments by time; later segments override earlier overlaps.
@@ -101,11 +102,14 @@ def main(argv=None):
   parser.add_argument("--radius", type=float, default=300.0,
                       help="GW extraction radius (must match rpsi4_*_RRRR.txt). "
                            "Default: 300.")
+  parser.add_argument("--batchtools", action=argparse.BooleanOptionalAction, default=True,
+                      help="Read waveforms from <simpath>/output-XXXX/waveforms "
+                           "(default); --no-batchtools reads <simpath>/waveforms.")
   parser.add_argument("--out", required=True,
                       help="Output file for the merger time (merger_time.txt).")
   args = parser.parse_args(argv)
 
-  t_merger, radius = merger_time(args.simpath, args.radius)
+  t_merger, radius = merger_time(args.simpath, args.radius, args.batchtools)
   write_merger_time(args.out, t_merger, radius)
   print(f"Wrote {args.out}")
 

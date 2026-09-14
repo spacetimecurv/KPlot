@@ -80,6 +80,11 @@ _cfg_get_list() {
 }
 
 SIMPATH="$(_cfg_get simpath)"
+BATCHTOOLS="$(_cfg_get batchtools)"
+case "${BATCHTOOLS,,}" in
+    false|0|no|off) BATCHTOOLS=false ;;
+    *)              BATCHTOOLS=true  ;;
+esac
 
 if [[ -z "${SIMPATH}" ]]; then
     echo "ERROR: 'simpath' is not set in ${CONFIG_FILE}."; exit 1
@@ -121,6 +126,7 @@ ARGS=(--simpath "${SIMPATH}")
 [[ -n "${PLANE:-}"      ]] && ARGS+=(--plane      "${PLANE}")
 [[ -n "${TIME_UNITS:-}" ]] && ARGS+=(--time-units "${TIME_UNITS}")
 [[ -n "${UNITS:-}"      ]] && ARGS+=(--units      "${UNITS}")
+[[ "${BATCHTOOLS}"    == "false" ]] && ARGS+=(--no-batchtools)
 [[ "${SHOW_TRACKERS}" == "false" ]] && ARGS+=(--no-trackers)
 [[ "${SHOW_HORIZON}"  == "true"  ]] && ARGS+=(--show-horizon)
 [[ "${SKIP_EXISTING}" == "true"  ]] && ARGS+=(--skip-existing)

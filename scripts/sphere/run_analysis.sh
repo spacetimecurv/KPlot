@@ -50,6 +50,11 @@ _cfg_get() {
 }
 
 SIMPATH="$(_cfg_get simpath)"
+BATCHTOOLS="$(_cfg_get batchtools)"
+case "${BATCHTOOLS,,}" in
+  false|0|no|off) BATCHTOOLS=false ;;
+  *)              BATCHTOOLS=true  ;;
+esac
 EOS_TABLE="$(_cfg_get eos_table)"
 PYTHONPATH_EXTRA="$(_cfg_get pythonpath_extra)"   # optional (e.g. a vtk install)
 
@@ -78,12 +83,14 @@ YE_EVO="$(_cfg_get ye_evo)"
 YE_THETA_EVO="$(_cfg_get ye_theta_evo)"
 
 # ── auto-discover all output-*/sph directories (sorted) ──────────────────────
+SPH_PATTERN="output-*/sph"
+[[ "${BATCHTOOLS}" == "false" ]] && SPH_PATTERN="sph"
 SPH_DIRS=()
-for d in "${SIMPATH}"/output-*/sph; do
+for d in "${SIMPATH}"/${SPH_PATTERN}; do
   [[ -d "$d" ]] && SPH_DIRS+=("$d")
 done
 if [[ ${#SPH_DIRS[@]} -eq 0 ]]; then
-  echo "ERROR: no output-*/sph directories found under ${SIMPATH}"; exit 1
+  echo "ERROR: no ${SPH_PATTERN} directories found under ${SIMPATH}"; exit 1
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -156,6 +163,7 @@ EJECTA_ARGS=()
 
 MERGER_ARGS=()
 [[ -n "${WF_RADIUS}" ]] && MERGER_ARGS+=(--radius "${WF_RADIUS}")
+[[ "${BATCHTOOLS}" == "false" ]] && MERGER_ARGS+=(--no-batchtools)
 
 echo "============================================================"
 echo "  BNS SPH analysis"

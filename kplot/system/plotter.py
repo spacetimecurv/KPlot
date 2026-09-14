@@ -309,8 +309,10 @@ def _read_frame_time(fpath):
     return (fpath, None)
 
 
-def find_output_dirs(simpath):
+def find_output_dirs(simpath, batchtools=True):
   """Return sorted list of output-XXXX subdirectories under simpath."""
+  if not batchtools:
+    return [simpath] if os.path.isdir(simpath) else []
   pattern = os.path.join(simpath, "output-[0-9][0-9][0-9][0-9]")
   return sorted(d for d in glob.glob(pattern) if os.path.isdir(d))
 
@@ -1165,7 +1167,7 @@ class SystemPlotter:
                plane="xy", time_units="Msun",
                show_trackers=True, show_horizon=False,
                full_domain=False, skip_existing=False,
-               prim_prefix="mhd_w_bcc"):
+               prim_prefix="mhd_w_bcc", batchtools=True):
     """Initialize the SystemPlotter.
 
     Parameters:
@@ -1198,11 +1200,12 @@ class SystemPlotter:
     self.show_horizon = show_horizon
     self.full_domain = full_domain
     self.skip_existing = skip_existing
+    self.batchtools = batchtools
     self.coord_scale, self.coord_label = spatial_units(units)
     self.time_scale, self.time_tex, self.time_axis = time_units_scale(time_units)
     self.xy_lim = None if full_domain else (-60, 60)
 
-    self.output_dirs = find_output_dirs(simpath)
+    self.output_dirs = find_output_dirs(simpath, batchtools)
     self._trackers = None
     self._horizons = None
     self._rad_prefixes = None
@@ -1424,7 +1427,10 @@ class SystemPlotter:
     sections: iterable of section names, or containing 'all' to run everything.
     """
     if not self.output_dirs:
-      print(f"ERROR: No output-XXXX directories found under {self.simpath}")
+      if self.batchtools:
+        print(f"ERROR: No output-XXXX directories found under {self.simpath}")
+      else:
+        print(f"ERROR: {self.simpath} is not a directory")
       raise SystemExit(1)
 
     configure_matplotlib()
@@ -1488,6 +1494,9 @@ def parse_args(argv=None):
                       help="Show full simulation domain instead of the default +/-60 Msun window")
   parser.add_argument("--skip-existing", dest="skip_existing", action="store_true",
                       help="Skip frames whose output PNG already exists in figpath")
+  parser.add_argument("--batchtools", action=argparse.BooleanOptionalAction, default=True,
+                      help="Read data from output-XXXX subdirs of simpath [default]; "
+                           "--no-batchtools reads it directly from simpath")
   parser.add_argument("--sections", nargs="+", default=["all"],
                       choices=SECTIONS + ["all"],
                       help="Which sections to run (default: all)")
@@ -1514,6 +1523,7 @@ def main(argv=None):
     show_horizon=args.show_horizon,
     full_domain=args.full_domain,
     skip_existing=args.skip_existing,
+    batchtools=args.batchtools,
   )
   plotter.run(args.sections)
 

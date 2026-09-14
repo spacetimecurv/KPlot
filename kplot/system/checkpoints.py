@@ -29,19 +29,21 @@ def read_checkpoint(rst_path):
   return time, dt, cycle
 
 
-def find_segments(simpath):
+def find_segments(simpath, batchtools=True):
   """Return the sorted output-XXXX dirs under simpath, or simpath itself."""
+  if not batchtools:
+    return [simpath]
   dirs = sorted(d for d in glob.glob(os.path.join(simpath, "output-[0-9]*"))
                 if os.path.isdir(d))
   return dirs or [simpath]
 
 
-def list_checkpoints(simpath):
+def list_checkpoints(simpath, batchtools=True):
   """Print time, dt and cycle of every checkpoint, grouped by segment."""
   simpath = os.path.abspath(os.path.expanduser(simpath))
   print("Simulation: %s" % simpath)
 
-  for segment in find_segments(simpath):
+  for segment in find_segments(simpath, batchtools):
     rstdir = os.path.join(segment, "rst")
     if not os.path.isdir(rstdir):
       rstdir = segment
@@ -67,12 +69,15 @@ def main(argv=None):
                 "an AthenaK simulation.")
   parser.add_argument("simpath", nargs="?", default=".",
                       help="Simulation directory (default: current directory)")
+  parser.add_argument("--batchtools", action=argparse.BooleanOptionalAction, default=True,
+                      help="Read checkpoints from output-XXXX subdirs of simpath "
+                           "(default); --no-batchtools reads them from simpath")
   args = parser.parse_args(argv)
 
   if not os.path.isdir(args.simpath):
     print("ERROR: %s is not a directory" % args.simpath, file=sys.stderr)
     return 1
-  list_checkpoints(args.simpath)
+  list_checkpoints(args.simpath, args.batchtools)
   return 0
 
 
