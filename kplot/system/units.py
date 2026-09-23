@@ -3,6 +3,9 @@
 # Description: Unit conversions for AthenaK data.                       #
 #########################################################################
 
+# Import third-party libraries.
+from matplotlib.colors import LogNorm, Normalize
+
 # Define the Units class.
 class Units:
   """
@@ -261,3 +264,122 @@ class Units:
 CGS = Units.CGS()
 MKS = Units.MKS()
 GEOMETRIC_SOLAR = Units.GeometricSolar()
+
+# ****************** ATHENAK UNIT CONVENTIONS **********************
+class AthenaK_Units:
+  """
+  A class defining AthenaK units.
+  """
+
+  def __init__(self):
+    """
+    Instantiate the AthenaK units class.
+    """
+    self.cgs = Units.CGS()
+
+    # GeometricKilometer (GK) unit scales — G = c = 1, length unit = 1 km
+    self.GK_press  = self.cgs.G / self.cgs.c**4 * 1e10 # 1 erg/cm^3  expressed in km^-2
+    self.GK_volume = 1e-15                             # 1 cm^3      expressed in km^3
+    self.GK_energy = self.cgs.G / self.cgs.c**4 * 1e-5                   # 1 erg       expressed in km
+
+    # NGS (nm, g, s, MeV energy)
+    self.NGS_volume = 1e21               # 1 cm^3  in nm^3   (1 cm = 1e7 nm)
+    self.NGS_numden = 1e-21              # 1 cm^-3 in nm^-3
+
+    # Nuclear (fm, MeV)
+    self.NUC_volume = 1e39               # 1 cm^3  in fm^3   (1 cm = 1e13 fm)
+
+    # Derived conversion constants.
+    # Energy density: code (km^-2) -> MeV/nm^3
+    self.GK2NGS_ENEDENS = (self.GK_volume / self.NGS_volume) \
+                           * (1.0 / self.cgs.MeV / self.GK_energy)
+
+    # Energy density: code (km^-2) -> erg/cm^3
+    self.CODE2CGS_ENEDENS = 1.0 / self.GK_press
+
+    # Radiation number density: code (fm^-3) -> nm^-3
+    self.CODE2NGS_NUMDENS = 1e18  # 1 fm^-3 = 1e18 nm^-3
+
+    # Radiation number density: code (fm^-3) -> cm^-3
+    self.CODE2CGS_NUMDENS = 1e39  # 1 fm^-3 = 1e39 cm^-3
+
+    # Opacity: code (km^-1) -> nm^-1
+    self.CODE2NGS_OPACITY = 1e-12 # 1 km^-1 = 1e-12 nm^-1
+
+    # Opacity: code (km^-1) -> cm^-1
+    self.CODE2CGS_OPACITY = 1e-5  # 1 km^-1 = 1e-5  cm^-1
+
+    # Number emissivity eta_0: code -> nm^-3 s^-1
+    self.c_km        = self.cgs.c * 1e-5                 # c in km/s  ~ 2.998e5 km/s
+    self.UNIT_ND_DOT = self.CODE2NGS_NUMDENS * self.c_km # ~ 2.998e23
+
+    # Number emissivity eta_0: code -> cm^-3 s^-1
+    self.CODE2CGS_ND_DOT = self.UNIT_ND_DOT * self.NGS_numden # / 1e21
+
+    # Energy emissivity eta_1: code -> MeV nm^-3 s^-1
+    self.UNIT_ED_DOT = self.GK2NGS_ENEDENS * self.c_km # ~ 2.265e29
+
+    # Energy emissivity eta_1: code -> erg cm^-3 s^-1
+    self.CODE2CGS_ED_DOT = self.UNIT_ED_DOT * self.cgs.MeV * self.NGS_numden
+
+    # Rest-mass density: code (G=c=M_sun=1) -> g/cm^3
+    self.unit_len_cgs  = self.cgs.G * self.cgs.Msun / self.cgs.c**2 # ~ 1.477e6 cm
+    self.CODE2CGS_DENS = self.cgs.Msun / self.unit_len_cgs**3       # ~ 6.178e17
+
+    # Average neutrino energy E/N: code ratio (km^-2)/(fm^-3) -> MeV
+    self.CODE2MEV_AVGENE = self.GK2NGS_ENEDENS / self.CODE2NGS_NUMDENS  # ~ 7.556e5
+
+  # Explicit conversion functions.
+  def conv_dens(self, val, units='cgs'):
+    """Rest-mass density (code G=c=Msun=1 units) -> target units."""
+    if units == 'code': return val
+    if units == 'cgs' : return val * self.CODE2CGS_DENS
+    raise ValueError(f"density: unsupported units {units!r} (use 'code' or 'cgs')")
+
+
+  def conv_enedens(self, val, units='cgs'):
+    """Radiation energy density E (code km^-2) -> target units."""
+    if units == 'code': return val
+    if units == 'ngs' : return val * self.GK2NGS_ENEDENS
+    if units == 'cgs' : return val * self.CODE2CGS_ENEDENS
+    raise ValueError(f"enedens: unsupported units {units!r}")
+
+
+  def conv_numdens(self, val, units='cgs'):
+    """Radiation/baryon number density N (code fm^-3) -> target units."""
+    if units == 'code': return val
+    if units == 'ngs' : return val * self.CODE2NGS_NUMDENS
+    if units == 'cgs' : return val * self.CODE2CGS_NUMDENS
+    raise ValueError(f"numdens: unsupported units {units!r}")
+
+
+  def conv_opacity(self, val, units='cgs'):
+    """Absorption/scattering opacity kappa (code km^-1) -> target units."""
+    if units == 'code': return val
+    if units == 'ngs' : return val * self.CODE2NGS_OPACITY
+    if units == 'cgs' : return val * self.CODE2CGS_OPACITY
+    raise ValueError(f"opacity: unsupported units {units!r}")
+
+
+  def conv_emissivity_N(self, val, units='cgs'):
+    """Number emissivity eta_0 (code) -> target units."""
+    if units == 'code': return val
+    if units == 'ngs' : return val * self.UNIT_ND_DOT
+    if units == 'cgs' : return val * self.CODE2CGS_ND_DOT
+    raise ValueError(f"emissivity_N: unsupported units {units!r}")
+
+
+  def conv_emissivity_E(self, val, units='cgs'):
+    """Energy emissivity eta_1 (code) -> target units."""
+    if units == 'code': return val
+    if units == 'ngs' : return val * self.UNIT_ED_DOT
+    if units == 'cgs' : return val * self.CODE2CGS_ED_DOT
+    raise ValueError(f"emissivity_E: unsupported units {units!r}")
+
+
+  def conv_avg_energy(self, val, units='MeV'):
+    """Average neutrino energy E/N (code) -> target units."""
+    if units == 'code': return val
+    if units in ('ngs', 'MeV'): return val * self.CODE2MEV_AVGENE
+    if units == 'cgs':          return val * self.CODE2MEV_AVGENE * self.cgs.MeV
+    raise ValueError(f"avg_energy: unsupported units {units!r}")

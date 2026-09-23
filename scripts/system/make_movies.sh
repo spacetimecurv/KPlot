@@ -89,8 +89,6 @@ cd "${FIGPATH}"
 # <diagnostic>_<plane>/ (e.g. temperature_xy/, dens_xz/), containing
 # <something>_NNNNN.png frames.  One movie is built per such folder.
 # ---------------------------------------------------------------------------
-MOVIEDIR="${FIGPATH}/all_movies"
-
 shopt -s nullglob
 SERIES_DIRS=()
 for d in */ ; do
@@ -111,8 +109,6 @@ echo "FPS     : ${FPS}"
 echo "STRIDE  : ${STRIDE}"
 echo "Found ${#SERIES_DIRS[@]} frame folder(s)"
 echo ""
-
-mkdir -p "${MOVIEDIR}"
 
 # ---------------------------------------------------------------------------
 # Build one movie per frame folder, written into all_movies/ (separate from
@@ -135,7 +131,7 @@ for series in "${SERIES_DIRS[@]}"; do
 
     # GIF → .gif; everything else → .mp4.  Movie is named after the folder.
     [[ "${VCODEC}" == "gif" ]] && _ext="gif" || _ext="mp4"
-    outfile="${MOVIEDIR}/${series}.${_ext}"
+    outfile="${series}/${series}.${_ext}"
     listfile="${series}/.fflist"
 
     echo "[${series}]  ${#ALL_FRAMES[@]} available, ${#FRAMES[@]} used  ->  $(basename "${outfile}")"
@@ -172,8 +168,7 @@ for series in "${SERIES_DIRS[@]}"; do
 
     rm -f "${listfile}"
     echo ""
+    echo "Movie written to ${outfile}"
 done
-
-echo "Movies written to ${MOVIEDIR}/"
 
 echo "Done."

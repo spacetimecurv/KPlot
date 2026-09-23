@@ -1,5 +1,5 @@
 """
-Estimate the BNS merger time from the gravitational-wave (2,2) mode.
+Estimate the merger time from the gravitational-wave (2,2) mode.
 
 The merger time is defined as the time of the maximum |psi4_22|^2 = real^2 + imag^2
 of the (l=2, m=2) mode, read from the AthenaK waveform output:
@@ -7,10 +7,7 @@ of the (l=2, m=2) mode, read from the AthenaK waveform output:
     <simpath>/output-XXXX/waveforms/rpsi4_real_RRRR.txt
     <simpath>/output-XXXX/waveforms/rpsi4_imag_RRRR.txt
 
-where RRRR is the (zero-padded) extraction radius.  Column 1 of each file is the
-time and column 6 is the (2,2) mode (see the file header: '6:22').  Data from all
-output-XXXX restart segments are merged by time (later segments override earlier
-ones for overlapping times).
+where RRRR is the extraction radius.
 
 Writes a single number (the merger time in M_sun) to the output file, plus a few
 comment lines, so it can be read back by scripts/sphere/run_analysis.sh.

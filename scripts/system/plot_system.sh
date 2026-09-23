@@ -5,7 +5,7 @@
 # SystemPlotter).  All plotting logic lives in the installed KPlot package, so
 # this shell script is the only file you edit: set SIMPATH (and optionally
 # FIGPATH), pick JOBNAME/PLANE/UNITS, then comment/uncomment entries in
-# SECTIONS to choose what to plot.
+# the [sections] block of config.ini to choose what to plot.
 #
 # Requires KPlot to be installed in the active Python environment:
 #   pip install -e external/plot-tools   # (from the KPlot checkout)
@@ -48,37 +48,6 @@ _cfg_get() {
     ' "${CONFIG_FILE}"
 }
 
-# Whitespace-separated list for a key whose value continues over the following
-# lines (INI has no array syntax), e.g.
-#     sections =
-#         density        # rendered
-#         # temperature  <- disabled, stays commented out
-# The list ends at the next `key =` or [section].  Comments are stripped and
-# stray parentheses are tolerated, so a bash-style `sections=( ... )` block
-# parses too.
-_cfg_get_list() {
-    awk -v key="$1" '
-        function clean(s) {
-            sub(/[[:space:]]*[#;].*/, "", s)   # drop comments
-            gsub(/[()]/, " ", s)               # tolerate ( ... ) wrappers
-            return s
-        }
-        !found {
-            if ($0 ~ /^[[:space:]]*[#;]/ || $0 ~ /^[[:space:]]*\[/) next
-            k = $0; sub(/=.*/, "", k)
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
-            if (k == key && index($0, "=")) {
-                found = 1
-                print clean(substr($0, index($0, "=") + 1))
-            }
-            next
-        }
-        $0 ~ /^[[:space:]]*\[/                                   { exit }
-        $0 ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/  { exit }
-        { print clean($0) }
-    ' "${CONFIG_FILE}"
-}
-
 SIMPATH="$(_cfg_get simpath)"
 BATCHTOOLS="$(_cfg_get batchtools)"
 case "${BATCHTOOLS,,}" in
@@ -95,24 +64,17 @@ FIGPATH="${SIMPATH}/Figs"    # default: <SIMPATH>/Figs
 # Job-specifc input parameters parsed from config.ini
 JOBNAME="$(_cfg_get jobname)"
 PRIM_PREFIX="$(_cfg_get prim_prefix)"
+RAD_PREFIX="$(_cfg_get rad_prefix)"
 PLANE="$(_cfg_get plane)"
+COMPANION="$(_cfg_get companion)"
+SHOW_GRID="$(_cfg_get show_grid)"
 SHOW_TRACKERS="$(_cfg_get show_trackers)"
 SHOW_HORIZON="$(_cfg_get show_horizon)"
 SKIP_EXISTING="$(_cfg_get skip_existing)"
-FULL_DOMAIN="$(_cfg_get full_domain)"
+DOMAIN="$(_cfg_get domain)"
 UNITS="$(_cfg_get units)"
 TIME_UNITS="$(_cfg_get time_units)"
 DELETE_FRAMES="$(_cfg_get delete_frames)"
-
-# ---------------------------------------------------------------------------
-# SECTIONS — comment out any line in config.ini to disable that diagnostic.
-# Left empty, kplot-system falls back to its default ("all").
-# ---------------------------------------------------------------------------
-SECTIONS=()
-while read -r _tok; do
-    [[ -n "${_tok}" ]] && SECTIONS+=("${_tok}")
-done < <(_cfg_get_list sections | tr -s '[:space:]' '\n')
-# ---------------------------------------------------------------------------
 
 #module load python py-matplotlib py-numpy py-scipy
 #module load ffmpeg          # provides ffmpeg for make_movies.sh
@@ -123,15 +85,20 @@ ARGS=(--simpath "${SIMPATH}")
 [[ -n "${FIGPATH:-}"    ]] && ARGS+=(--figpath    "${FIGPATH}")
 [[ -n "${JOBNAME:-}"    ]] && ARGS+=(--jobname    "${JOBNAME}")
 [[ -n "${PRIM_PREFIX:-}" ]] && ARGS+=(--prim-prefix "${PRIM_PREFIX}")
+[[ -n "${RAD_PREFIX:-}"  ]] && ARGS+=(--rad-prefix  "${RAD_PREFIX}")
 [[ -n "${PLANE:-}"      ]] && ARGS+=(--plane      "${PLANE}")
+[[ -n "${COMPANION:-}"      ]] && ARGS+=(--companion      "${COMPANION}")
 [[ -n "${TIME_UNITS:-}" ]] && ARGS+=(--time-units "${TIME_UNITS}")
 [[ -n "${UNITS:-}"      ]] && ARGS+=(--units      "${UNITS}")
 [[ "${BATCHTOOLS}"    == "false" ]] && ARGS+=(--no-batchtools)
+[[ "${SHOW_GRID}" == "true" ]] && ARGS+=(--show-grid)
 [[ "${SHOW_TRACKERS}" == "false" ]] && ARGS+=(--no-trackers)
 [[ "${SHOW_HORIZON}"  == "true"  ]] && ARGS+=(--show-horizon)
 [[ "${SKIP_EXISTING}" == "true"  ]] && ARGS+=(--skip-existing)
-[[ "${FULL_DOMAIN}"   == "true"  ]] && ARGS+=(--full-domain)
-[[ ${#SECTIONS[@]} -gt 0 ]] && ARGS+=(--sections "${SECTIONS[@]}")
+[[ -n "${DOMAIN:-}" ]] && ARGS+=(--domain "${DOMAIN}")
+
+# Sections, colorbar limits and colormaps are read from [sections].
+ARGS+=(--config "${CONFIG_FILE}")
 
 # Run the KPlot full-run visualizer.  Prefer the installed console script; fall
 # back to the module form if KPlot has not been reinstalled since it was added.
@@ -165,8 +132,6 @@ bash "${SCRIPT_DIR}/make_movies.sh" "${MOVIE_FPS}" "${MOVIE_STRIDE}" "${FIGPATH}
 # ---------------------------------------------------------------------------
 if [[ "${DELETE_FRAMES}" == "true" ]]; then
     echo ""
-    echo "=== Deleting *_frame_* PNGs under ${FIGPATH} (keeping all_movies/) ==="
+    echo "=== Deleting *_frame_* PNGs under ${FIGPATH} ==="
     find "${FIGPATH}" -type f -name '*_frame_*_?????.png' -delete
-    # Remove any now-empty per-series frame folders (all_movies is left intact).
-    find "${FIGPATH}" -mindepth 1 -type d -empty -delete
 fi
