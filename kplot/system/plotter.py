@@ -53,6 +53,8 @@ _STYLE = {
   'font.family': 'serif',
   'font.serif': ['Latin Modern Roman', 'CMU Serif', 'cmr10'],
   'mathtext.fontset': 'cm',
+  'axes.formatter.use_mathtext': True,
+  'axes.unicode_minus': False,
   'font.size': 10.0,
   'text.usetex': False,
   'axes.labelsize': 'large',
