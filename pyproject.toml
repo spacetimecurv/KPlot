@@ -9,7 +9,8 @@ dependencies = [
 	"matplotlib >= 2.2",
 	"core-watpy >= 0.1",
 	"scipy >= 1.10.0",
-	"h5py >= 2.10"
+	"h5py >= 2.10",
+	"athplot @ git+https://github.com/jfields7/plot-tools.git@ffc6fced5050009280038642a7a1693194bb6792",
 ]
 version = "0.1.0"
 description = "Plotting utilities and tools for AthenaK interfacing plot-tools"

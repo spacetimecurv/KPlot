@@ -6,20 +6,15 @@ The spherical-surface analysis in ```kplot.sphere``` and ```scripts/sphere/```
 (ejecta, neutrino and merger-time diagnostics) is taken from
 [AthenaK_BNS_visualization](https://github.com/yiqiu0714/AthenaK_BNS_visualization). The full-run plotter ```kplot.system``` is likewise adapted from that repository's ```BNS_all.py```.
 ```kplot``` also builds on [plot-tools](https://github.com/jfields7/plot-tools)
-(```athplot```), imported as a submodule in ```external/```.
+(```athplot```), which is installed as a dependency.
 
 ## Build
-We first clone the repository to the local workstation with:
+Clone the repository to the local workstation with:
 ```bash
 git clone https://github.com/spacetimecurv/KPlot.git
 ```
-Then we clone the plot-tools submodule with:
+Build KPlot and plot-tools with:
 ```bash
-git submodule update --init --recursive
-```
-Next, we built plot-tools followed by KPlot:
-```bash
-pip install -e external/plot-tools
 pip install -e .
 ```
 The packages are now built and can be used elsewhere. It is recommended to do this in a separate
@@ -71,7 +66,6 @@ scripts/            ready-to-edit shell drivers, one folder per workflow
   sphere/           run_analysis.sh, run_comparison.sh, config.ini  -> kplot.sphere
   volume/           run_analysis.sh, config.ini                     -> kplot.volume
 examples/           small, self-contained usage examples
-external/           plot-tools submodule (athplot)
 ```
 
 ```kplot.system``` covers the simulation as a whole (history files, trackers,
