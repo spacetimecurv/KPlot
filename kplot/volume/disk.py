@@ -88,6 +88,7 @@ from scipy.interpolate import RegularGridInterpolator
 
 # AthenaK utility.
 from kplot.system.bin_convert import read_binary
+from kplot.system.checkpoints import find_segments
 
 # The disk analysis script needs the following 3D output.
 VARIABLES = ("mhd_w_bcc", "adm", "alpha", "betax", "betay", "betaz")
@@ -657,12 +658,24 @@ def block_cell_geometry(fd):
   return xv, yv, zv, dx1 * dx2 * dx3, dx1, dx2, dx3
 
 
-def find_snapshots(tag: str, bindir: str):
-  """Locates 3D snapshots or all files with the 3D signature."""
+def find_snapshots(tag: str, simpath: str, batchtools: bool = True) -> dict:
+  """Locates the 3D snapshots of `tag` as {snapshot number: path}.
+
+  With batchtools every output-XXXX segment under simpath is searched (in its
+  bin/ subdirectory if present); a snapshot number found in several segments
+  is taken from the latest one. Without batchtools simpath is searched directly.
+  """
   pat = f"*{tag}_3D.*.bin"
-  hits = sorted(glob.glob(os.path.join(bindir, pat)))
+  hits = {}
+  for segment in find_segments(simpath, batchtools):
+    for sub in ("bin", ""):
+      files = glob.glob(os.path.join(segment, sub, pat))
+      if files:
+        break
+    for f in sorted(files):
+      hits[int(re.search(r"\.(\d+)\.bin$", f).group(1))] = f
   if not hits:
-    raise SystemExit(f"No file matching {pat} in {bindir}!")
+    raise SystemExit(f"No file matching {pat} under {simpath}!")
 
   return hits
 
@@ -789,15 +802,17 @@ def wpercentile(x, w, q):
 
 
 def analyze(args):
-  """Run the disk analysis over every snapshot in `bindir`.
+  """Run the disk analysis over every snapshot under `simpath`.
 
   Parameters (from args; in detail)
   ---------------------------------
-  args.bindir (str): path to the 3D binary files. IMPORTANT: files need
-                     to hold the signature *._3D.*.bin. The output needed
-                     at each output time is `*.mhd_w_bcc_3D.*.bin`,
-                     `*.adm_3D.*.bin`, `*.alpha_3D.*.bin`, `*.betax_3D.*.bin`,
-                     `*.betay_3D.*.bin`, `*.betaz_3D.*.bin`.
+  args.simpath (str): simulation directory holding the output-XXXX segments, or
+                      (without batchtools) the directory of the 3D binary files.
+                      IMPORTANT: files need to hold the signature *._3D.*.bin. The
+                      output needed at each output time is `*.mhd_w_bcc_3D.*.bin`,
+                      `*.adm_3D.*.bin`, `*.alpha_3D.*.bin`, `*.betax_3D.*.bin`,
+                      `*.betay_3D.*.bin`, `*.betaz_3D.*.bin`.
+  args.batchtools (bool): whether simpath holds batchtools output-XXXX segments.
   args.drop_first_bins (int): how many bins to drop at the start (during inspiral).
   args.eos_table (str): path to the .h5 CompOSE table used for the evolution.
   args.tracker (str): path to one of the tracker files (merged into one segment
@@ -825,24 +840,22 @@ def analyze(args):
   args.n_workers (int): number of worker processes per snapshot loop.
   """
   # Find the files with the signature.
-  files = {tag: find_snapshots(tag, args.bindir) for tag in VARIABLES}
+  files = {tag: find_snapshots(tag, args.simpath, args.batchtools) for tag in VARIABLES}
+
+  # Only keep snapshots that exist for every tag.
+  number_sets = [set(files[tag]) for tag in VARIABLES]
+  numbers = sorted(set.intersection(*number_sets))
+  incomplete = len(set.union(*number_sets)) - len(numbers)
+  if incomplete:
+    print(f"$ Skipping {incomplete} snapshots missing one of {', '.join(VARIABLES)}")
 
   # Drop snapshots at the beginning.
   if args.drop_first_bins is not None:
-    for tag in VARIABLES:
-      # Make sure that if one snapshot is missing for one tag,
-      # that this one is skipped.
-      files[tag] = [
-        f for f in sorted(files[tag])
-        if int(re.search(r"\.(\d+)\.bin$", f).group(1)) >= args.drop_first_bins
-      ]
+    numbers = [n for n in numbers if n >= args.drop_first_bins]
 
-  lengths = [len(files[tag]) for tag in VARIABLES]
-  equal_len = len(set(lengths)) == 1
-  if not equal_len:
-    raise SystemExit("There are not equally many snapshot for each variable!")
-  else:
-    print(f"$ Found {len(files["mhd_w_bcc"])} disk snapshots...")
+  if not numbers:
+    raise SystemExit("No complete disk snapshot found!")
+  print(f"$ Found {len(numbers)} disk snapshots...")
 
   # Load the EOS and tracker/horizon files.
   eos       = EOSTable(args.eos_table)
@@ -861,14 +874,14 @@ def analyze(args):
   # Prepare the worker arguments.
   n_workers = args.n_workers if args.n_workers is not None else min(8, cpu_count())
 
-  def _snapshot_files(idx):
-    """Path to every tagged file for a given snapshot index."""
-    return tuple(files[v][idx] for v in VARIABLES)
-  worker_args = [_snapshot_files(i) +
+  def _snapshot_files(n):
+    """Path to every tagged file for a given snapshot number."""
+    return tuple(files[v][n] for v in VARIABLES)
+  worker_args = [_snapshot_files(n) +
                  (args.rho_cut, args.rho_keep, args.rho_remnant,
                   args.bound_criterion, args.r_exclude, args.center,
                   args.r_disk_max, args.nbins, args.rmax, args.outdir)
-                 for i in range(lengths[0])]
+                 for n in numbers]
   print(f"$ Processing {len(worker_args)} snapshots with n_worker={n_workers}...")
 
   # Make directories.
@@ -901,8 +914,12 @@ def main(argv=None):
   ap = argparse.ArgumentParser(
       description="Post-merger disk diagnostics for AthenaK data.",
       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-  ap.add_argument("--bindir", required=True,
-                  help="directory holding the 3D bin files")
+  ap.add_argument("--simpath", "--bindir", dest="simpath", required=True,
+                  help="simulation directory holding the output-XXXX segments, "
+                       "or (with --no-batchtools) the directory of the 3D bin files")
+  ap.add_argument("--batchtools", action=argparse.BooleanOptionalAction, default=True,
+                  help="search the 3D bin files in <simpath>/output-XXXX[/bin]; "
+                       "--no-batchtools searches <simpath>[/bin] only")
   ap.add_argument("--drop-first-bins", default=None, type=int,
                   help="Drop that many .bin files at the start (inspiral).")
   ap.add_argument("--eos-table",

@@ -12,10 +12,13 @@ Outputs (written to --output-dir):
   butterfly_bphi.npy               (density-weighted <b^phi>, shape Nt x Ntheta; axes:
                                      time_sph_butterfly.txt, theta_centers_sph_butterfly.txt)
   sphere_center_butterfly.txt      t, center of the extraction surface
+  fig_butterfly.png                (with --plot / --plot-only) butterfly diagram vs.
+                                     t - t_merger if --t-merger is given, else vs. t
 
 Command line:
     kplot-sphere-butterfly --sph-dir DIR [--sph-dir DIR ...] \
-        --output-dir DIR --radius 300
+        --output-dir DIR --radius 50 [--plot] [--t-merger T]
+    kplot-sphere-butterfly --output-dir DIR --radius 50 --plot-only [--t-merger T]
 """
 
 import argparse
@@ -247,12 +250,68 @@ def analyze(sph_dirs, output_dir, radius=DEFAULT_RADIUS, jobname=DEFAULT_JOBNAME
   print(f'All outputs saved to {output_dir}')
 
 
+def plot_butterfly(output_dir, radius=DEFAULT_RADIUS, t_merger=None):
+  """Butterfly diagram: density-weighted <b^phi>(theta, t), cf. Hayashi et al.
+    (arXiv:2211.07158). Diverging colormap centered at zero on a symlog scale,
+    since the toroidal field reverses sign (dynamo polarity flips) across
+    orders of magnitude. The time axis is t - t_merger [ms] if `t_merger`
+    [M_sun] is given, else the absolute time [ms].
+    """
+  from .plots import MSUN_TO_MS, edges_from_centers, plt
+  from matplotlib.colors import SymLogNorm
+
+  path = os.path.join(output_dir, 'butterfly_bphi.npy')
+  if not os.path.exists(path):
+    print("  No butterfly diagram output found; skipping.")
+    return
+
+  bphi  = np.load(path)                                                     # (Nt, Ntheta)
+  time  = np.loadtxt(os.path.join(output_dir, 'time_sph_butterfly.txt'))
+  theta = np.loadtxt(os.path.join(output_dir, 'theta_centers_sph_butterfly.txt'))
+
+  vmax = np.abs(bphi).max()
+  if vmax <= 0:
+    print("  Butterfly diagram is all zero; skipping.")
+    return
+  norm = SymLogNorm(linthresh=vmax / 1e3, vmin=-vmax, vmax=vmax, base=10)
+
+  if t_merger is None:
+    t_ms = time * MSUN_TO_MS
+    xlabel = r'$t$ [ms]'
+  else:
+    t_ms = (time - t_merger) * MSUN_TO_MS
+    xlabel = r'$t - t_\mathrm{merger}$ [ms]'
+
+  fig, ax = plt.subplots(figsize=(8, 4))
+  mesh = ax.pcolormesh(edges_from_centers(t_ms), edges_from_centers(theta),
+                       bphi.T, cmap='RdBu_r', norm=norm, shading='flat')
+  ax.set_xlabel(xlabel)
+  ax.set_ylabel(r'$\theta$')
+  ax.set_ylim(0.0, np.pi)
+  ax.set_yticks([0, np.pi/4, np.pi/2, 3*np.pi/4, np.pi])
+  ax.set_yticklabels([r'$0$', r'$\frac{\pi}{4}$', r'$\pi/2$', r'$\frac{3\pi}{4}$', r'$\pi$'])
+
+  cbar = fig.colorbar(mesh, ax=ax, pad=0.01)
+  cbar.set_label(r'$\langle b^\phi \rangle$  [code units]')
+
+  props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+  fig.text(0.01, 0.99, f'R = {radius:g} $M_\\odot$', fontsize=12,
+          ha='left', verticalalignment='top', bbox=props)
+
+  fig.tight_layout()
+  out = os.path.join(output_dir, 'fig_butterfly.png')
+  fig.savefig(out, dpi=150, bbox_inches='tight')
+  plt.close(fig)
+  print(f'Saved {out}')
+
+
 def main(argv=None):
   p = argparse.ArgumentParser(description=__doc__,
                               formatter_class=argparse.RawDescriptionHelpFormatter)
-  p.add_argument("--sph-dir", action="append", required=True, dest="sph_dirs",
+  p.add_argument("--sph-dir", action="append", default=[], dest="sph_dirs",
                   metavar="DIR",
-                  help="AthenaK output-XXXX/sph directory (repeat for each segment).")
+                  help="AthenaK output-XXXX/sph directory (repeat for each segment); "
+                       "required unless --plot-only.")
   p.add_argument("--output-dir", required=True,
                   help="Directory for the .txt/.npy outputs.")
   p.add_argument("--radius", type=float, default=DEFAULT_RADIUS,
@@ -264,10 +323,22 @@ def main(argv=None):
   p.add_argument("--n-workers", type=int, default=None,
                   help="Worker processes for the snapshot loop. "
                       "Default: min(8, cpu_count()).")
+  p.add_argument("--plot", action="store_true",
+                  help="Plot the butterfly diagram after the analysis.")
+  p.add_argument("--plot-only", action="store_true",
+                  help="Skip the analysis and plot the existing outputs in --output-dir.")
+  p.add_argument("--t-merger", type=float, default=None,
+                  help="Merger time [M_sun]; the plot then uses t - t_merger. "
+                       "Default: absolute time.")
   args = p.parse_args(argv)
 
-  analyze(args.sph_dirs, args.output_dir, radius=args.radius,
-          jobname=args.jobname, n_workers=args.n_workers)
+  if not args.plot_only:
+    if not args.sph_dirs:
+      p.error("--sph-dir is required unless --plot-only is given")
+    analyze(args.sph_dirs, args.output_dir, radius=args.radius,
+            jobname=args.jobname, n_workers=args.n_workers)
+  if args.plot or args.plot_only:
+    plot_butterfly(args.output_dir, radius=args.radius, t_merger=args.t_merger)
 
 
 if __name__ == '__main__':

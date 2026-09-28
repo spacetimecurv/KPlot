@@ -3,9 +3,10 @@
 # run_analysis.sh  —  KPlot spherical-surface ejecta + Poynting + neutrino analysis script
 #
 # Usage:
-#   bash run_analysis.sh [--ejecta] [--poynting] [--butterfly] [--neutrino] [--plot] [--all]
+#   bash run_analysis.sh [--ejecta] [--poynting] [--neutrino] [--plot] [--all]
 #
-# With no flags all steps (merger time, ejecta, poynting, butterfly, neutrino, plot) are run.
+# With no flags all steps (merger time, ejecta, poynting, neutrino, plot) are run.
+# The butterfly diagram has its own driver: run_butterfly.sh.
 #
 # Thin wrapper around the kplot.sphere analysis modules.  All analysis logic
 # lives in the installed KPlot package, so this shell script is the only file
@@ -99,19 +100,18 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # ARG PARSING
 # ─────────────────────────────────────────────────────────────────────────────
-RUN_EJECTA=0; RUN_POYNTING=0; RUN_BUTTERFLY=0; RUN_NEUTRINO=0; RUN_PLOT=0
+RUN_EJECTA=0; RUN_POYNTING=0; RUN_NEUTRINO=0; RUN_PLOT=0
 if [[ $# -eq 0 ]]; then
-  RUN_EJECTA=1; RUN_POYNTING=1; RUN_BUTTERFLY=1; RUN_NEUTRINO=1; RUN_PLOT=1
+  RUN_EJECTA=1; RUN_POYNTING=1; RUN_NEUTRINO=1; RUN_PLOT=1
 fi
 for arg in "$@"; do
   case "$arg" in
     --ejecta)    RUN_EJECTA=1    ;;
     --poynting)  RUN_POYNTING=1  ;;
-    --butterfly) RUN_BUTTERFLY=1 ;;
     --neutrino)  RUN_NEUTRINO=1  ;;
     --plot)      RUN_PLOT=1      ;;
-    --all)       RUN_EJECTA=1; RUN_POYNTING=1; RUN_BUTTERFLY=1; RUN_NEUTRINO=1; RUN_PLOT=1 ;;
-    *) echo "Unknown flag: $arg"; echo "Usage: $0 [--ejecta] [--poynting] [--butterfly] [--neutrino] [--plot] [--all]"; exit 1 ;;
+    --all)       RUN_EJECTA=1; RUN_POYNTING=1; RUN_NEUTRINO=1; RUN_PLOT=1 ;;
+    *) echo "Unknown flag: $arg"; echo "Usage: $0 [--ejecta] [--poynting] [--neutrino] [--plot] [--all]"; exit 1 ;;
   esac
 done
 
@@ -191,10 +191,10 @@ fi
 echo "  T_merger = ${T_MERGER_MSUN} M_sun"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 1 + 2 + 3 + 4: EJECTA, POYNTING, BUTTERFLY and NEUTRINO  (run
-# concurrently — they share no state)
+# STEP 1 + 2 + 3: EJECTA, POYNTING and NEUTRINO  (run concurrently — they
+# share no state)
 # ─────────────────────────────────────────────────────────────────────────────
-EJECTA_PID=""; POYNTING_PID=""; BUTTERFLY_PID=""; NEUTRINO_PID=""
+EJECTA_PID=""; POYNTING_PID=""; NEUTRINO_PID=""
 
 if [[ $RUN_EJECTA -eq 1 ]]; then
   echo ""
@@ -221,15 +221,6 @@ if [[ $RUN_POYNTING -eq 1 ]]; then
   POYNTING_PID=$!
 fi
 
-if [[ $RUN_BUTTERFLY -eq 1 ]]; then
-  echo "── Butterfly diagram analysis (background) ──────────────────"
-  _kplot kplot-sphere-butterfly kplot.sphere.butterfly \
-    "${SPH_ARGS[@]}" \
-    --output-dir "${OUTPUT_DIR}" \
-    "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" &
-  BUTTERFLY_PID=$!
-fi
-
 if [[ $RUN_NEUTRINO -eq 1 ]]; then
   echo "── Neutrino analysis (background) ───────────────────────────"
   _kplot kplot-sphere-neutrinos kplot.sphere.neutrinos \
@@ -244,9 +235,6 @@ if [[ -n "${EJECTA_PID}" ]]; then
 fi
 if [[ -n "${POYNTING_PID}" ]]; then
   wait "${POYNTING_PID}" && echo "── Poynting-flux done ──" || { echo "ERROR: poynting failed"; exit 1; }
-fi
-if [[ -n "${BUTTERFLY_PID}" ]]; then
-  wait "${BUTTERFLY_PID}" && echo "── Butterfly diagram done ──" || { echo "ERROR: butterfly failed"; exit 1; }
 fi
 if [[ -n "${NEUTRINO_PID}" ]]; then
   wait "${NEUTRINO_PID}" && echo "── Neutrino done ──" || { echo "ERROR: neutrino failed"; exit 1; }

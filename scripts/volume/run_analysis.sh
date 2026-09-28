@@ -27,7 +27,7 @@ CONFIG_FILE="${SCRIPT_DIR}/config.ini"
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ ! -f "${CONFIG_FILE}" ]]; then
     echo "ERROR: ${CONFIG_FILE} not found."
-    echo "       Copy config.example.ini to config.ini and set 'bindir', 'eos_table' + 'athenak_root'."
+    echo "       Copy config.example.ini to config.ini and set 'simpath' + 'eos_table'."
     exit 1
 fi
 
@@ -50,12 +50,17 @@ _cfg_get() {
     ' "${CONFIG_FILE}"
 }
 
-BINDIR="$(_cfg_get bindir)"
+SIMPATH="$(_cfg_get simpath)"
+BATCHTOOLS="$(_cfg_get batchtools)"
+case "${BATCHTOOLS,,}" in
+    false|0|no|off) BATCHTOOLS=false ;;
+    *)              BATCHTOOLS=true  ;;
+esac
 EOS_TABLE="$(_cfg_get eos_table)"
 PYTHONPATH_EXTRA="$(_cfg_get pythonpath_extra)"   # optional (e.g. a vtk install)
 
-if [[ -z "${BINDIR}" ]]; then
-    echo "ERROR: 'bindir' is not set in ${CONFIG_FILE}."; exit 1
+if [[ -z "${SIMPATH}" ]]; then
+    echo "ERROR: 'simpath' is not set in ${CONFIG_FILE}."; exit 1
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,7 +76,7 @@ for arg in "$@"; do
         --spectra) RUN_SPECTRA=1 ;;
         --plot) RUN_PLOT=1 ;;
         --all)  RUN_DISK=1; RUN_SPECTRA=1; RUN_PLOT=1 ;;
-        *) echo "Unknown flag: $arg"; echo "Usage: $0 [--disk] [--plot] [--all]"; exit 1 ;;
+        *) echo "Unknown flag: $arg"; echo "Usage: $0 [--disk] [--spectra] [--plot] [--all]"; exit 1 ;;
     esac
 done
 
@@ -84,7 +89,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Directory where all output json/csv files will be written.
-OUTPUT_DIR="${BINDIR}/disk"
+OUTPUT_DIR="${SIMPATH}/disk"
 
 # Extract the job-specific parameters from config.ini
 DROP_FIRST_BINS="$(_cfg_get drop_first_bins)"
@@ -145,6 +150,7 @@ mkdir -p "${OUTPUT_DIR}"
 # Optional settings: a key left blank in config.ini is omitted here, so the
 # analysis module applies its own default rather than receiving an empty string.
 DISK_ARGS=()
+[[ "${BATCHTOOLS}" == "false" ]] && DISK_ARGS+=(--no-batchtools)
 [[ -n "${DROP_FIRST_BINS}" ]] && DISK_ARGS+=(--drop-first-bins "${DROP_FIRST_BINS}")
 [[ -n "${TRACKER}"         ]] && DISK_ARGS+=(--tracker         "${TRACKER}")
 [[ -n "${HORIZON}"         ]] && DISK_ARGS+=(--horizon         "${HORIZON}")
@@ -163,6 +169,7 @@ if [[ -n "${CENTER}" ]]; then
 fi
 
 SPECTRA_ARGS=()
+[[ "${BATCHTOOLS}" == "false" ]] && SPECTRA_ARGS+=(--no-batchtools)
 [[ -n "${DROP_FIRST_BINS}" ]] && SPECTRA_ARGS+=(--drop-first-bins "${DROP_FIRST_BINS}")
 [[ -n "${WIN_RAD}"   ]] && SPECTRA_ARGS+=(--win-radius "${WIN_RAD}")
 [[ -n "${TAR_DX}"    ]] && SPECTRA_ARGS+=(--target-dx   "${TAR_DX}")
@@ -170,12 +177,12 @@ SPECTRA_ARGS=()
 [[ -n "${N_WORKERS}" ]] && SPECTRA_ARGS+=(--n-workers   "${N_WORKERS}")
 if [[ -n "${CENTER}" ]]; then
   read -ra CENTER_ARR <<< "${CENTER}"
-  DISK_ARGS+=(--center "${CENTER_ARR[@]}")
+  SPECTRA_ARGS+=(--center "${CENTER_ARR[@]}")
 fi
 
 echo "============================================================"
 echo "  Post-merger disk analysis"
-echo "  3D dir     : ${BINDIR}"
+echo "  Simulation : ${SIMPATH} (batchtools: ${BATCHTOOLS})"
 echo "  Output     : ${OUTPUT_DIR}"
 echo "============================================================"
 
@@ -186,7 +193,7 @@ if [[ $RUN_DISK -eq 1 ]]; then
     echo ""
     echo "── Disk analysis ─────────────────────────────────────────────"
     _kplot kplot-volume-disk kplot.volume.disk \
-        --bindir       "${BINDIR}" \
+        --simpath      "${SIMPATH}" \
         --eos-table    "${EOS_TABLE}" \
         --outdir       "${OUTPUT_DIR}" \
         "${DISK_ARGS[@]+"${DISK_ARGS[@]}"}"
@@ -200,7 +207,7 @@ if [[ $RUN_SPECTRA -eq 1 ]]; then
     echo ""
     echo "── Spectra analysis ─────────────────────────────────────────────"
     _kplot kplot-volume-spectra kplot.volume.spectra \
-        --bindir       "${BINDIR}" \
+        --simpath      "${SIMPATH}" \
         --outdir       "${OUTPUT_DIR}" \
         "${SPECTRA_ARGS[@]+"${SPECTRA_ARGS[@]}"}"
     echo "── Spectra analysis done ───────────────────────────────────────"

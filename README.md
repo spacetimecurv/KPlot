@@ -60,10 +60,11 @@ kplot/              the installed Python package
                       ejecta.py, neutrinos.py, mergertime.py, poynting.py,
                       butterfly.py, accretion.py, plots.py, comparison.py
   volume/           3D volume-domain (bin) analysis
-                      disk.py, plots.py
+                      disk.py, spectra.py, plots.py
 scripts/            ready-to-edit shell drivers, one folder per workflow
   system/           plot_system.sh, make_movies.sh                  -> kplot.system
-  sphere/           run_analysis.sh, run_comparison.sh, config.ini  -> kplot.sphere
+  sphere/           run_analysis.sh, run_butterfly.sh,
+                    run_comparison.sh, config.ini                   -> kplot.sphere
   volume/           run_analysis.sh, config.ini                     -> kplot.volume
 examples/           small, self-contained usage examples
 ```
@@ -71,11 +72,10 @@ examples/           small, self-contained usage examples
 ```kplot.system``` covers the simulation as a whole (history files, trackers,
 horizons, waveforms, slice series); ```kplot.sphere``` covers what crosses a
 spherical extraction surface (ejecta, neutrinos); ```kplot.volume``` covers the
-3D volume domain (currently the post-merger disk). IMPORTANT: the ```kplot.system``` and
-```kplot.sphere``` modules require the data to be stored inside batchtools like arrangement, i.e.
-in folders with the signature ```output-XXXX```. If this is not the case, then one segment has to be created and the data has to be moved there manually such that these modules can be found. For
-```kplot.volume``` this currently is not a requirement, it is even recommended to store the 3D data
-in one directory.
+3D volume domain (currently the post-merger disk). By default all three expect the data in a
+batchtools-like arrangement, i.e. in folders with the signature ```output-XXXX``` under
+```simpath```. If the data lives in a single directory instead, set ```batchtools = false``` in
+the driver's ```config.ini``` (or pass ```--no-batchtools``` on the command line).
 
 ### Full-run simulation visualization
 ```SystemPlotter``` combines every batchtools ```output-XXXX``` restart segment (see note above) of an AthenaK run and renders 1-D history/time-series plots plus parallel 2-D slice frames
@@ -126,10 +126,11 @@ batchtools ```output-XXXX``` restart segments:
 - ```kplot.sphere.poynting``` — sphere-integrated Poynting luminosity and its
   angular map vs time
 - ```kplot.sphere.butterfly``` — density-weighted, azimuthally-averaged toroidal
-  field vs theta and time (dynamo polarity reversals, cf. arXiv:2211.07158)
+  field vs theta and time (dynamo polarity reversals, cf. arXiv:2211.07158) and its
+  figure ```fig_butterfly```; runs independently of the other steps on its own
+  (typically inner-disk) radius and needs no merger time
 - ```kplot.sphere.plots``` / ```kplot.sphere.comparison``` — summary figures
-  (```fig_ejecta```, ```fig_neutrino```, ```fig_butterfly```, ...), and
-  multi-model overlays
+  (```fig_ejecta```, ```fig_neutrino```, ...), and multi-model overlays
 - ```kplot.sphere.accretion``` — post-merger accretion rate from baryon bookkeeping
 Also here a pipeline exists under [```scripts/sphere/```](scripts/sphere/):
 ```bash
@@ -137,7 +138,12 @@ cd scripts/sphere
 cp config.example.ini config.ini    # set parameteres
 bash run_analysis.sh                # merger time + ejecta + neutrino + plots
 bash run_analysis.sh --ejecta       # or run individual steps
+bash run_butterfly.sh               # butterfly diagram at butterfly_radius (own output dir)
+bash run_butterfly.sh --plot        # re-plot without re-running the analysis
 ```
+The butterfly diagram is written to ```<simpath>/butterfly_<R>M/```. Its time axis is
+```t - t_merger``` if ```butterfly_t_merger``` is set in ```config.ini```, and the absolute
+time otherwise.
 
 Each step is also an installed console script, so it can be run directly:
 ```bash
@@ -158,6 +164,10 @@ kplot-sphere-neutrinos --sph-dir /path/to/sim/output-0000/sph \
 # figures: fig_ejecta.pdf + fig_neutrino.pdf
 kplot-sphere-plot --output-dir /path/to/sim/analysis --t-merger 3122.5 \
     --radius 300 --from-merger
+
+# butterfly diagram (analysis + figure); --t-merger is optional
+kplot-sphere-butterfly --sph-dir /path/to/sim/output-0000/sph \
+    --output-dir /path/to/sim/butterfly_50M --radius 50 --plot
 ```
 or driven as a library — see [```examples/analyze_sphere.py```](examples/analyze_sphere.py):
 ```python
@@ -197,12 +207,12 @@ directly, rather than a spherical extraction surface:
 The driver lives in [```scripts/volume/```](scripts/volume/):
 ```bash
 cd scripts/volume
-cp config.example.ini config.ini    # set bindir + eos_table for your machine
-bash run_analysis.sh                # disk analysis + plots + movies
+cp config.example.ini config.ini    # set simpath (+ batchtools) + eos_table for your machine
+bash run_analysis.sh                # disk analysis + spectra + plots + movies
 bash run_analysis.sh --disk         # or run individual steps
 bash run_analysis.sh --plot         # re-plot without re-running the analysis
 ```
-Results are written to ```<bindir>/disk/```:
+Results are written to ```<simpath>/disk/```:
 ```
 scalars/disk_scalars_<snap>.json               disk mass, angular momentum, MRI Q_z, ...
 profiles/disk_profiles_<snap>.csv              radial profiles (Sigma, rho, Ye, T, H/R, Omega, ...)

@@ -13,7 +13,6 @@ id        = mhd_w_bcc_3D
 import os
 from multiprocessing import Pool, cpu_count
 import argparse
-import re
 from tqdm import tqdm
 
 # Third-party libraries.
@@ -21,7 +20,7 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 # KPlot utility.
-from kplot.system.athenak_units import G, c, Msun
+from kplot.system.units import CGS
 from kplot.volume.disk import find_snapshots, block_cell_geometry, load_tracker
 from kplot.system.bin_convert import read_binary
 
@@ -29,7 +28,7 @@ from kplot.system.bin_convert import read_binary
 ms    = 4.925490949141889e-6 * 1e3
 km    = 1.47662506140
 gcm3  = 6.175828283964599e+17
-Gauss = G**(-1.5) * Msun**(-1) * c**4 * np.sqrt(4 * np.pi)
+Gauss = CGS.G**(-1.5) * CGS.Msun**(-1) * CGS.c**4 * np.sqrt(4 * np.pi)
 
 # Per-worker state.
 _W_TRACKER = None
@@ -241,13 +240,15 @@ def _process_snapshot_spectra(args):
 
 
 def analyze(args):
-  """Run the spectra analysis over every snapshot in `bindir`.
+  """Run the spectra analysis over every snapshot under `simpath`.
 
   Parameters (from args; in detail)
   ---------------------------------
-  args.bindir (str): path to the 3D binary files. IMPORTANT: files need
-                     to hold the signature *._3D.*.bin. The output needed
-                     at each output time is `*.mhd_w_bcc_3D.*.bin`.
+  args.simpath (str): simulation directory holding the output-XXXX segments, or
+                      (without batchtools) the directory of the 3D binary files.
+                      IMPORTANT: files need to hold the signature *._3D.*.bin. The
+                      output needed at each output time is `*.mhd_w_bcc_3D.*.bin`.
+  args.batchtools (bool): whether simpath holds batchtools output-XXXX segments.
   args.outdir (str): output directory where the snapshots are stored.
   args.drop_first_bins (int): how many bins to drop at the start (during inspiral).
   args.target_dx (float): target resolution on the finest MeshBlock.
@@ -258,14 +259,13 @@ def analyze(args):
   args.n_workers (int): number of worker processes per snapshot loop.
   """
   # Find the files with the signature.
-  files = find_snapshots("mhd_w_bcc", args.bindir)
+  snapshots = find_snapshots("mhd_w_bcc", args.simpath, args.batchtools)
 
   # Drop snapshots at the beginning.
+  numbers = sorted(snapshots)
   if args.drop_first_bins is not None:
-    files = [
-      f for f in sorted(files)
-      if int(re.search(r"\.(\d+)\.bin$", f).group(1)) >= args.drop_first_bins
-    ]
+    numbers = [n for n in numbers if n >= args.drop_first_bins]
+  files = [snapshots[n] for n in numbers]
 
   # Load the tracker file, if given.
   tracker = load_tracker(args.tracker) if args.tracker is not None else None
@@ -304,8 +304,12 @@ def main(argv=None):
   ap = argparse.ArgumentParser(
       description="Post-merger disk diagnostics for AthenaK data.",
       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-  ap.add_argument("--bindir", required=True,
-                  help="Directory holding the 3D bin files.")
+  ap.add_argument("--simpath", "--bindir", dest="simpath", required=True,
+                  help="Simulation directory holding the output-XXXX segments, "
+                       "or (with --no-batchtools) the directory of the 3D bin files.")
+  ap.add_argument("--batchtools", action=argparse.BooleanOptionalAction, default=True,
+                  help="Search the 3D bin files in <simpath>/output-XXXX[/bin]; "
+                       "--no-batchtools searches <simpath>[/bin] only.")
   ap.add_argument("--outdir", required=True,
                     help="Output directory path.")
   ap.add_argument("--drop-first-bins", default=None, type=int,
