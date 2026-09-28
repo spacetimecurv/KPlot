@@ -84,7 +84,10 @@ OUTPUT_DIR="${SIMPATH}/$(printf '%gM_%gms' "${RADIUS:-300}" "${T_POST_MS:-25}")"
 
 # ── auto-discover all output-*/sph directories (sorted) ──────────────────────
 SPH_PATTERN="output-*/sph"
-[[ "${BATCHTOOLS}" == "false" ]] && SPH_PATTERN="sph"
+if [[ "${BATCHTOOLS}" == "false" ]]; then
+  SPH_PATTERN="sph"
+  [[ -d "${SIMPATH}/sph" ]] || SPH_PATTERN="."
+fi
 SPH_DIRS=()
 for d in "${SIMPATH}"/${SPH_PATTERN}; do
   [[ -d "$d" ]] && SPH_DIRS+=("$d")
