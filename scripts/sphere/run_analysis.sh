@@ -66,9 +66,6 @@ fi
 # RUN SETTINGS  ← edit per run
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Directory where all output txt/npy/pdf files will be written.
-OUTPUT_DIR="${SIMPATH}/analysis"
-
 # Extract the job-specific parameters from config.ini
 JOBNAME="$(_cfg_get jobname)"
 RADIUS="$(_cfg_get radius)"
@@ -81,6 +78,9 @@ PER_ITERATION_OUT="$(_cfg_get per_iteration_out)"
 POYNTING="$(_cfg_get poynting)"
 YE_EVO="$(_cfg_get ye_evo)"
 YE_THETA_EVO="$(_cfg_get ye_theta_evo)"
+
+# Directory where all output txt/npy/pdf files will be written.
+OUTPUT_DIR="${SIMPATH}/$(printf '%gM_%gms' "${RADIUS:-300}" "${T_POST_MS:-25}")"
 
 # ── auto-discover all output-*/sph directories (sorted) ──────────────────────
 SPH_PATTERN="output-*/sph"
