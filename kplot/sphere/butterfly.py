@@ -294,10 +294,6 @@ def plot_butterfly(output_dir, radius=DEFAULT_RADIUS, t_merger=None):
   cbar = fig.colorbar(mesh, ax=ax, pad=0.01)
   cbar.set_label(r'$\langle b^\phi \rangle$  [code units]')
 
-  props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
-  fig.text(0.01, 0.99, f'R = {radius:g} $M_\\odot$', fontsize=12,
-          ha='left', verticalalignment='top', bbox=props)
-
   fig.tight_layout()
   out = os.path.join(output_dir, 'fig_butterfly.png')
   fig.savefig(out, dpi=150, bbox_inches='tight')
