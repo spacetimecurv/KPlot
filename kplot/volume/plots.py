@@ -69,6 +69,13 @@ SCALAR_PANELS = [
     ("B_max_G", r"$\mathrm{max}(B)$ [G]", True),
 ]
 
+Q_SLICE_RANGE = (1.0e-1, 1.0e2)
+
+Q_SLICE_PLANES = [
+    ("Q_xy", r"$y - y_c$  [code units]"),
+    ("Q_xz", r"$z - z_c$  [code units]"),
+]
+
 
 def find_snapshots(outdir, kind, ending):
   """Snapshot ids for which a disk_<kind>_<snap>.<ending> file exists."""
@@ -275,6 +282,20 @@ def plot_profiles(R, prof, snap, time_ms, ylim, outfile):
   plt.close(fig)
 
 
+def plot_Q_slice(u, Q, vlabel, snap, time_ms, outfile):
+  fig, ax = plt.subplots(figsize=(6.5, 5.5))
+  im = ax.pcolormesh(u, u, Q, norm=LogNorm(*Q_SLICE_RANGE), cmap="gist_earth", shading="auto")
+  ax.set_aspect("equal")
+  ax.set_xlabel(r"$x - x_c$  [code units]")
+  ax.set_ylabel(vlabel)
+  cbar = fig.colorbar(im, ax=ax, extend="both")
+  cbar.set_label(r"$Q_z$  ($\partial_R \Omega < 0$)")
+  ax.set_title(f"snapshot {snap}, t = {time_ms:.2f} ms")
+  fig.tight_layout()
+  fig.savefig(outfile, dpi=150)
+  plt.close(fig)
+
+
 def plot_scalars(data, outfile):
   """Plot the scalar evolution of some important disk measures."""
   fig, axes = plt.subplots(2, 4, figsize=(18,6))
@@ -325,12 +346,14 @@ def plot_spectrum(k, spectra, snap, time, outfile):
 
 
 def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=False,
-             no_spectra=False, no_jrho=False):
+             no_spectra=False, no_jrho=False, no_slices=False):
   os.makedirs(os.path.join(figdir, "histograms"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "profiles"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "scalars"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "spectra"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "jrho"), exist_ok=True)
+  for key, _ in Q_SLICE_PLANES:
+    os.makedirs(os.path.join(figdir, key), exist_ok=True)
 
   if not no_histograms:
     snaps = find_snapshots(outdir, "histograms", "csv")
@@ -349,6 +372,16 @@ def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=
       j_mean = load_j_mean(outdir, snap)
       outfile = os.path.join(figdir, "jrho", f"disk_jrho_{snap}.png")
       plot_jrho(hists, snap, load_time_ms(outdir, snap), j_mean, outfile)
+
+  if not no_slices:
+    snaps = find_snapshots(outdir, "slices", "npz")
+    print(f"$ Plotting {len(snaps)} Q slice frames...")
+    for snap in snaps:
+      sl = np.load(os.path.join(outdir, "slices", f"disk_slices_{snap}.npz"))
+      time_ms = load_time_ms(outdir, snap)
+      for key, vlabel in Q_SLICE_PLANES:
+        outfile = os.path.join(figdir, key, f"disk_{key}_{snap}.png")
+        plot_Q_slice(sl["u"], sl[key], vlabel, snap, time_ms, outfile)
 
   if not no_profiles:
     snaps = find_snapshots(outdir, "profiles", "csv")
@@ -404,11 +437,12 @@ def main(argv=None):
   ap.add_argument("--no-scalars", action="store_true", help="skip scalar evolution")
   ap.add_argument("--no-spectra", action="store_true", help="skip spectrum frames")
   ap.add_argument("--no-jrho", action="store_true", help="skip j-rho frames")
+  ap.add_argument("--no-slices", action="store_true", help="skip Q slice frames")
   args = ap.parse_args(argv)
 
   figdir = args.figdir or os.path.join(args.outdir, "frames")
   plot_all(args.outdir, figdir, args.no_histograms, args.no_profiles, args.no_scalars,
-           args.no_spectra, args.no_jrho)
+           args.no_spectra, args.no_jrho, args.no_slices)
 
 
 if __name__ == "__main__":

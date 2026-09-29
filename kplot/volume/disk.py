@@ -115,7 +115,7 @@ def _process_snapshot_disk(args):
   # Unpack.
   (mhd_file, adm_file, alpha_file, betax_file, betay_file, betaz_file,
   rho_cut, rho_keep, rho_remnant, bound_criterion, r_exclude, center,
-  r_disk_max, nbins, rmax, outdir) = args
+  r_disk_max, nbins, rmax, slice_extent, slice_npts, outdir) = args
 
   snapshot = mhd_file.split("/")[-1].split(".")[-2].strip()
 
@@ -130,7 +130,7 @@ def _process_snapshot_disk(args):
   ncell_block   = nx1 * nx2 * nx3              # Points per meshblock.
 
   dfloor = par(pars, "mhd", "dfloor", float, 1.0e-14)   # Density floor from parfile.
-  xv, yv, zv, dvol, _, _, dzv = block_cell_geometry(fd) # CC-coordinates and volume for each MB.
+  xv, yv, zv, dvol, dxv, dyv, dzv = block_cell_geometry(fd) # CC-coordinates and volume for each MB.
 
   # Discard cells at (or barely above) the atmosphere floor.
   if rho_keep is None:
@@ -393,10 +393,32 @@ def _process_snapshot_disk(args):
   # Q_phi = np.pi * np.abs(b_phi) / (Rcyl * omega * np.sqrt((rho * h + bsq) * dz))
   Q_ok = disk & np.isfinite(Q_z)
 
-  wq       = dM[Q_ok]
-  Q_z_mean = wmean(Q_z[Q_ok], wq)
-  Q_z_pct  = wpercentile(Q_z[Q_ok], wq, [5, 25, 50, 75, 95]).tolist()
-  Q_z_f10  = float(wq[Q_z[Q_ok] > 10.0].sum() / wq.sum()) if wq.sum() > 0.0 else np.nan
+  om_full = np.full(ncells_total, np.nan, dtype=np.float32)
+  om_full[sel] = omega
+  om_full = om_full.reshape(-1, nx3, nx2, nx1)
+  dOdx = (np.gradient(om_full, axis=3) / dxv[:, None, None, None]).reshape(-1)[sel]
+  dOdy = (np.gradient(om_full, axis=2) / dyv[:, None, None, None]).reshape(-1)[sel]
+  del om_full
+  with np.errstate(invalid="ignore"):
+    dOmega_dR = ((xg * dOdx + yg * dOdy) / np.maximum(Rcyl, 1e-30)).astype(np.float32)
+    mri = Q_ok & (dOmega_dR < 0.0)
+  del dOdx, dOdy, dOmega_dR
+  Q_loc = np.where(mri, Q_z, np.nan).astype(np.float32)
+
+  u = np.linspace(-slice_extent, slice_extent, slice_npts)
+  def plane(axes, fixed):
+    pos = slice_cells(mb_geom_ref, (nx1, nx2, nx3), sel, axes, fixed,
+                      center[axes[0]] + u, center[axes[1]] + u)
+    return np.where(pos >= 0, Q_loc[np.maximum(pos, 0)], np.nan).astype(np.float32)
+  np.savez(os.path.join(outdir, "slices", f"disk_slices_{snapshot}.npz"),
+           u=u, Q_xy=plane((0, 1, 2), center[2]), Q_xz=plane((0, 2, 1), center[1]))
+  del Q_loc
+
+  wq       = dM[mri]
+  Q_z_mean = wmean(Q_z[mri], wq)
+  Q_z_pct  = wpercentile(Q_z[mri], wq, [5, 25, 50, 75, 95]).tolist()
+  Q_z_f10  = float(wq[Q_z[mri] > 10.0].sum() / wq.sum()) if wq.sum() > 0.0 else np.nan
+  del mri
 
   del b_phi # Free up memory.
 
@@ -658,6 +680,27 @@ def block_cell_geometry(fd):
   return xv, yv, zv, dx1 * dx2 * dx3, dx1, dx2, dx3
 
 
+def slice_cells(geom, nx, sel, axes, fixed, ca, cb):
+  a, b, c = axes
+  lo, hi = geom[:, 0::2], geom[:, 1::2]
+  d      = (hi - lo) / np.asarray(nx)
+  ncell  = nx[0] * nx[1] * nx[2]
+  stride = (1, nx[0], nx[0] * nx[1])
+  out    = np.full((cb.size, ca.size), -1, dtype=np.int64)
+  for m in np.flatnonzero((lo[:, c] <= fixed) & (fixed < hi[:, c])):
+    ia = slice(*np.searchsorted(ca, (lo[m, a], hi[m, a])))
+    ib = slice(*np.searchsorted(cb, (lo[m, b], hi[m, b])))
+    if ia.start == ia.stop or ib.start == ib.stop:
+      continue
+    i_a = np.minimum(((ca[ia] - lo[m, a]) / d[m, a]).astype(np.int64), nx[a] - 1)
+    i_b = np.minimum(((cb[ib] - lo[m, b]) / d[m, b]).astype(np.int64), nx[b] - 1)
+    i_c = min(int((fixed - lo[m, c]) / d[m, c]), nx[c] - 1)
+    out[ib, ia] = (m * ncell + i_c * stride[c] +
+                   i_b[:, None] * stride[b] + i_a[None, :] * stride[a])
+  pos = np.clip(np.searchsorted(sel, out), 0, sel.size - 1)
+  return np.where((out >= 0) & (sel[pos] == out), pos, -1)
+
+
 def find_snapshots(tag: str, simpath: str, batchtools: bool = True) -> dict:
   """Locates the 3D snapshots of `tag` as {snapshot number: path}.
 
@@ -880,7 +923,8 @@ def analyze(args):
   worker_args = [_snapshot_files(n) +
                  (args.rho_cut, args.rho_keep, args.rho_remnant,
                   args.bound_criterion, args.r_exclude, args.center,
-                  args.r_disk_max, args.nbins, args.rmax, args.outdir)
+                  args.r_disk_max, args.nbins, args.rmax,
+                  args.slice_extent, args.slice_npts, args.outdir)
                  for n in numbers]
   print(f"$ Processing {len(worker_args)} snapshots with n_worker={n_workers}...")
 
@@ -889,6 +933,7 @@ def analyze(args):
   os.makedirs(os.path.join(args.outdir, "profiles"), exist_ok=True)
   os.makedirs(os.path.join(args.outdir, "histograms"), exist_ok=True)
   os.makedirs(os.path.join(args.outdir, "jrho"), exist_ok=True)
+  os.makedirs(os.path.join(args.outdir, "slices"), exist_ok=True)
 
   # Parallel snapshot loop.
   if n_workers > 1:
@@ -953,6 +998,10 @@ def main(argv=None):
                   help="number of cylindrical-radius bins")
   ap.add_argument("--rmax", type=float, default=1000.0,
                   help="outer edge of the radial profiles [code units]")
+  ap.add_argument("--slice-extent", type=float, default=100.0,
+                  help="half-width of the xy/xz Q slices around the center [code units]")
+  ap.add_argument("--slice-npts", type=int, default=512,
+                  help="number of points per axis of the xy/xz Q slices")
 
   ap.add_argument("--n-workers", type=int, default=None,
                   help="Worker processes for the snapshot loop. "

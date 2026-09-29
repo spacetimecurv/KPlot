@@ -104,6 +104,8 @@ BOUND_CRITERION="$(_cfg_get bound_criterion)"
 R_DISK_MAX="$(_cfg_get r_disk_max)"
 NBINS="$(_cfg_get nbins)"
 RMAX="$(_cfg_get rmax)"
+SLICE_EXTENT="$(_cfg_get slice_extent)"
+SLICE_NPTS="$(_cfg_get slice_npts)"
 WIN_RAD="$(_cfg_get window_radius)"
 TAR_DX="$(_cfg_get target_dx)"
 N_WORKERS="$(_cfg_get n_workers)"
@@ -162,6 +164,8 @@ DISK_ARGS=()
 [[ -n "${R_DISK_MAX}"      ]] && DISK_ARGS+=(--r-disk-max      "${R_DISK_MAX}")
 [[ -n "${NBINS}"           ]] && DISK_ARGS+=(--nbins           "${NBINS}")
 [[ -n "${RMAX}"            ]] && DISK_ARGS+=(--rmax            "${RMAX}")
+[[ -n "${SLICE_EXTENT}"    ]] && DISK_ARGS+=(--slice-extent    "${SLICE_EXTENT}")
+[[ -n "${SLICE_NPTS}"      ]] && DISK_ARGS+=(--slice-npts      "${SLICE_NPTS}")
 [[ -n "${N_WORKERS}"       ]] && DISK_ARGS+=(--n-workers       "${N_WORKERS}")
 if [[ -n "${CENTER}" ]]; then
   read -ra CENTER_ARR <<< "${CENTER}"
