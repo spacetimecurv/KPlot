@@ -70,6 +70,11 @@ SCALAR_PANELS = [
 ]
 
 Q_SLICE_RANGE = (1.0e-1, 1.0e2)
+Q_SLICE_CMAP  = "viridis"
+Q_MASK_COLOR  = "0.6"
+
+Q_SPACETIME_KEY   = "Q_z_mean"
+Q_SPACETIME_RANGE = (1.0e-2, 1.0e1)
 
 Q_SLICE_PLANES = [
     ("Q_xy", r"$y - y_c$  [code units]"),
@@ -284,13 +289,53 @@ def plot_profiles(R, prof, snap, time_ms, ylim, outfile):
 
 def plot_Q_slice(u, Q, vlabel, snap, time_ms, outfile):
   fig, ax = plt.subplots(figsize=(6.5, 5.5))
-  im = ax.pcolormesh(u, u, Q, norm=LogNorm(*Q_SLICE_RANGE), cmap="gist_earth", shading="auto")
+  cmap = plt.get_cmap(Q_SLICE_CMAP).copy()
+  cmap.set_bad(Q_MASK_COLOR)
+  im = ax.pcolormesh(u, u, np.ma.masked_invalid(Q), norm=LogNorm(*Q_SLICE_RANGE),
+                     cmap=cmap, shading="auto")
   ax.set_aspect("equal")
   ax.set_xlabel(r"$x - x_c$  [code units]")
   ax.set_ylabel(vlabel)
   cbar = fig.colorbar(im, ax=ax, extend="both")
   cbar.set_label(r"$Q_z$  ($\partial_R \Omega < 0$)")
+  ax.legend(handles=[Patch(facecolor=Q_MASK_COLOR, label="masked")],
+            loc="upper right", fontsize=8)
   ax.set_title(f"snapshot {snap}, t = {time_ms:.2f} ms")
+  fig.tight_layout()
+  fig.savefig(outfile, dpi=150)
+  plt.close(fig)
+
+
+def plot_Q_spacetime(outdir, snaps, R, outfile):
+  times, rows = [], []
+  for snap in snaps:
+    prof = load_profile(os.path.join(outdir, "profiles", f"disk_profiles_{snap}.csv"))
+    if Q_SPACETIME_KEY not in prof.dtype.names:
+      continue
+    r = np.atleast_1d(prof["R_mid"])
+    q = np.atleast_1d(prof[Q_SPACETIME_KEY])
+    rows.append(np.interp(np.log(R), np.log(r), q, left=np.nan, right=np.nan))
+    times.append(load_time_ms(outdir, snap))
+  if not rows:
+    print(f"  No {Q_SPACETIME_KEY} column in the profiles; skipping Q spacetime diagram.")
+    return
+
+  order = np.argsort(times)
+  t = np.asarray(times)[order]
+  Q = np.ma.masked_invalid(np.asarray(rows)[order])
+
+  cmap = plt.get_cmap(Q_SLICE_CMAP).copy()
+  cmap.set_bad(Q_MASK_COLOR)
+  fig, ax = plt.subplots(figsize=(8, 4.5))
+  im = ax.pcolormesh(t, R, Q.T, norm=LogNorm(*Q_SPACETIME_RANGE), cmap=cmap,
+                     shading="nearest")
+  if t.size > 1:
+    ax.contour(t, R, Q.T.filled(np.nan), levels=[1.0], colors="w", linewidths=1.0)
+  ax.set_yscale("log")
+  ax.set_xlabel(r"$t$ [ms]")
+  ax.set_ylabel(r"$R$  [code units]")
+  cbar = fig.colorbar(im, ax=ax, extend="both")
+  cbar.set_label(r"$\langle Q_z \rangle_M$  ($\partial_R \Omega < 0$)")
   fig.tight_layout()
   fig.savefig(outfile, dpi=150)
   plt.close(fig)
@@ -393,6 +438,10 @@ def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=
       prof = resample_profile(prof, R)
       outfile = os.path.join(figdir, "profiles", f"disk_profiles_{snap}.png")
       plot_profiles(R, prof, snap, load_time_ms(outdir, snap), ylim, outfile)
+
+    print(f"$ Plotting Q spacetime diagram...")
+    plot_Q_spacetime(outdir, snaps, R,
+                     os.path.join(figdir, "scalars", "disk_Q_spacetime.png"))
 
   if not no_scalars:
     snaps = find_snapshots(outdir, "scalars", "json")

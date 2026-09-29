@@ -418,7 +418,6 @@ def _process_snapshot_disk(args):
   Q_z_mean = wmean(Q_z[mri], wq)
   Q_z_pct  = wpercentile(Q_z[mri], wq, [5, 25, 50, 75, 95]).tolist()
   Q_z_f10  = float(wq[Q_z[mri] > 10.0].sum() / wq.sum()) if wq.sum() > 0.0 else np.nan
-  del mri
 
   del b_phi # Free up memory.
 
@@ -546,6 +545,20 @@ def _process_snapshot_disk(args):
   del dz_mid # Free up memory.
   area = np.pi * (edges[1:]**2 - edges[:-1]**2)
 
+  q_idx   = np.digitize(Rcyl[mri], edges) - 1
+  q_valid = (q_idx >= 0) & (q_idx < nbins)
+  q_idx   = q_idx[q_valid]
+  q_vals  = Q_z[mri][q_valid]
+  q_w     = dM[mri][q_valid]
+  q_mass  = np.bincount(q_idx, weights=q_w, minlength=nbins)
+  with np.errstate(invalid="ignore", divide="ignore"):
+    Q_prof_mean = np.where(q_mass > 0,
+                           np.bincount(q_idx, weights=q_w * q_vals, minlength=nbins) / q_mass,
+                           np.nan)
+  Q_prof_p50 = binned_wquantile(q_idx, q_vals, q_w, nbins, 0.5)
+  Q_prof_p90 = binned_wquantile(q_idx, q_vals, q_w, nbins, 0.9)
+  del q_idx, q_valid, q_vals, q_w, mri
+
   prof.update({
     "n_cells": counts,
     "M_shell_MSUN_CGS": mass,
@@ -568,6 +581,10 @@ def _process_snapshot_disk(args):
     "beta_plasma"     : wprof(2.0 * press / np.maximum(bsq, 1e-30)),
     "B_rms_G"         : np.sqrt(np.maximum(wprof(Bsq), 0.0)) * B_UNIT,
     "v_R_code"        : wprof(v_rad),
+    "Q_z_mean"        : Q_prof_mean,
+    "Q_z_p50"         : Q_prof_p50,
+    "Q_z_p90"         : Q_prof_p90,
+    "M_mri_MSUN_CGS"  : q_mass,
   })
 
   # ======================================================================
