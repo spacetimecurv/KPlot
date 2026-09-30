@@ -409,9 +409,14 @@ def _process_snapshot_disk(args):
   def plane(axes, fixed):
     pos = slice_cells(mb_geom_ref, (nx1, nx2, nx3), sel, axes, fixed,
                       center[axes[0]] + u, center[axes[1]] + u)
-    return np.where(pos >= 0, Q_loc[np.maximum(pos, 0)], np.nan).astype(np.float32)
+    ok  = pos >= 0
+    pos = np.maximum(pos, 0)
+    return (np.where(ok, Q_loc[pos], np.nan).astype(np.float32),
+            np.where(ok, rho[pos] * RHO_UNIT, np.nan).astype(np.float32))
+  Q_xy, rho_xy = plane((0, 1, 2), center[2])
+  Q_xz, rho_xz = plane((0, 2, 1), center[1])
   np.savez(os.path.join(outdir, "slices", f"disk_slices_{snapshot}.npz"),
-           u=u, Q_xy=plane((0, 1, 2), center[2]), Q_xz=plane((0, 2, 1), center[1]))
+           u=u, Q_xy=Q_xy, Q_xz=Q_xz, rho_xy=rho_xy, rho_xz=rho_xz)
   del Q_loc
 
   wq       = dM[mri]

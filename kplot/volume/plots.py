@@ -76,6 +76,8 @@ Q_MASK_COLOR  = "0.6"
 Q_SPACETIME_KEY   = "Q_z_mean"
 Q_SPACETIME_RANGE = (1.0e-2, 1.0e1)
 
+RHO_CONTOUR_LEVELS = [1.0e8, 1.0e9, 1.0e10, 1.0e11, 1.0e12]
+
 Q_SLICE_PLANES = [
     ("Q_xy", r"$y - y_c$  [code units]"),
     ("Q_xz", r"$z - z_c$  [code units]"),
@@ -287,12 +289,17 @@ def plot_profiles(R, prof, snap, time_ms, ylim, outfile):
   plt.close(fig)
 
 
-def plot_Q_slice(u, Q, vlabel, snap, time_ms, outfile):
+def plot_Q_slice(u, Q, vlabel, snap, time_ms, outfile, rho=None):
   fig, ax = plt.subplots(figsize=(6.5, 5.5))
   cmap = plt.get_cmap(Q_SLICE_CMAP).copy()
   cmap.set_bad(Q_MASK_COLOR)
   im = ax.pcolormesh(u, u, np.ma.masked_invalid(Q), norm=LogNorm(*Q_SLICE_RANGE),
                      cmap=cmap, shading="auto")
+  if rho is not None and np.isfinite(rho).any():
+    with np.errstate(divide="ignore", invalid="ignore"):
+      cs = ax.contour(u, u, np.log10(rho), levels=np.log10(RHO_CONTOUR_LEVELS),
+                      colors="red", linewidths=0.8)
+    ax.clabel(cs, fmt=lambda v: rf"$10^{{{v:.0f}}}$", fontsize=7)
   ax.set_aspect("equal")
   ax.set_xlabel(r"$x - x_c$  [code units]")
   ax.set_ylabel(vlabel)
@@ -426,7 +433,9 @@ def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=
       time_ms = load_time_ms(outdir, snap)
       for key, vlabel in Q_SLICE_PLANES:
         outfile = os.path.join(figdir, key, f"disk_{key}_{snap}.png")
-        plot_Q_slice(sl["u"], sl[key], vlabel, snap, time_ms, outfile)
+        rho_key = key.replace("Q", "rho")
+        rho = sl[rho_key] if rho_key in sl.files else None
+        plot_Q_slice(sl["u"], sl[key], vlabel, snap, time_ms, outfile, rho)
 
   if not no_profiles:
     snaps = find_snapshots(outdir, "profiles", "csv")
