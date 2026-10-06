@@ -237,8 +237,8 @@ def locate(sph_dirs, jobname, variable, radius, tol=RADIUS_TOL, hint=''):
 class Shell:
   """One extraction surface of an sph dump, however many surfaces the file holds."""
 
-  def __init__(self, path, iradius=0):
-    self._data = SphericalData(path)
+  def __init__(self, path, iradius=0, data=None):
+    self._data = data if data is not None else SphericalData(path)
     if not 0 <= iradius < self._data.nradii:
       raise IndexError(f'{os.path.basename(path)} holds '
                        f'{self._data.nradii} surface(s), no index {iradius}.')

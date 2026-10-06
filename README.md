@@ -58,12 +58,12 @@ kplot/              the installed Python package
                       units.py, athenak_units.py, bin_convert.py
   sphere/           spherical-surface (sph) extraction analysis
                       ejecta.py, neutrinos.py, mergertime.py, poynting.py,
-                      butterfly.py, accretion.py, plots.py, comparison.py
+                      butterfly.py, accretion.py, mad.py, plots.py, comparison.py
   volume/           3D volume-domain (bin) analysis
                       disk.py, spectra.py, plots.py
 scripts/            ready-to-edit shell drivers, one folder per workflow
   system/           plot_system.sh, make_movies.sh                  -> kplot.system
-  sphere/           run_analysis.sh, run_butterfly.sh,
+  sphere/           run_analysis.sh, run_butterfly.sh, run_mad.sh,
                     run_comparison.sh, config.ini                   -> kplot.sphere
   volume/           run_analysis.sh, config.ini                     -> kplot.volume
 examples/           small, self-contained usage examples
@@ -132,6 +132,10 @@ batchtools ```output-XXXX``` restart segments:
 - ```kplot.sphere.plots``` / ```kplot.sphere.comparison``` — summary figures
   (```fig_ejecta```, ```fig_neutrino```, ...), and multi-model overlays
 - ```kplot.sphere.accretion``` — post-merger accretion rate from baryon bookkeeping
+- ```kplot.sphere.mad``` — SANE/MAD state and neutrino cooling efficiency: accretion
+  rate and magnetic flux on black-hole centred spheres, the dimensionless flux
+  $\phi = \Phi_B / \sqrt{\dot{M} r_g^2}$ (Gaussian units, MAD at $\phi \sim 50$) and
+  $\eta = L_\nu / (\dot{M} c^2)$ (figures ```fig_mad```, ```fig_eta_mdot```)
 Also here a pipeline exists under [```scripts/sphere/```](scripts/sphere/):
 ```bash
 cd scripts/sphere
@@ -140,10 +144,17 @@ bash run_analysis.sh                # merger time + ejecta + neutrino + plots
 bash run_analysis.sh --ejecta       # or run individual steps
 bash run_butterfly.sh               # butterfly diagram at butterfly_radius (own output dir)
 bash run_butterfly.sh --plot        # re-plot without re-running the analysis
+bash run_mad.sh                     # SANE/MAD flux + cooling efficiency (own output dir)
+bash run_mad.sh --plot              # re-plot, e.g. with another mad_t_avg
 ```
 The butterfly diagram is written to ```<simpath>/butterfly_<R>M/```. Its time axis is
 ```t - t_merger``` if ```butterfly_t_merger``` is set in ```config.ini```, and the absolute
 time otherwise.
+
+The MAD diagnostics are written to ```<simpath>/mad/```. They take $L_\nu$ and the
+merger time from the ```run_analysis.sh``` output directory, so run that first for
+$\eta$, and $M_\mathrm{BH}$ from the merged horizon summary (see the ```[mad]``` section of
+```config.ini```).
 
 Each step is also an installed console script, so it can be run directly:
 ```bash

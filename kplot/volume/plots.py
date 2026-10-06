@@ -7,6 +7,12 @@ can turn them into an evolution movie.
 
     outdir/histograms/disk_histograms_<snap>.csv -> figdir/histograms/disk_histograms_<snap>.png
     outdir/profiles/disk_profiles_<snap>.csv     -> figdir/profiles/disk_profiles_<snap>.png
+    outdir/slices/disk_slices_<snap>.npz         -> figdir/Q_slices/disk_Q_slices_<snap>.png
+                                                    (upper-half xz over xy),
+                                                    figdir/parker_xz/disk_parker_xz_<snap>.png
+    outdir/parker/disk_parker_<snap>.csv         -> figdir/scalars/disk_parker_spacetime.png
+    outdir/scalars/disk_scalars_<snap>.json      -> figdir/scalars/disk_field_geometry.png
+                                                    (Q_z/Q_phi, toroidal vs. poloidal energy)
 
 Command line:
     kplot-volume-plot --outdir DIR [--figdir DIR]
@@ -25,9 +31,10 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm, ListedColormap
+from matplotlib.colors import LogNorm, ListedColormap, Normalize
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
+from matplotlib.ticker import MaxNLocator
 
 from kplot.volume.disk import (JRHO_XBINS, JRHO_YBINS_TOP, JRHO_YBINS_BOT, JRHO_R_INT_KM,
                                 JRHO_THRESHOLD, JSPEC_UNIT)
@@ -75,13 +82,37 @@ Q_MASK_COLOR  = "0.6"
 
 Q_SPACETIME_KEY   = "Q_z_mean"
 Q_SPACETIME_RANGE = (1.0e-2, 1.0e1)
+Q_PHI_SPACETIME_RANGE = (1.0e-1, 1.0e2)
+
+# Field geometry scalars and the well-resolved MRI references of Hawley, Guan &
+# Krolik (2011): Q_z >~ 10 with Q_phi >~ 20 (Sec. 3.5), <B_R^2>/<B_phi^2> ~ 0.2
+# (Sec. 3.4) and alpha_mag ~ 0.3-0.4 (Sec. 3.3).
+FIELD_GEOMETRY_KEYS = ("Q_z_pct", "Q_phi_pct", "E_tor", "E_pol", "E_R", "E_z", "E_B",
+                       "BR2_Bphi2", "Bpol2_Btor2", "alpha_mag")
+HGK_Q_REFS     = {"Q_z": 10.0, "Q_phi": 20.0}
+HGK_RATIO_REFS = {"BR2_Bphi2": 0.2, "alpha_mag": 0.4}
 
 RHO_CONTOUR_LEVELS = [1.0e8, 1.0e9, 1.0e10, 1.0e11, 1.0e12]
 
-Q_SLICE_PLANES = [
-    ("Q_xy", r"$y - y_c$  [code units]"),
-    ("Q_xz", r"$z - z_c$  [code units]"),
+# Parker panels (Fig. 8 of Jiang et al. 2025, plus the undular Newcomb criterion):
+# (npz key, label, cmap, norm class, norm range, overlaid streamlines).
+PARKER_SLICE_PANELS = [
+    ("P_xz", r"$\mathcal{P}$", "RdBu_r", Normalize, (-0.5, 0.5), "B"),
+    ("N_xz", r"$\mathcal{N}_u$", "RdBu_r", Normalize, (-1.0, 1.0), "B"),
+    ("betainv_xz", r"$\beta^{-1}$", "viridis", LogNorm, (1.0e-6, 1.0e1), None),
+    ("s_xz", r"$s$  [$k_B$/baryon]", "magma", Normalize, (0.0, 40.0), "v"),
+    ("W_xz", r"$W$", "plasma", Normalize, (1.0, 1.1), None),
 ]
+PARKER_STREAMS = {"B": ("Bx_xz", "Bz_xz"), "v": ("vx_xz", "vz_xz")}
+
+# Spacetime panels: (csv key, label, cmap, norm class, norm range, zero contour).
+PARKER_SPACETIME_PANELS = [
+    ("P_p50", r"$\mathcal{P}$  (median)", "RdBu_r", Normalize, (-0.5, 0.5), True),
+    ("N_p50", r"$\mathcal{N}_u$  (median)", "RdBu_r", Normalize, (-1.0, 1.0), True),
+    ("betainv_mean", r"$\langle\beta^{-1}\rangle_V$", "viridis", LogNorm, (1.0e-6, 1.0e1), False),
+]
+PARKER_RHO_STYLES = ["dotted", "dashdot", "dashed", "solid"]
+PARKER_RHO_LEVELS = [1.0e9, 1.0e10, 1.0e11, 1.0e12]
 
 
 def find_snapshots(outdir, kind, ending):
@@ -289,42 +320,69 @@ def plot_profiles(R, prof, snap, time_ms, ylim, outfile):
   plt.close(fig)
 
 
-def plot_Q_slice(u, Q, vlabel, snap, time_ms, outfile, rho=None):
-  fig, ax = plt.subplots(figsize=(6.5, 5.5))
-  cmap = plt.get_cmap(Q_SLICE_CMAP).copy()
-  cmap.set_bad(Q_MASK_COLOR)
-  im = ax.pcolormesh(u, u, np.ma.masked_invalid(Q), norm=LogNorm(*Q_SLICE_RANGE),
+def _plot_Q_panel(ax, u, v, Q, rho, cmap):
+  im = ax.pcolormesh(u, v, np.ma.masked_invalid(Q), norm=LogNorm(*Q_SLICE_RANGE),
                      cmap=cmap, shading="auto")
   if rho is not None and np.isfinite(rho).any():
     with np.errstate(divide="ignore", invalid="ignore"):
-      cs = ax.contour(u, u, np.log10(rho), levels=np.log10(RHO_CONTOUR_LEVELS),
+      cs = ax.contour(u, v, np.log10(rho), levels=np.log10(RHO_CONTOUR_LEVELS),
                       colors="red", linewidths=0.8)
-    ax.clabel(cs, fmt=lambda v: rf"$10^{{{v:.0f}}}$", fontsize=7)
+    ax.clabel(cs, fmt=lambda val: rf"$10^{{{val:.0f}}}$", fontsize=7)
   ax.set_aspect("equal")
-  ax.set_xlabel(r"$x - x_c$  [code units]")
-  ax.set_ylabel(vlabel)
-  cbar = fig.colorbar(im, ax=ax, extend="both")
+  return im
+
+
+def plot_Q_slice(sl, snap, time_ms, outfile):
+  """Upper half of the xz plane stacked on the xy plane (as in kplot.system.plotter)."""
+  u = sl["u"]
+  top = u >= 0.0
+  cmap = plt.get_cmap(Q_SLICE_CMAP).copy()
+  cmap.set_bad(Q_MASK_COLOR)
+  rho = lambda key: sl[key] if key in sl.files else None
+
+  fig = plt.figure(figsize=(4.5, 6))
+  gs = fig.add_gridspec(2, 1, height_ratios=[1, 2], hspace=0.03, right=0.83)
+  ax_xz = fig.add_subplot(gs[0])
+  ax_xy = fig.add_subplot(gs[1], sharex=ax_xz)
+
+  rho_xz = rho("rho_xz")
+  im = _plot_Q_panel(ax_xz, u, u[top], sl["Q_xz"][top],
+                     None if rho_xz is None else rho_xz[top], cmap)
+  _plot_Q_panel(ax_xy, u, u, sl["Q_xy"], rho("rho_xy"), cmap)
+
+  ax_xz.set_xlim(u[0], u[-1]); ax_xz.set_ylim(0.0, u[-1])
+  ax_xy.set_ylim(u[0], u[-1])
+  plt.setp(ax_xz.get_xticklabels(), visible=False)
+  ax_xz.set_ylabel(r"$z - z_c$")
+  ax_xy.set_xlabel(r"$x - x_c$  [code units]")
+  ax_xy.set_ylabel(r"$y - y_c$")
+  ax_xz.set_title(f"snapshot {snap}, t = {time_ms:.2f} ms")
+  ax_xy.yaxis.set_major_locator(MaxNLocator(prune="upper"))
+  ax_xz.legend(handles=[Patch(facecolor=Q_MASK_COLOR, label="masked")],
+               loc="upper right", fontsize=7)
+  fig.align_ylabels([ax_xz, ax_xy])
+
+  p_top = ax_xz.get_position(); p_bot = ax_xy.get_position()
+  cax = fig.add_axes([p_top.x1 + 0.015, p_bot.y0, 0.04, p_top.y1 - p_bot.y0])
+  cbar = fig.colorbar(im, cax=cax, extend="both")
   cbar.set_label(r"$Q_z$  ($\partial_R \Omega < 0$)")
-  ax.legend(handles=[Patch(facecolor=Q_MASK_COLOR, label="masked")],
-            loc="upper right", fontsize=8)
-  ax.set_title(f"snapshot {snap}, t = {time_ms:.2f} ms")
-  fig.tight_layout()
-  fig.savefig(outfile, dpi=150)
+  fig.savefig(outfile, dpi=150, bbox_inches="tight")
   plt.close(fig)
 
 
-def plot_Q_spacetime(outdir, snaps, R, outfile):
+def plot_Q_spacetime(outdir, snaps, R, outfile, key=Q_SPACETIME_KEY, qrange=Q_SPACETIME_RANGE,
+                     label=r"$\langle Q_z \rangle_M$  ($\partial_R \Omega < 0$)"):
   times, rows = [], []
   for snap in snaps:
     prof = load_profile(os.path.join(outdir, "profiles", f"disk_profiles_{snap}.csv"))
-    if Q_SPACETIME_KEY not in prof.dtype.names:
+    if key not in prof.dtype.names:
       continue
     r = np.atleast_1d(prof["R_mid"])
-    q = np.atleast_1d(prof[Q_SPACETIME_KEY])
+    q = np.atleast_1d(prof[key])
     rows.append(np.interp(np.log(R), np.log(r), q, left=np.nan, right=np.nan))
     times.append(load_time_ms(outdir, snap))
   if not rows:
-    print(f"  No {Q_SPACETIME_KEY} column in the profiles; skipping Q spacetime diagram.")
+    print(f"  No {key} column in the profiles; skipping its spacetime diagram.")
     return
 
   order = np.argsort(times)
@@ -334,7 +392,7 @@ def plot_Q_spacetime(outdir, snaps, R, outfile):
   cmap = plt.get_cmap(Q_SLICE_CMAP).copy()
   cmap.set_bad(Q_MASK_COLOR)
   fig, ax = plt.subplots(figsize=(8, 4.5))
-  im = ax.pcolormesh(t, R, Q.T, norm=LogNorm(*Q_SPACETIME_RANGE), cmap=cmap,
+  im = ax.pcolormesh(t, R, Q.T, norm=LogNorm(*qrange), cmap=cmap,
                      shading="nearest")
   if t.size > 1:
     ax.contour(t, R, Q.T.filled(np.nan), levels=[1.0], colors="w", linewidths=1.0)
@@ -342,9 +400,145 @@ def plot_Q_spacetime(outdir, snaps, R, outfile):
   ax.set_xlabel(r"$t$ [ms]")
   ax.set_ylabel(r"$R$  [code units]")
   cbar = fig.colorbar(im, ax=ax, extend="both")
-  cbar.set_label(r"$\langle Q_z \rangle_M$  ($\partial_R \Omega < 0$)")
+  cbar.set_label(label)
   fig.tight_layout()
   fig.savefig(outfile, dpi=150)
+  plt.close(fig)
+
+
+def plot_field_geometry(g, outfile):
+  """Q_z and Q_phi, toroidal vs. poloidal energy, and MRI saturation ratios vs. time."""
+  t     = np.asarray(g["time_ms"])
+  order = np.argsort(t)
+  t     = t[order]
+  arr   = lambda key: np.asarray(g[key], dtype=float)[order]
+  fig, axes = plt.subplots(1, 3, figsize=(17, 4.6))
+
+  # Mass-weighted median and 25-75% band of the quality factors (MRI-unstable cells).
+  ax = axes[0]
+  for name, label, color in (("Q_z", r"$Q_z$", "tab:blue"), ("Q_phi", r"$Q_\phi$", "tab:red")):
+    pct = np.asarray(g[f"{name}_pct"], dtype=float)[order]
+    ax.fill_between(t, pct[:, 1], pct[:, 3], color=color, alpha=0.25, lw=0)
+    ax.plot(t, pct[:, 2], color=color, marker="o", ms=2, label=label)
+    ax.axhline(HGK_Q_REFS[name], color=color, ls="--", lw=0.8)
+  ax.set_yscale("log")
+  ax.set_ylabel(r"$Q$  (median, 25–75%)")
+  ax.legend(fontsize=8)
+
+  ax = axes[1]
+  for key, label, color in (("E_B", r"$E_B$", "k"),
+                            ("E_tor", r"$E_\phi$", "tab:red"),
+                            ("E_pol", r"$E_R + E_z$", "tab:blue"),
+                            ("E_R", r"$E_R$", "tab:cyan"),
+                            ("E_z", r"$E_z$", "tab:purple")):
+    ax.plot(t, arr(key), color=color, marker="o", ms=2, label=label,
+            ls=":" if key in ("E_R", "E_z") else "-")
+  ax.set_yscale("log")
+  ax.set_ylabel(r"Eulerian $E$  [code units]")
+  ax.legend(fontsize=8, ncol=2)
+
+  ax = axes[2]
+  for key, label, color in (("BR2_Bphi2", r"$\langle B_R^2\rangle/\langle B_\phi^2\rangle$", "tab:green"),
+                            ("Bpol2_Btor2", r"$\langle B_\mathrm{pol}^2\rangle/\langle B_\phi^2\rangle$", "tab:blue"),
+                            ("alpha_mag", r"$\alpha_\mathrm{mag}$", "tab:orange")):
+    ax.plot(t, arr(key), color=color, marker="o", ms=2, label=label)
+    if key in HGK_RATIO_REFS:
+      ax.axhline(HGK_RATIO_REFS[key], color=color, ls="--", lw=0.8)
+  vals = np.concatenate([arr(k) for k in ("BR2_Bphi2", "Bpol2_Btor2", "alpha_mag")])
+  ax.set_ylim(min(0.0, np.nanmin(vals)) if np.isfinite(vals).any() else 0.0,
+              max(0.5, 1.1 * np.nanmax(vals)) if np.isfinite(vals).any() else 0.5)
+  ax.set_ylabel("ratio  (dashed: HGK 2011 saturation)")
+  ax.legend(fontsize=8)
+
+  for ax in axes:
+    ax.set_xlabel(r"$t$ [ms]")
+    if t.size > 1:
+      ax.set_xlim(t[0], t[-1])
+  fig.tight_layout()
+  fig.savefig(outfile, dpi=150)
+  plt.close(fig)
+
+
+def _rho_contours(ax, x, y, rho):
+  """Cyan iso-density lines at PARKER_RHO_LEVELS (dotted -> solid with rho)."""
+  if rho is None or np.ndim(rho) != 2 or min(np.shape(rho)) < 2 or not np.isfinite(rho).any():
+    return
+  with np.errstate(divide="ignore", invalid="ignore"):
+    ax.contour(x, y, np.log10(rho), levels=np.log10(PARKER_RHO_LEVELS), colors="cyan",
+               linestyles=PARKER_RHO_STYLES, linewidths=0.8)
+
+
+def plot_parker_slice(sl, snap, time_ms, outfile):
+  """Fig. 8-like xz plane: P, N_u, 1/beta, s, W with field and fluid lines."""
+  u = sl["u"]
+  fig, axes = plt.subplots(1, len(PARKER_SLICE_PANELS), sharey=True,
+                           figsize=(4.2 * len(PARKER_SLICE_PANELS), 4.9))
+  for ax, (key, label, cmap_name, norm_cls, vrange, stream) in zip(axes, PARKER_SLICE_PANELS):
+    cmap = plt.get_cmap(cmap_name).copy()
+    cmap.set_bad(Q_MASK_COLOR)
+    im = ax.pcolormesh(u, u, np.ma.masked_invalid(sl[key]), norm=norm_cls(*vrange),
+                       cmap=cmap, shading="auto", rasterized=True)
+    if stream is not None:
+      kx, kz = PARKER_STREAMS[stream]
+      ax.streamplot(u, u, np.nan_to_num(sl[kx]), np.nan_to_num(sl[kz]), color="k",
+                    density=1.0, linewidth=0.4, arrowsize=0.5)
+    _rho_contours(ax, u, u, sl["rho_xz"])
+    ax.set_xlim(u[0], u[-1])
+    ax.set_ylim(u[0], u[-1])
+    ax.set_aspect("equal")
+    ax.set_xlabel(r"$x - x_c$  [code units]")
+    cbar = fig.colorbar(im, ax=ax, orientation="horizontal", location="top",
+                        extend="both", pad=0.02)
+    cbar.set_label(label)
+  axes[0].set_ylabel(r"$z - z_c$  [code units]")
+  rho_lines = [Line2D([], [], color="cyan", linestyle=ls, label=rf"$10^{{{np.log10(lv):.0f}}}$")
+               for ls, lv in zip(PARKER_RHO_STYLES, PARKER_RHO_LEVELS)]
+  axes[-1].legend(handles=rho_lines, title=r"$\rho$ [g/cm$^3$]", loc="lower right",
+                  fontsize=7, title_fontsize=7)
+  fig.suptitle(f"snapshot {snap}, t = {time_ms:.2f} ms", y=0.02, va="bottom", fontsize=10)
+  fig.savefig(outfile, dpi=150, bbox_inches="tight")
+  plt.close(fig)
+
+
+def plot_parker_spacetime(outdir, snaps, outfile):
+  """Fig. 7-like r-t diagrams of P, N_u and 1/beta over all polar angles."""
+  profs, times = [], []
+  for snap in snaps:
+    profs.append(load_profile(os.path.join(outdir, "parker", f"disk_parker_{snap}.csv")))
+    times.append(load_time_ms(outdir, snap))
+  if len(profs) < 2:
+    print("  Fewer than two Parker profiles; skipping Parker spacetime diagram.")
+    return
+
+  # Common r grid (the inner edge follows the moving excision radius).
+  lo = min(np.atleast_1d(p["r_mid"])[0] for p in profs)
+  hi = max(np.atleast_1d(p["r_mid"])[-1] for p in profs)
+  r  = np.geomspace(lo, hi, max(np.atleast_1d(p["r_mid"]).size for p in profs))
+  def grid(key):
+    return np.asarray([np.interp(np.log(r), np.log(np.atleast_1d(p["r_mid"])),
+                                 np.atleast_1d(p[key]), left=np.nan, right=np.nan)
+                       for p in profs])
+  order = np.argsort(times)
+  t     = np.asarray(times)[order]
+  rho   = grid("rho_mean_g_cm3")[order]
+
+  fig, axes = plt.subplots(1, len(PARKER_SPACETIME_PANELS), sharey=True,
+                           figsize=(5.0 * len(PARKER_SPACETIME_PANELS), 5.0))
+  for ax, (key, label, cmap_name, norm_cls, vrange, zero) in zip(axes, PARKER_SPACETIME_PANELS):
+    Z    = np.ma.masked_invalid(grid(key)[order])
+    cmap = plt.get_cmap(cmap_name).copy()
+    cmap.set_bad(Q_MASK_COLOR)
+    im = ax.pcolormesh(r, t, Z, norm=norm_cls(*vrange), cmap=cmap, shading="nearest")
+    if zero:
+      ax.contour(r, t, Z.filled(np.nan), levels=[0.0], colors="w", linewidths=1.0)
+    _rho_contours(ax, r, t, rho)
+    ax.set_xscale("log")
+    ax.set_xlabel(r"$r$  [code units]")
+    cbar = fig.colorbar(im, ax=ax, orientation="horizontal", location="top",
+                        extend="both", pad=0.02)
+    cbar.set_label(label)
+  axes[0].set_ylabel(r"$t$ [ms]")
+  fig.savefig(outfile, dpi=150, bbox_inches="tight")
   plt.close(fig)
 
 
@@ -398,14 +592,14 @@ def plot_spectrum(k, spectra, snap, time, outfile):
 
 
 def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=False,
-             no_spectra=False, no_jrho=False, no_slices=False):
+             no_spectra=False, no_jrho=False, no_slices=False, no_parker=False):
   os.makedirs(os.path.join(figdir, "histograms"), exist_ok=True)
+  os.makedirs(os.path.join(figdir, "parker_xz"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "profiles"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "scalars"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "spectra"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "jrho"), exist_ok=True)
-  for key, _ in Q_SLICE_PLANES:
-    os.makedirs(os.path.join(figdir, key), exist_ok=True)
+  os.makedirs(os.path.join(figdir, "Q_slices"), exist_ok=True)
 
   if not no_histograms:
     snaps = find_snapshots(outdir, "histograms", "csv")
@@ -430,12 +624,22 @@ def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=
     print(f"$ Plotting {len(snaps)} Q slice frames...")
     for snap in snaps:
       sl = np.load(os.path.join(outdir, "slices", f"disk_slices_{snap}.npz"))
-      time_ms = load_time_ms(outdir, snap)
-      for key, vlabel in Q_SLICE_PLANES:
-        outfile = os.path.join(figdir, key, f"disk_{key}_{snap}.png")
-        rho_key = key.replace("Q", "rho")
-        rho = sl[rho_key] if rho_key in sl.files else None
-        plot_Q_slice(sl["u"], sl[key], vlabel, snap, time_ms, outfile, rho)
+      outfile = os.path.join(figdir, "Q_slices", f"disk_Q_slices_{snap}.png")
+      plot_Q_slice(sl, snap, load_time_ms(outdir, snap), outfile)
+
+  if not no_parker:
+    # Slices from before the Parker analysis lack the P_xz etc. keys.
+    snaps = [s for s in find_snapshots(outdir, "slices", "npz")
+             if "P_xz" in np.load(os.path.join(outdir, "slices", f"disk_slices_{s}.npz")).files]
+    print(f"$ Plotting {len(snaps)} Parker slice frames...")
+    for snap in snaps:
+      sl = np.load(os.path.join(outdir, "slices", f"disk_slices_{snap}.npz"))
+      outfile = os.path.join(figdir, "parker_xz", f"disk_parker_xz_{snap}.png")
+      plot_parker_slice(sl, snap, load_time_ms(outdir, snap), outfile)
+
+    print(f"$ Plotting Parker spacetime diagram...")
+    plot_parker_spacetime(outdir, find_snapshots(outdir, "parker", "csv"),
+                          os.path.join(figdir, "scalars", "disk_parker_spacetime.png"))
 
   if not no_profiles:
     snaps = find_snapshots(outdir, "profiles", "csv")
@@ -448,9 +652,13 @@ def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=
       outfile = os.path.join(figdir, "profiles", f"disk_profiles_{snap}.png")
       plot_profiles(R, prof, snap, load_time_ms(outdir, snap), ylim, outfile)
 
-    print(f"$ Plotting Q spacetime diagram...")
+    print(f"$ Plotting Q spacetime diagrams...")
     plot_Q_spacetime(outdir, snaps, R,
                      os.path.join(figdir, "scalars", "disk_Q_spacetime.png"))
+    plot_Q_spacetime(outdir, snaps, R,
+                     os.path.join(figdir, "scalars", "disk_Qphi_spacetime.png"),
+                     key="Q_phi_mean", qrange=Q_PHI_SPACETIME_RANGE,
+                     label=r"$\langle Q_\phi \rangle_M$  ($\partial_R \Omega < 0$)")
 
   if not no_scalars:
     snaps = find_snapshots(outdir, "scalars", "json")
@@ -474,6 +682,19 @@ def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=
     outfile = os.path.join(figdir, "scalars", f"disk_scalars.png")
     plot_scalars(d, outfile)
 
+    # Field geometry; scalars from before the Q_phi/field split lack these keys.
+    g = defaultdict(list)
+    for snap in snaps:
+      data = json.loads((Path(outdir) / "scalars" / f"disk_scalars_{snap}.json").read_text())
+      if "E_tor" not in data["disk"]:
+        continue
+      g["time_ms"].append(data["time_ms"])
+      for key in FIELD_GEOMETRY_KEYS:
+        g[key].append(data["disk"].get(key, np.nan))
+    if g:
+      print(f"$ Plotting field geometry...")
+      plot_field_geometry(g, os.path.join(figdir, "scalars", "disk_field_geometry.png"))
+
   if not no_spectra:
     snaps = find_spectrum_snapshots(outdir)
     print(f"$ Plotting {len(snaps)} spectrum frames...")
@@ -496,11 +717,13 @@ def main(argv=None):
   ap.add_argument("--no-spectra", action="store_true", help="skip spectrum frames")
   ap.add_argument("--no-jrho", action="store_true", help="skip j-rho frames")
   ap.add_argument("--no-slices", action="store_true", help="skip Q slice frames")
+  ap.add_argument("--no-parker", action="store_true",
+                   help="skip Parker slice frames and spacetime diagram")
   args = ap.parse_args(argv)
 
   figdir = args.figdir or os.path.join(args.outdir, "frames")
   plot_all(args.outdir, figdir, args.no_histograms, args.no_profiles, args.no_scalars,
-           args.no_spectra, args.no_jrho, args.no_slices)
+           args.no_spectra, args.no_jrho, args.no_slices, args.no_parker)
 
 
 if __name__ == "__main__":

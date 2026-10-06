@@ -48,6 +48,11 @@ Outputs (written to --outdir):
   histograms/disk_histograms_<snapshot>.csv: histograms of M_disk vs. Ye, etc.
   profiles/disk_profiles_<profiles>.csv: radial profiles of important quantities, i.e.
                                          temperature etc.
+  slices/disk_slices_<snapshot>.npz: xy/xz planes through the BH (Q, rho; on xz also
+                                     the Parker fields P, N_u, betainv, s, W, Bx, Bz, vx, vz)
+  parker/disk_parker_<snapshot>.csv: spherical-radius profiles of the Parker (P) and
+                                     undular Newcomb (N_u) criteria over all polar angles
+                                     (see documentation/parker/parker.md)
 
 The written scalars are:
   j_mean - mass-weighted mean specific angular momentum (J/M)
@@ -65,7 +70,13 @@ The written scalars are:
   bsq_mean - mass-weighted mean magnetic field squared (code units)
   beta_plasma_mean - mass-weighted mean plasma beta (2*press/b^2)
   sigma_mean - mass-weighted mean magnetization (b^2/rho)
-  Q_z_mean, Q_z_pct, Q_z_f10 - precomputed quality-factor (mean, percentiles, fraction of mass below 10)
+  Q_z_mean, Q_z_pct, Q_z_f10 - precomputed quality-factor (mean, percentiles, fraction of mass above 10)
+  Q_phi_mean, Q_phi_pct, Q_phi_f10 - same for the toroidal quality factor Q_phi
+  E_R, E_tor, E_z, E_pol, E_B - Eulerian magnetic energy 0.5 B^2 sqrt(g) dV in B_R, B_phi, B_z,
+                               B_R + B_z and in total (E_B = E_R + E_tor + E_z)
+  BR2_Bphi2, Bpol2_Btor2, Bz2_BR2 - volume-averaged field energy ratios (HGK 2011: BR2_Bphi2 ~ 0.2
+                                    for well-resolved MRI turbulence)
+  alpha_mag - Maxwell stress over magnetic pressure, -2 <B_R B_phi> / <B^2> (HGK 2011: ~ 0.3-0.4)
   B_rms_G - RMS magnetic field strength (in Gauss)
   B_max_G - max magnetic field strength (in Gauss)
   E_mag - total magnetic energy (integral of 0.5*b^2*W*sqrt(g)*dV)
@@ -85,6 +96,7 @@ from tqdm import tqdm
 import numpy as np
 import h5py
 from scipy.interpolate import RegularGridInterpolator
+from scipy.ndimage import uniform_filter
 
 # AthenaK utility.
 from kplot.system.bin_convert import read_binary
@@ -115,7 +127,8 @@ def _process_snapshot_disk(args):
   # Unpack.
   (mhd_file, adm_file, alpha_file, betax_file, betay_file, betaz_file,
   rho_cut, rho_keep, rho_remnant, bound_criterion, r_exclude, center,
-  r_disk_max, nbins, rmax, slice_extent, slice_npts, outdir) = args
+  r_disk_max, nbins, rmax, slice_extent, slice_npts,
+  parker_dir, parker_eps, parker_rmax, parker_smooth, outdir) = args
 
   snapshot = mhd_file.split("/")[-1].split(".")[-2].strip()
 
@@ -260,6 +273,7 @@ def _process_snapshot_disk(args):
   # Coordinate 3-velocity dx^i/dt = alpha utilde^i / W - beta^i
   vcx = (alpha * velx / W - betax).astype(np.float32)
   vcy = (alpha * vely / W - betay).astype(np.float32)
+  vcz = (alpha * velz / W - betaz).astype(np.float32)
 
   # ======================================================================
   # MAGNETIC FIELD
@@ -287,7 +301,7 @@ def _process_snapshot_disk(args):
   bx_u = (Bx + alpha * bt_u * ux_u) / W
   by_u = (By + alpha * bt_u * uy_u) / W
   bz_u = (Bz + alpha * bt_u * uz_u) / W
-  del ux_u, uy_u, uz_u, Bx, By, Bz # Free up memory.
+  del ux_u, uy_u, uz_u # Free up memory.
 
   # Magnetic field in fluid frame with lower index.
   bx_d = ((gxx * (bx_u + betax * bt_u) +
@@ -299,6 +313,11 @@ def _process_snapshot_disk(args):
   bz_d = ((gxz * (bx_u + betax * bt_u) +
            gyz * (by_u + betay * bt_u) +
            gzz * (bz_u + betaz * bt_u))).astype(np.float32)
+
+  # Eulerian field with lower index, B_i = gamma_ij B^j (toroidal/poloidal split).
+  Bx_d = (gxx * Bx + gxy * By + gxz * Bz).astype(np.float32)
+  By_d = (gxy * Bx + gyy * By + gyz * Bz).astype(np.float32)
+  Bz_d = (gxz * Bx + gyz * By + gzz * Bz).astype(np.float32)
 
   del alpha, betax, betay, betaz, gxx, gxy, gxz, \
       gyy, gyz, gzz, bt_u, bx_u, by_u, bz_u # Free up memory.
@@ -320,11 +339,15 @@ def _process_snapshot_disk(args):
   eosvals["Q1"] = tab.interpolator_Q1(pts)
   eosvals["Q2"] = tab.interpolator_Q2(pts)
   eosvals["Q7"] = tab.interpolator_Q7(pts)
+  eosvals["cs2"] = tab.interpolator_cs2(pts)
 
   # Compute the enthalpy and store the entropy.
   h = 1.0 + eosvals["Q7"] + eosvals["Q1"] / tab.mb
   entropy = eosvals["Q2"].astype(np.float32)
   hut_d = h * ut_d
+
+  # Adiabatic index Gamma_1 = (dln p/dln rho)_s = c_s^2 (e + p) / p = c_s^2 h m_b / Q1.
+  gamma1 = (eosvals["cs2"] * h * tab.mb / np.maximum(eosvals["Q1"], 1e-30)).astype(np.float32)
 
   del eosvals, nb, rho_cgs, log_nb, ye_clip, log_temp, pts # Free up memory.
 
@@ -354,12 +377,29 @@ def _process_snapshot_disk(args):
   b_phi = -yg * bx_d + xg * by_d
   dJ_mhd = sqrtg * ((rho * h + bsq) * W * u_phi - BWv * b_phi) * dV
 
+  # Toroidal/poloidal split of the Eulerian field B^i around the BH. The mixed
+  # products B_RR = B_R B^R, B_PP = B_phi B^phi, B_ZZ = B_z B^z sum exactly to
+  # B^2 = B_i B^i, and B_RP = B^R B_phi is the Maxwell stress. (The comoving b^i
+  # is boosted along the mostly toroidal orbital velocity, so b_i b^i > b^2.)
+  # b_phih = b_phi / R is the comoving toroidal component used for Q_phi, in the
+  # same (covariant) convention as bz_d in Q_z.
+  with np.errstate(divide="ignore", invalid="ignore"):
+    Rinv   = 1.0 / np.maximum(Rcyl, 1e-30)
+    BR_u   = (xg * Bx + yg * By) * Rinv
+    BP_d   = (-yg * Bx_d + xg * By_d) * Rinv
+    B_RR   = ((xg * Bx_d + yg * By_d) * Rinv * BR_u).astype(np.float32)
+    B_PP   = (BP_d * (-yg * Bx + xg * By) * Rinv).astype(np.float32)
+    B_ZZ   = (Bz_d * Bz).astype(np.float32)
+    B_RP   = (BR_u * BP_d).astype(np.float32)
+    b_phih = (b_phi * Rinv).astype(np.float32)
+  del Rinv, BR_u, BP_d, Bx_d, By_d, Bz_d, By # Free up memory.
+
   # Angular velocity Omega = dphi/dt.
   Rsafe = np.maximum(Rcyl, 1e-30)
   with np.errstate(divide="ignore", invalid="ignore"):
     omega = ((xg * vcy - yg * vcx) / Rsafe**2).astype(np.float32)
     v_rad = ((xg * vcx + yg * vcy) / Rsafe).astype(np.float32)
-  del vcx, vcy, ux_d, uy_d, bx_d, by_d, u_phi, Rsafe # Free up memory.
+  del vcy, ux_d, uy_d, bx_d, by_d, u_phi, Rsafe # Free up memory.
 
   # ======================================================================
   # MASKS
@@ -385,13 +425,115 @@ def _process_snapshot_disk(args):
     disk &= Rcyl < r_disk_max
 
   # ======================================================================
+  # PARKER INSTABILITY
+  # ======================================================================
+  # Two local criteria, both unstable for < 0 (documentation/parker/parker.md),
+  # with derivatives along n = sign(z) z_hat (parker_dir = z, away from the
+  # midplane) or n = r_hat from the BH (parker_dir = r, as in Jiang et al. 2025):
+  #   Parker (Eq. 16 of Jiang et al. 2025), b = 1/beta = b^2/(2p):
+  #     P   = dln p/dln rho - 1 - b (1 + 2b) / (2 + 3b)
+  #   Newcomb (1961) undular, with rho g = -dn (p + b^2/2) (magnetohydrostatics):
+  #     A   = -dn ln rho,  G = -dn (p + b^2/2) / (Gamma_1 p),  N_u = (A - G) / (|A| + |G|)
+  # ln rho, ln p and p + b^2/2 are box-smoothed over parker_smooth^3 cells inside
+  # each meshblock before differencing to suppress cell-scale turbulence.
+  if parker_dir == "z":
+    n_comp = ((1, dzv, np.sign(zg).astype(np.float32)),)
+  else:
+    rinv   = 1.0 / np.maximum(rsph, 1e-30)
+    n_comp = ((3, dxv, xg * rinv), (2, dyv, yg * rinv), (1, dzv, zg * rinv))
+    del rinv
+
+  def d_dn(q):
+    """n . grad q on the native mesh (smoothed; one-sided at MB edges)."""
+    full = np.full(ncells_total, np.nan, dtype=np.float32)
+    full[sel] = q
+    full = full.reshape(-1, nx3, nx2, nx1)
+    if parker_smooth > 1:
+      good = np.isfinite(full).astype(np.float32)
+      size = (1, parker_smooth, parker_smooth, parker_smooth)
+      wsum = uniform_filter(good, size=size, mode="nearest")
+      with np.errstate(divide="ignore", invalid="ignore"):
+        full = np.where(good > 0,
+                        uniform_filter(np.nan_to_num(full), size=size, mode="nearest") / wsum,
+                        np.nan).astype(np.float32)
+      del good, wsum
+    out = np.zeros(sel.size, dtype=np.float32)
+    for axis, dax, nc in n_comp:
+      out += (np.gradient(full, axis=axis) / dax[:, None, None, None]).reshape(-1)[sel] * nc
+    return out
+
+  with np.errstate(divide="ignore", invalid="ignore"):
+    dlnrho = d_dn(np.log(rho))
+    dlnp   = d_dn(np.log(press))
+    dptot  = d_dn(press + 0.5 * bsq)
+  del n_comp # Free up memory.
+  betainv = (0.5 * bsq / np.maximum(press, 1e-30)).astype(np.float32)
+  buoy_ok = dense & outside_bh
+
+  with np.errstate(divide="ignore", invalid="ignore"):
+    parker = (dlnp / dlnrho - 1.0 -
+              betainv * (1.0 + 2.0 * betainv) / (2.0 + 3.0 * betainv)).astype(np.float32)
+    # Drop cells where rho is flat along n (e.g. the midplane for n = z).
+    parker_ok = buoy_ok & np.isfinite(parker) & (np.abs(dlnrho) * dz > parker_eps)
+
+    A_strat  = -dlnrho
+    G_buoy   = -dptot / (gamma1 * press)
+    A_plus_G = np.abs(A_strat) + np.abs(G_buoy)
+    newcomb  = ((A_strat - G_buoy) / A_plus_G).astype(np.float32)
+    newcomb_ok = buoy_ok & np.isfinite(newcomb) & (A_plus_G * dz > parker_eps)
+  parker[~parker_ok]   = np.nan
+  newcomb[~newcomb_ok] = np.nan
+  del dlnp, dlnrho, dptot, A_strat, G_buoy, A_plus_G # Free up memory.
+
+  # Spacetime-diagram profile: proper-volume-weighted statistics in spherical
+  # radius bins around the BH over all polar angles.
+  p_edges = np.geomspace(max(r_exclude, 1.0), parker_rmax, nbins + 1)
+  p_idx   = np.digitize(rsph, p_edges) - 1
+  p_in    = buoy_ok & (p_idx >= 0) & (p_idx < nbins)
+  dVp     = sqrtg * dV
+  i_in    = p_idx[p_in]
+  V_in    = np.bincount(i_in, weights=dVp[p_in], minlength=nbins)
+  parker_prof = {
+    "r_lo"          : p_edges[:-1],
+    "r_hi"          : p_edges[1:],
+    "r_mid"         : np.sqrt(p_edges[:-1] * p_edges[1:]),
+    "n_cells"       : np.bincount(i_in, minlength=nbins),
+    "betainv_mean"  : binned_wmean(i_in, betainv[p_in], dVp[p_in], nbins),
+    "gamma1_mean"   : binned_wmean(i_in, gamma1[p_in], dVp[p_in], nbins),
+    "rho_mean_g_cm3": binned_wmean(i_in, rho[p_in], dVp[p_in], nbins) * RHO_UNIT,
+  }
+  for name, crit, ok in (("P", parker, parker_ok), ("N", newcomb, newcomb_ok)):
+    m     = p_in & ok
+    i_m   = p_idx[m]
+    V_m   = np.bincount(i_m, weights=dVp[m], minlength=nbins)
+    V_neg = np.bincount(i_m, weights=dVp[m] * (crit[m] < 0.0), minlength=nbins)
+    with np.errstate(invalid="ignore", divide="ignore"):
+      parker_prof[f"{name}_f_valid"]    = np.where(V_in > 0, V_m / V_in, np.nan)
+      parker_prof[f"{name}_f_unstable"] = np.where(V_m > 0, V_neg / V_m, np.nan)
+    parker_prof[f"{name}_mean"] = binned_wmean(i_m, crit[m], dVp[m], nbins)
+    parker_prof[f"{name}_p50"]  = binned_wquantile(i_m, crit[m], dVp[m], nbins, 0.5)
+  del p_idx, p_in, dVp, i_in, m, i_m, buoy_ok, gamma1 # Free up memory.
+
+  keys = list(parker_prof.keys())
+  with open(os.path.join(outdir, "parker", f"disk_parker_{snapshot}.csv"), "w") as fp:
+    fp.write(",".join(keys) + "\n")
+    for b in range(nbins):
+      fp.write(",".join(f"{np.asarray(parker_prof[k])[b]:.8e}" for k in keys) + "\n")
+
+
+  # ======================================================================
   # MRI ANALYSIS
   # ======================================================================
+  # Quality factors Q_i = lambda_MRI,i / dx_i with lambda_MRI,i = 2 pi |v_A,i| / Omega
+  # (Hawley, Guan & Krolik 2011, Secs. 3.1-3.2). On the Cartesian grid the cell width
+  # along phi is taken as dz (cubic cells).
   with np.errstate(divide="ignore", invalid="ignore"):
-    lambda_z = np.abs(2.0 * np.pi * bz_d / (omega * np.sqrt(rho * h + bsq)))
-  Q_z  = (lambda_z / dz).astype(np.float32)
-  # Q_phi = np.pi * np.abs(b_phi) / (Rcyl * omega * np.sqrt((rho * h + bsq) * dz))
-  Q_ok = disk & np.isfinite(Q_z)
+    lambda_z   = np.abs(2.0 * np.pi * bz_d / (omega * np.sqrt(rho * h + bsq)))
+    lambda_phi = np.abs(2.0 * np.pi * b_phih / (omega * np.sqrt(rho * h + bsq)))
+  Q_z   = (lambda_z / dz).astype(np.float32)
+  Q_phi = (lambda_phi / dz).astype(np.float32)
+  del lambda_z, lambda_phi # Free up memory.
+  Q_ok = disk & np.isfinite(Q_z) & np.isfinite(Q_phi)
 
   om_full = np.full(ncells_total, np.nan, dtype=np.float32)
   om_full[sel] = omega
@@ -406,23 +548,33 @@ def _process_snapshot_disk(args):
   Q_loc = np.where(mri, Q_z, np.nan).astype(np.float32)
 
   u = np.linspace(-slice_extent, slice_extent, slice_npts)
-  def plane(axes, fixed):
+  def plane(axes, fixed, fields, suffix):
+    """Nearest-cell samples of `fields` on the plane, keyed `<name>_<suffix>`."""
     pos = slice_cells(mb_geom_ref, (nx1, nx2, nx3), sel, axes, fixed,
                       center[axes[0]] + u, center[axes[1]] + u)
     ok  = pos >= 0
     pos = np.maximum(pos, 0)
-    return (np.where(ok, Q_loc[pos], np.nan).astype(np.float32),
-            np.where(ok, rho[pos] * RHO_UNIT, np.nan).astype(np.float32))
-  Q_xy, rho_xy = plane((0, 1, 2), center[2])
-  Q_xz, rho_xz = plane((0, 2, 1), center[1])
-  np.savez(os.path.join(outdir, "slices", f"disk_slices_{snapshot}.npz"),
-           u=u, Q_xy=Q_xy, Q_xz=Q_xz, rho_xy=rho_xy, rho_xz=rho_xz)
-  del Q_loc
+    ok &= outside_bh[pos]
+    return {f"{k}_{suffix}": np.where(ok, v[pos], np.nan).astype(np.float32)
+            for k, v in fields.items()}
 
-  wq       = dM[mri]
-  Q_z_mean = wmean(Q_z[mri], wq)
-  Q_z_pct  = wpercentile(Q_z[mri], wq, [5, 25, 50, 75, 95]).tolist()
-  Q_z_f10  = float(wq[Q_z[mri] > 10.0].sum() / wq.sum()) if wq.sum() > 0.0 else np.nan
+  rho_cells = rho * RHO_UNIT
+  base      = {"Q": Q_loc, "rho": rho_cells}
+  parker_fd = {"P": parker, "N": newcomb, "betainv": betainv, "s": entropy, "W": W,
+               "Bx": Bx, "Bz": Bz, "vx": vcx, "vz": vcz}
+  slices = plane((0, 1, 2), center[2], base, "xy")
+  slices.update(plane((0, 2, 1), center[1], {**base, **parker_fd}, "xz"))
+  np.savez(os.path.join(outdir, "slices", f"disk_slices_{snapshot}.npz"), u=u, **slices)
+  del Q_loc, rho_cells, base, parker_fd, slices, parker, parker_ok, newcomb, \
+      newcomb_ok, betainv, Bx, Bz, vcx, vcz # Free up memory.
+
+  wq     = dM[mri]
+  Q_scal = {}
+  for name, qv in (("Q_z", Q_z), ("Q_phi", Q_phi)):
+    Q_scal[f"{name}_mean"] = wmean(qv[mri], wq)
+    Q_scal[f"{name}_pct"]  = wpercentile(qv[mri], wq, [5, 25, 50, 75, 95]).tolist()
+    Q_scal[f"{name}_f10"]  = (float(wq[qv[mri] > 10.0].sum() / wq.sum())
+                              if wq.sum() > 0.0 else np.nan)
 
   del b_phi # Free up memory.
 
@@ -456,9 +608,7 @@ def _process_snapshot_disk(args):
         "bsq_mean"        : wmean(bsq[mask], w),
         "beta_plasma_mean": wmean(2.0 * press[mask] / np.maximum(bsq[mask], 1e-30), w),
         "sigma_mean"      : wmean(bsq[mask] / rho[mask], w),
-        "Q_z_mean"        : Q_z_mean,
-        "Q_z_pct"         : Q_z_pct,
-        "Q_z_f10"         : Q_z_f10,
+        **Q_scal,
         "B_rms_G"         : float(np.sqrt(wmean(Bsq[mask], w))) * B_UNIT,
         "B_max_G"         : float(np.sqrt(Bsq[mask].max())) * B_UNIT,
         "E_mag"           : float((0.5 * bsq[mask] * W[mask] * sqrtg[mask] * dV[mask]).sum()),
@@ -468,6 +618,28 @@ def _process_snapshot_disk(args):
         "R_pct"           : wpercentile(Rcyl[mask], w, [5, 25, 50, 75, 95]).tolist(),
       })
       out["v_mean"] = float(np.sqrt(np.maximum(1.0 - 1.0 / wmean(W[mask], w)**2, 0.0)))
+
+      # Eulerian field geometry with the weight 0.5 sqrt(g) dV, i.e. volume-averaged
+      # energy ratios and alpha_mag = -2 <B_R B_phi> / <B^2> (HGK 2011, Secs. 3.3-3.4).
+      # sign(Omega) makes alpha_mag > 0 for MRI stresses in either rotation sense.
+      wB     = 0.5 * sqrtg[mask] * dV[mask]
+      E_R    = float((wB * B_RR[mask]).sum())
+      E_phi  = float((wB * B_PP[mask]).sum())
+      E_z    = float((wB * B_ZZ[mask]).sum())
+      stress = float((wB * B_RP[mask]).sum())
+      sgn    = np.sign(out["Omega_mean"]) if out["Omega_mean"] != 0.0 else 1.0
+      ratio  = lambda a, b: a / b if b > 0.0 else float("nan")
+      out.update({
+        "E_R"        : E_R,
+        "E_tor"      : E_phi,
+        "E_z"        : E_z,
+        "E_pol"      : E_R + E_z,
+        "E_B"        : E_R + E_phi + E_z,
+        "BR2_Bphi2"  : ratio(E_R, E_phi),
+        "Bpol2_Btor2": ratio(E_R + E_z, E_phi),
+        "Bz2_BR2"    : ratio(E_z, E_R),
+        "alpha_mag"  : -2.0 * sgn * ratio(stress, E_R + E_phi + E_z),
+      })
     return out
 
   res_disk        = integrate(disk)
@@ -553,16 +725,32 @@ def _process_snapshot_disk(args):
   q_idx   = np.digitize(Rcyl[mri], edges) - 1
   q_valid = (q_idx >= 0) & (q_idx < nbins)
   q_idx   = q_idx[q_valid]
-  q_vals  = Q_z[mri][q_valid]
   q_w     = dM[mri][q_valid]
   q_mass  = np.bincount(q_idx, weights=q_w, minlength=nbins)
-  with np.errstate(invalid="ignore", divide="ignore"):
-    Q_prof_mean = np.where(q_mass > 0,
-                           np.bincount(q_idx, weights=q_w * q_vals, minlength=nbins) / q_mass,
-                           np.nan)
-  Q_prof_p50 = binned_wquantile(q_idx, q_vals, q_w, nbins, 0.5)
-  Q_prof_p90 = binned_wquantile(q_idx, q_vals, q_w, nbins, 0.9)
+  Q_prof  = {}
+  for name, qv in (("Q_z", Q_z), ("Q_phi", Q_phi)):
+    q_vals = qv[mri][q_valid]
+    Q_prof[f"{name}_mean"] = binned_wmean(q_idx, q_vals, q_w, nbins)
+    Q_prof[f"{name}_p50"]  = binned_wquantile(q_idx, q_vals, q_w, nbins, 0.5)
+    Q_prof[f"{name}_p90"]  = binned_wquantile(q_idx, q_vals, q_w, nbins, 0.9)
   del q_idx, q_valid, q_vals, q_w, mri
+
+  # Field geometry per R bin (same weights as in integrate()).
+  wB_d = (0.5 * sqrtg * dV)[disk][valid]
+  def bsum(q):
+    return np.bincount(idx, weights=wB_d * q[disk][valid], minlength=nbins)
+  E_R_p, E_phi_p, E_z_p = bsum(B_RR), bsum(B_PP), bsum(B_ZZ)
+  S_p                   = bsum(B_RP)
+  E_b_p                 = E_R_p + E_phi_p + E_z_p
+  sgn_p = np.where(np.nan_to_num(wprof(omega)) < 0.0, -1.0, 1.0)
+  with np.errstate(invalid="ignore", divide="ignore"):
+    B_prof = {
+      "BR2_Bphi2"  : np.where(E_phi_p > 0, E_R_p / E_phi_p, np.nan),
+      "Bpol2_Btor2": np.where(E_phi_p > 0, (E_R_p + E_z_p) / E_phi_p, np.nan),
+      "Bz2_BR2"    : np.where(E_R_p > 0, E_z_p / E_R_p, np.nan),
+      "alpha_mag"  : np.where(E_b_p > 0, -2.0 * sgn_p * S_p / E_b_p, np.nan),
+    }
+  del wB_d, E_R_p, E_phi_p, E_z_p, E_b_p, S_p, sgn_p # Free up memory.
 
   prof.update({
     "n_cells": counts,
@@ -586,10 +774,9 @@ def _process_snapshot_disk(args):
     "beta_plasma"     : wprof(2.0 * press / np.maximum(bsq, 1e-30)),
     "B_rms_G"         : np.sqrt(np.maximum(wprof(Bsq), 0.0)) * B_UNIT,
     "v_R_code"        : wprof(v_rad),
-    "Q_z_mean"        : Q_prof_mean,
-    "Q_z_p50"         : Q_prof_p50,
-    "Q_z_p90"         : Q_prof_p90,
+    **Q_prof,
     "M_mri_MSUN_CGS"  : q_mass,
+    **B_prof,
   })
 
   # ======================================================================
@@ -613,6 +800,8 @@ def _process_snapshot_disk(args):
     "bound_criterion": bound_criterion, "disk": res_disk,
     "m_total_above_floor": m_total_kept, "m_inside_r_exclude": m_inside_bh,
     "m_inside_remnant": m_remnant, "r_disk_max": r_disk_max,
+    "parker": {"dir": parker_dir, "eps": parker_eps, "rmax": parker_rmax,
+               "smooth": parker_smooth},
     "rho_cut_sensitivity": [{"rho_cut_g_cm3": c, "M_disk_MSUN_CGS": mv, "cells": n,
                               "M_ejecta_MSUN_CGS": me} for c, mv, n, me in sens],
     "enclosed_disk_mass": [{"R": r, "M_MSUN_CGS": mv} for r, mv in encl],
@@ -778,7 +967,8 @@ class EOSTable:
   """Load a PyCompOSE HDF5 table and build interpolators.
 
   Sets the following fields:
-    interpolator_Q1, interpolator_Q2, interpolator_Q7 - interpolators for Q1, Q2, Q7
+    interpolator_Q1, interpolator_Q2, interpolator_Q7, interpolator_cs2 - interpolators
+      for Q1, Q2, Q7 and the sound speed squared cs2
     mn_mev - neutron mass [MeV]
     nb_min, nb_max, ye_min, ye_max, t_min, t_max - table bounds
   """
@@ -792,6 +982,7 @@ class EOSTable:
       Q1 = f['Q1'][:]         # p / nb [MeV]
       Q2 = f['Q2'][:]         # s [kB / baryon]
       Q7 = f['Q7'][:]         # e / (nb * m_n) - 1
+      cs2 = f['cs2'][:]       # sound speed squared [c^2]
 
     # AthenaK convention.
     self.log_nb = np.log(nb)
@@ -824,12 +1015,24 @@ class EOSTable:
       method='linear', bounds_error=False, fill_value=None,
     )
 
+    self.interpolator_cs2 = RegularGridInterpolator(
+      (self.log_nb, self.ye, self.log_t), cs2,
+      method='linear', bounds_error=False, fill_value=None,
+    )
+
 # ======================================================================
 # WEIGHTED STATISTICS HELPER
 # ======================================================================
 def wmean(x, w):
   tot = w.sum()
   return float((x * w).sum() / tot) if tot > 0 else float("nan")
+
+
+def binned_wmean(idx, x, w, nbins):
+  """Weighted mean of x within each bin (NaN for empty bins)."""
+  wsum = np.bincount(idx, weights=w, minlength=nbins)
+  with np.errstate(invalid="ignore", divide="ignore"):
+    return np.where(wsum > 0, np.bincount(idx, weights=w * x, minlength=nbins) / wsum, np.nan)
 
 
 def binned_wquantile(idx, x, w, nbins, q):
@@ -902,6 +1105,14 @@ def analyze(args):
                            bound tidal tail might count as part of the disk).
   args.nbins (int): number of cylindrical radius bins for the radial profiles. Default: 64.
   args.rmax (float): outer edge of the radial profiles (in code units).
+  args.parker_dir (str): direction n of the Parker/Newcomb derivatives, either z (away from
+                         the midplane) or r (radially from the BH). Default: z.
+  args.parker_eps (float): mask the criteria where the gradients along n times dz fall below
+                           this (e.g. the midplane). Default: 1e-3.
+  args.parker_rmax (float): outer spherical radius of the Parker profiles (in code units).
+                            Default: rmax.
+  args.parker_smooth (int): box-smoothing width in cells before differencing (1 = none).
+                            Default: 3.
   args.n_workers (int): number of worker processes per snapshot loop.
   """
   # Find the files with the signature.
@@ -946,7 +1157,10 @@ def analyze(args):
                  (args.rho_cut, args.rho_keep, args.rho_remnant,
                   args.bound_criterion, args.r_exclude, args.center,
                   args.r_disk_max, args.nbins, args.rmax,
-                  args.slice_extent, args.slice_npts, args.outdir)
+                  args.slice_extent, args.slice_npts,
+                  args.parker_dir, args.parker_eps,
+                  args.parker_rmax if args.parker_rmax is not None else args.rmax,
+                  args.parker_smooth, args.outdir)
                  for n in numbers]
   print(f"$ Processing {len(worker_args)} snapshots with n_worker={n_workers}...")
 
@@ -956,6 +1170,7 @@ def analyze(args):
   os.makedirs(os.path.join(args.outdir, "histograms"), exist_ok=True)
   os.makedirs(os.path.join(args.outdir, "jrho"), exist_ok=True)
   os.makedirs(os.path.join(args.outdir, "slices"), exist_ok=True)
+  os.makedirs(os.path.join(args.outdir, "parker"), exist_ok=True)
 
   # Parallel snapshot loop.
   if n_workers > 1:
@@ -1024,6 +1239,17 @@ def main(argv=None):
                   help="half-width of the xy/xz Q slices around the center [code units]")
   ap.add_argument("--slice-npts", type=int, default=512,
                   help="number of points per axis of the xy/xz Q slices")
+  ap.add_argument("--parker-dir", choices=("z", "r"), default="z",
+                  help="direction of the Parker/Newcomb derivatives: z (away from the "
+                       "midplane) or r (radially from the BH, as in Jiang et al. 2025)")
+  ap.add_argument("--parker-eps", type=float, default=1.0e-3,
+                  help="mask the Parker/Newcomb criteria where the gradients along n "
+                       "times dz fall below this")
+  ap.add_argument("--parker-rmax", type=float, default=None,
+                  help="outer spherical radius of the Parker profiles [code units] "
+                       "[default: --rmax]")
+  ap.add_argument("--parker-smooth", type=int, default=3,
+                  help="box-smoothing width in cells before differencing (1 = none)")
 
   ap.add_argument("--n-workers", type=int, default=None,
                   help="Worker processes for the snapshot loop. "

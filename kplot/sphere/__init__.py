@@ -9,7 +9,7 @@ A automated pipeline lives in ``scripts/sphere/run_analysis.sh``.
 
 import importlib
 
-__all__ = ["accretion", "butterfly", "comparison", "ejecta", "mergertime", "neutrinos",
+__all__ = ["accretion", "butterfly", "comparison", "ejecta", "mad", "mergertime", "neutrinos",
            "plots", "poynting"]
 
 
