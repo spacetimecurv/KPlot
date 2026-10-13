@@ -37,8 +37,8 @@ $$
 
 So $\mathcal{P}$ is Parker's result with the *perturbation* index $\gamma$ replaced by the
 *background* slope $d\log p/d\log\rho$. The two coincide only for an isothermal, uniform-$\beta$
-background. In a post-merger disk the temperature rises with height, which pushes the background
-slope below 1. $\mathcal{P}$ is then negative **even for $b\to 0$**. At $t\approx 54$ ms in
+background. In the post-merger disk, pressure falls more slowly with height than density, which
+pushes the background slope below 1 (Sec. 4). $\mathcal{P}$ is then negative **even for $b\to 0$**. At $t\approx 54$ ms in
 `MHD_M1_120`, with $\beta^{-1}\sim10^{-4}$, about 55% of the volume has $\mathcal{P}<0$, and that comes
 from thermal stratification, not magnetism.
 
@@ -107,7 +107,7 @@ Implementation details:
 
 ### Outputs
 - `slices/disk_slices_<snap>.npz`: nearest-cell xz plane through the BH. It holds `P_xz`, `N_xz`,
-  `betainv_xz`, `s_xz`, `W_xz`, `rho_xz`, the Eulerian field `Bx_xz`, `Bz_xz` and the coordinate
+  `betainv_xz`, `T_xz`, `Gbg_xz`, `rho_xz`, the Eulerian field `Bx_xz`, `Bz_xz` and the coordinate
   velocity `vx_xz`, `vz_xz`. These are plotted as `frames/parker_xz/` (Fig. 8 analogue).
 - `parker/disk_parker_<snap>.csv`: one region (all polar angles, no funnel/disk split), in
   spherical-$r$ bins from `max(r_exclude, 1)` to `--parker-rmax`. Columns are proper-volume-weighted
@@ -121,7 +121,37 @@ Implementation details:
   because mass weighting would be dominated by the midplane.
 - The settings used are stored under `"parker"` in `scalars/disk_scalars_<snap>.json`.
 
-## 4. Caveats
+## 4. Background stratification $\Gamma_{\rm bg}$
+
+$$
+\Gamma_{\rm bg} := \frac{\partial_n\ln p}{\partial_n\ln\rho},
+\qquad
+\mathcal{P} = (\Gamma_{\rm bg}-1) - \frac{\beta^{-1}(1+2\beta^{-1})}{2+3\beta^{-1}} .
+$$
+
+$\Gamma_{\rm bg}$ is the local polytropic exponent of the *equilibrium* profile: if
+$p\propto\rho^{\Gamma_{\rm bg}}$ along $\hat n$. It describes how the background is layered. 
+Compare it with $\Gamma_1=(\partial\ln p/\partial\ln\rho)_s$, the exponent of an
+adiabatically displaced parcel:
+- $\Gamma_{\rm bg}=1$: isothermal, for an ideal gas. This is Parker's assumption.
+- $\Gamma_{\rm bg}<1$: $\mathcal{P}<0$ for any field, so the magnetic term is irrelevant.
+- $\Gamma_{\rm bg}<\Gamma_1$: entropy increases along $\hat n$, so the gas is convectively stable
+  (Schwarzschild). $\Gamma_{\rm bg}=\Gamma_1$ is isentropic.
+
+For an ideal gas $\Gamma_{\rm bg}-1 = d\ln T/d\ln\rho$, so $\Gamma_{\rm bg}<1$ would mean $T$ rising with
+height.
+
+Outputs:
+- `T_xz` and `Gbg_xz` in the slices. They are plotted in place of $s$ and $W$ in
+  `frames/parker_xz/`. $\Gamma_{\rm bg}$ carries the $\mathcal{P}$ mask.
+- `parker/disk_vprof_<snap>.npz`: proper-volume-weighted medians of $T$, $\rho$, $\Gamma_{\rm bg}$ and
+  $\Gamma_1$.
+  - They are taken in annuli $|R-R_0|<0.1R_0$ around the BH (`--vprof-R`, default `20,40,80`).
+  - They are binned in $|z|/R_0\in[0,1.5]$ with `--nbins` bins.
+  - They are plotted as `frames/parker_vprof/`, with $\Gamma_{\rm bg}$ solid, $\Gamma_1$ dashed and the
+    isothermal line dotted.
+
+## 5. Caveats
 - **Assumptions.** Both criteria are local (WKB), Newtonian and plane-parallel, and assume a
   *horizontal* field. In the disk that is $b_\phi$; in the field-dominated funnel the assumption is
   not strictly valid. Rotation and shear are ignored; they can stabilise or destabilise
@@ -131,7 +161,6 @@ Implementation details:
   out of hydrostatic balance (turbulence, outflows), *not* Parker-unstable. Read $\mathcal{N}_u<0$
   as magnetic buoyancy only where $\beta^{-1}$ is non-negligible, i.e. compare with the
   $\beta^{-1}$ panel.
-- **Time resolution.** 3D dumps every 250 M (about 1.2 ms) resolve the breakout time only coarsely.
 - **Resolution.** An under-resolved MRI (low quality factor $Q$) keeps $\beta^{-1}$ small, so no
   magnetically driven instability is expected in that case. The setup still runs and produces the
   diagnostics.

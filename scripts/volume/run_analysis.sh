@@ -110,6 +110,7 @@ PARKER_DIR="$(_cfg_get parker_dir)"
 PARKER_EPS="$(_cfg_get parker_eps)"
 PARKER_RMAX="$(_cfg_get parker_rmax)"
 PARKER_SMOOTH="$(_cfg_get parker_smooth)"
+VPROF_R="$(_cfg_get vprof_R)"
 WIN_RAD="$(_cfg_get window_radius)"
 TAR_DX="$(_cfg_get target_dx)"
 N_WORKERS="$(_cfg_get n_workers)"
@@ -174,6 +175,7 @@ DISK_ARGS=()
 [[ -n "${PARKER_EPS}"      ]] && DISK_ARGS+=(--parker-eps      "${PARKER_EPS}")
 [[ -n "${PARKER_RMAX}"     ]] && DISK_ARGS+=(--parker-rmax     "${PARKER_RMAX}")
 [[ -n "${PARKER_SMOOTH}"   ]] && DISK_ARGS+=(--parker-smooth   "${PARKER_SMOOTH}")
+[[ -n "${VPROF_R}"         ]] && DISK_ARGS+=(--vprof-R         "${VPROF_R}")
 [[ -n "${N_WORKERS}"       ]] && DISK_ARGS+=(--n-workers       "${N_WORKERS}")
 if [[ -n "${CENTER}" ]]; then
   read -ra CENTER_ARR <<< "${CENTER}"

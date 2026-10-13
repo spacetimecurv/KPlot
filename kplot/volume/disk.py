@@ -47,12 +47,16 @@ Outputs (written to --outdir):
                                         angular momentum etc.
   histograms/disk_histograms_<snapshot>.csv: histograms of M_disk vs. Ye, etc.
   profiles/disk_profiles_<profiles>.csv: radial profiles of important quantities, i.e.
-                                         temperature etc.
-  slices/disk_slices_<snapshot>.npz: xy/xz planes through the BH (Q, rho; on xz also
-                                     the Parker fields P, N_u, betainv, s, W, Bx, Bz, vx, vz)
+                                         temperature etc., including Q_*, fB_*_M,
+                                         betainv_M/p50, dz_p50_m, H_over_dz, P_orb_ms
+  slices/disk_slices_<snapshot>.npz: xy/xz planes through the BH (Q = Q_z, Qtot,
+                                     betainv, rho; on xz also
+                                     the Parker fields P, N_u, T, Gbg, Bx, Bz, vx, vz)
   parker/disk_parker_<snapshot>.csv: spherical-radius profiles of the Parker (P) and
                                      undular Newcomb (N_u) criteria over all polar angles
                                      (see documentation/parker/parker.md)
+  parker/disk_vprof_<snapshot>.npz: vertical profiles of T, rho, Gamma_bg and Gamma_1 in
+                                    annuli at fixed cylindrical radius
 
 The written scalars are:
   j_mean - mass-weighted mean specific angular momentum (J/M)
@@ -72,6 +76,13 @@ The written scalars are:
   sigma_mean - mass-weighted mean magnetization (b^2/rho)
   Q_z_mean, Q_z_pct, Q_z_f10 - precomputed quality-factor (mean, percentiles, fraction of mass above 10)
   Q_phi_mean, Q_phi_pct, Q_phi_f10 - same for the toroidal quality factor Q_phi
+  Q_tot_mean, Q_tot_pct, Q_tot_f10 - same for Q_tot, built from the full comoving |b|
+                                     (Siegel & Metzger 2017 convention)
+  fB_R_M, fB_phi_M, fB_z_M - mass-weighted field composition <B_i B^i>_M / <B^2>_M
+  betainv_mean, betainv_pct, betainv_ratio, betainv_max - inverse plasma beta b^2/(2p):
+                             mass-weighted mean and percentiles, <b^2/2>_M / <p>_M, max
+  dz_pct_m, dz_min_m, f_M_finest - mass-weighted dz percentiles in the disk (m), the finest
+                                   dz on the mesh (m), disk mass fraction on that level
   E_R, E_tor, E_z, E_pol, E_B - Eulerian magnetic energy 0.5 B^2 sqrt(g) dV in B_R, B_phi, B_z,
                                B_R + B_z and in total (E_B = E_R + E_tor + E_z)
   BR2_Bphi2, Bpol2_Btor2, Bz2_BR2 - volume-averaged field energy ratios (HGK 2011: BR2_Bphi2 ~ 0.2
@@ -79,6 +90,11 @@ The written scalars are:
   alpha_mag - Maxwell stress over magnetic pressure, -2 <B_R B_phi> / <B^2> (HGK 2011: ~ 0.3-0.4)
   B_rms_G - RMS magnetic field strength (in Gauss)
   B_max_G - max magnetic field strength (in Gauss)
+  B_max_tor_G, B_max_pol_G - max toroidal (B_phi) and poloidal (B_R, B_z) field strength (in Gauss)
+  B_avg_disk_G, B_pol_avg_disk_G, B_tor_avg_disk_G - volume-averaged |B|, |B_pol|, |B_tor| (in Gauss)
+                             over the disk with rho > 1e8 g/cm^3 (Izquierdo et al. 2025)
+  B_avg_bulk_G, B_pol_avg_bulk_G, B_tor_avg_bulk_G - same over the bulk (densest 75% of that mass);
+                             rho_bulk_g_cm3 is the bulk's density threshold
   E_mag - total magnetic energy (integral of 0.5*b^2*W*sqrt(g)*dV)
   Ye_pct, s_pct, T_pct, R_pct - weighted 5/25/50/75/95 percentiles of Ye, entropy, temperature, and cylindrical radius
 """
@@ -128,7 +144,7 @@ def _process_snapshot_disk(args):
   (mhd_file, adm_file, alpha_file, betax_file, betay_file, betaz_file,
   rho_cut, rho_keep, rho_remnant, bound_criterion, r_exclude, center,
   r_disk_max, nbins, rmax, slice_extent, slice_npts,
-  parker_dir, parker_eps, parker_rmax, parker_smooth, outdir) = args
+  parker_dir, parker_eps, parker_rmax, parker_smooth, vprof_R, outdir) = args
 
   snapshot = mhd_file.split("/")[-1].split(".")[-2].strip()
 
@@ -471,7 +487,8 @@ def _process_snapshot_disk(args):
   buoy_ok = dense & outside_bh
 
   with np.errstate(divide="ignore", invalid="ignore"):
-    parker = (dlnp / dlnrho - 1.0 -
+    gbg    = (dlnp / dlnrho).astype(np.float32)
+    parker = (gbg - 1.0 -
               betainv * (1.0 + 2.0 * betainv) / (2.0 + 3.0 * betainv)).astype(np.float32)
     # Drop cells where rho is flat along n (e.g. the midplane for n = z).
     parker_ok = buoy_ok & np.isfinite(parker) & (np.abs(dlnrho) * dz > parker_eps)
@@ -482,6 +499,7 @@ def _process_snapshot_disk(args):
     newcomb  = ((A_strat - G_buoy) / A_plus_G).astype(np.float32)
     newcomb_ok = buoy_ok & np.isfinite(newcomb) & (A_plus_G * dz > parker_eps)
   parker[~parker_ok]   = np.nan
+  gbg[~parker_ok]      = np.nan
   newcomb[~newcomb_ok] = np.nan
   del dlnp, dlnrho, dptot, A_strat, G_buoy, A_plus_G # Free up memory.
 
@@ -512,7 +530,23 @@ def _process_snapshot_disk(args):
       parker_prof[f"{name}_f_unstable"] = np.where(V_m > 0, V_neg / V_m, np.nan)
     parker_prof[f"{name}_mean"] = binned_wmean(i_m, crit[m], dVp[m], nbins)
     parker_prof[f"{name}_p50"]  = binned_wquantile(i_m, crit[m], dVp[m], nbins, 0.5)
-  del p_idx, p_in, dVp, i_in, m, i_m, buoy_ok, gamma1 # Free up memory.
+
+  # Vertical profiles in annuli R (1 +- VPROF_DR), binned in |z|/R.
+  z_edges = np.linspace(0.0, VPROF_ZMAX, nbins + 1)
+  vprof   = {k: np.full((len(vprof_R), nbins), np.nan)
+             for k in ("T_MeV", "rho_g_cm3", "Gbg", "Gamma1")}
+  for i, R0 in enumerate(vprof_R):
+    a     = buoy_ok & (np.abs(Rcyl - R0) < VPROF_DR * R0)
+    z_idx = np.digitize(np.abs(zg[a]) / R0, z_edges) - 1
+    ok    = (z_idx >= 0) & (z_idx < nbins)
+    z_idx, w_a = z_idx[ok], dVp[a][ok]
+    for k, q in (("T_MeV", temp), ("rho_g_cm3", rho * RHO_UNIT), ("Gamma1", gamma1)):
+      vprof[k][i] = binned_wquantile(z_idx, q[a][ok], w_a, nbins, 0.5)
+    g = np.isfinite(gbg[a][ok])
+    vprof["Gbg"][i] = binned_wquantile(z_idx[g], gbg[a][ok][g], w_a[g], nbins, 0.5)
+  np.savez(os.path.join(outdir, "parker", f"disk_vprof_{snapshot}.npz"),
+           R=np.asarray(vprof_R, dtype=float), zR=0.5 * (z_edges[:-1] + z_edges[1:]), **vprof)
+  del p_idx, p_in, dVp, i_in, m, i_m, buoy_ok, gamma1, vprof # Free up memory.
 
   keys = list(parker_prof.keys())
   with open(os.path.join(outdir, "parker", f"disk_parker_{snapshot}.csv"), "w") as fp:
@@ -526,14 +560,18 @@ def _process_snapshot_disk(args):
   # ======================================================================
   # Quality factors Q_i = lambda_MRI,i / dx_i with lambda_MRI,i = 2 pi |v_A,i| / Omega
   # (Hawley, Guan & Krolik 2011, Secs. 3.1-3.2). On the Cartesian grid the cell width
-  # along phi is taken as dz (cubic cells).
+  # along phi is taken as dz (cubic cells). Q_tot uses the full comoving field
+  # |b| = sqrt(b^mu b_mu) instead of one component, as in Siegel & Metzger (2017,
+  # arXiv:1705.05473), so Q_tot / Q_z = |b| / |b_z|.
   with np.errstate(divide="ignore", invalid="ignore"):
     lambda_z   = np.abs(2.0 * np.pi * bz_d / (omega * np.sqrt(rho * h + bsq)))
     lambda_phi = np.abs(2.0 * np.pi * b_phih / (omega * np.sqrt(rho * h + bsq)))
+    lambda_tot = np.abs(2.0 * np.pi * np.sqrt(bsq) / (omega * np.sqrt(rho * h + bsq)))
   Q_z   = (lambda_z / dz).astype(np.float32)
   Q_phi = (lambda_phi / dz).astype(np.float32)
-  del lambda_z, lambda_phi # Free up memory.
-  Q_ok = disk & np.isfinite(Q_z) & np.isfinite(Q_phi)
+  Q_tot = (lambda_tot / dz).astype(np.float32)
+  del lambda_z, lambda_phi, lambda_tot # Free up memory.
+  Q_ok = disk & np.isfinite(Q_z) & np.isfinite(Q_phi) & np.isfinite(Q_tot)
 
   om_full = np.full(ncells_total, np.nan, dtype=np.float32)
   om_full[sel] = omega
@@ -545,7 +583,8 @@ def _process_snapshot_disk(args):
     dOmega_dR = ((xg * dOdx + yg * dOdy) / np.maximum(Rcyl, 1e-30)).astype(np.float32)
     mri = Q_ok & (dOmega_dR < 0.0)
   del dOdx, dOdy, dOmega_dR
-  Q_loc = np.where(mri, Q_z, np.nan).astype(np.float32)
+  Q_loc    = np.where(mri, Q_z, np.nan).astype(np.float32)
+  Qtot_loc = np.where(mri, Q_tot, np.nan).astype(np.float32)
 
   u = np.linspace(-slice_extent, slice_extent, slice_npts)
   def plane(axes, fixed, fields, suffix):
@@ -559,24 +598,25 @@ def _process_snapshot_disk(args):
             for k, v in fields.items()}
 
   rho_cells = rho * RHO_UNIT
-  base      = {"Q": Q_loc, "rho": rho_cells}
-  parker_fd = {"P": parker, "N": newcomb, "betainv": betainv, "s": entropy, "W": W,
+  base      = {"Q": Q_loc, "Qtot": Qtot_loc, "betainv": betainv, "rho": rho_cells}
+  parker_fd = {"P": parker, "N": newcomb, "T": temp, "Gbg": gbg,
                "Bx": Bx, "Bz": Bz, "vx": vcx, "vz": vcz}
   slices = plane((0, 1, 2), center[2], base, "xy")
   slices.update(plane((0, 2, 1), center[1], {**base, **parker_fd}, "xz"))
   np.savez(os.path.join(outdir, "slices", f"disk_slices_{snapshot}.npz"), u=u, **slices)
-  del Q_loc, rho_cells, base, parker_fd, slices, parker, parker_ok, newcomb, \
-      newcomb_ok, betainv, Bx, Bz, vcx, vcz # Free up memory.
+  del Q_loc, Qtot_loc, rho_cells, base, parker_fd, slices, parker, parker_ok, gbg, newcomb, \
+      newcomb_ok, Bx, Bz, vcx, vcz # Free up memory.
 
   wq     = dM[mri]
   Q_scal = {}
-  for name, qv in (("Q_z", Q_z), ("Q_phi", Q_phi)):
+  for name, qv in (("Q_z", Q_z), ("Q_phi", Q_phi), ("Q_tot", Q_tot)):
     Q_scal[f"{name}_mean"] = wmean(qv[mri], wq)
     Q_scal[f"{name}_pct"]  = wpercentile(qv[mri], wq, [5, 25, 50, 75, 95]).tolist()
     Q_scal[f"{name}_f10"]  = (float(wq[qv[mri] > 10.0].sum() / wq.sum())
                               if wq.sum() > 0.0 else np.nan)
 
   del b_phi # Free up memory.
+  dz_min = float(np.min(dzv)) # Finest grid spacing on the whole mesh.
 
   # ======================================================================
   # INTEGRALS
@@ -611,6 +651,8 @@ def _process_snapshot_disk(args):
         **Q_scal,
         "B_rms_G"         : float(np.sqrt(wmean(Bsq[mask], w))) * B_UNIT,
         "B_max_G"         : float(np.sqrt(Bsq[mask].max())) * B_UNIT,
+        "B_max_tor_G"     : float(np.sqrt(max(B_PP[mask].max(), 0.0))) * B_UNIT,
+        "B_max_pol_G"     : float(np.sqrt(max((B_RR[mask] + B_ZZ[mask]).max(), 0.0))) * B_UNIT,
         "E_mag"           : float((0.5 * bsq[mask] * W[mask] * sqrtg[mask] * dV[mask]).sum()),
         "Ye_pct"          : wpercentile(ye[mask], w, [5, 25, 50, 75, 95]).tolist(),
         "s_pct"           : wpercentile(entropy[mask], w, [5, 25, 50, 75, 95]).tolist(),
@@ -640,9 +682,55 @@ def _process_snapshot_disk(args):
         "Bz2_BR2"    : ratio(E_z, E_R),
         "alpha_mag"  : -2.0 * sgn * ratio(stress, E_R + E_phi + E_z),
       })
+
+      # Mass-weighted field composition <B_i B^i>_M / <B^2>_M (sums to 1): the share
+      # of the field seen by the bulk of the disk, which sets Q_z / Q_tot.
+      wBm = w * (B_RR[mask] + B_PP[mask] + B_ZZ[mask])
+      Bm  = float(wBm.sum())
+      out.update({f"fB_{c}_M": ratio(float((w * Bc[mask]).sum()), Bm)
+                  for c, Bc in (("R", B_RR), ("phi", B_PP), ("z", B_ZZ))})
+
+      # Inverse plasma beta p_B / p = b^2 / (2p) (Siegel & Metzger 2017 convention):
+      # mass-weighted mean, percentiles and ratio of mass-weighted averages.
+      out.update({
+        "betainv_mean" : wmean(betainv[mask], w),
+        "betainv_pct"  : wpercentile(betainv[mask], w, [5, 25, 50, 75, 95]).tolist(),
+        "betainv_ratio": ratio(float((w * 0.5 * bsq[mask]).sum()),
+                               float((w * press[mask]).sum())),
+        "betainv_max"  : float(betainv[mask].max()),
+      })
+
+      # Grid spacing in the disk: mass-weighted dz percentiles (m) and the mass
+      # fraction on the finest level of the mesh.
+      dz_m = dz[mask] * L_UNIT * 1.0e-2
+      out.update({
+        "dz_pct_m"    : wpercentile(dz_m, w, [5, 25, 50, 75, 95]).tolist(),
+        "dz_min_m"    : dz_min * L_UNIT * 1.0e-2,
+        "f_M_finest"  : float(w[dz[mask] <= 1.01 * dz_min].sum()) / M,
+      })
     return out
 
   res_disk        = integrate(disk)
+
+  # Volume-averaged field strengths <|B|>, <|B_pol|>, <|B_tor|> as in Izquierdo et al.
+  # (2025, arXiv:2501.13154, Sec. II D, Fig. 5): over the disk with rho > BAVG_RHO_DISK
+  # and over its bulk, the densest cells holding BAVG_BULK_FRAC of that mass.
+  avg_disk = disk & (rho > BAVG_RHO_DISK / RHO_UNIT)
+  order    = np.argsort(rho[avg_disk])[::-1] # densest first
+  rho_a    = rho[avg_disk][order]
+  cum_a    = np.cumsum(dM[avg_disk][order])
+  rho_bulk = (rho_a[np.searchsorted(cum_a, BAVG_BULK_FRAC * cum_a[-1])]
+              if cum_a.size else np.inf)
+  avg_bulk = avg_disk & (rho >= rho_bulk)
+  B_mag    = {"B": np.sqrt(np.maximum(Bsq, 0.0)),
+              "B_pol": np.sqrt(np.maximum(B_RR + B_ZZ, 0.0)),
+              "B_tor": np.sqrt(np.maximum(B_PP, 0.0))}
+  for region, mk in (("disk", avg_disk), ("bulk", avg_bulk)):
+    wv = sqrtg[mk] * dV[mk]
+    for name, Bv in B_mag.items():
+      res_disk[f"{name}_avg_{region}_G"] = wmean(Bv[mk], wv) * B_UNIT
+  res_disk["rho_bulk_g_cm3"] = float(rho_bulk) * RHO_UNIT
+  del avg_disk, avg_bulk, order, rho_a, cum_a, B_mag # Free up memory.
 
   Rcyl_km  = Rcyl * L_UNIT / KM
   disk_ext = disk & (Rcyl_km >= JRHO_R_INT_KM)
@@ -728,7 +816,7 @@ def _process_snapshot_disk(args):
   q_w     = dM[mri][q_valid]
   q_mass  = np.bincount(q_idx, weights=q_w, minlength=nbins)
   Q_prof  = {}
-  for name, qv in (("Q_z", Q_z), ("Q_phi", Q_phi)):
+  for name, qv in (("Q_z", Q_z), ("Q_phi", Q_phi), ("Q_tot", Q_tot)):
     q_vals = qv[mri][q_valid]
     Q_prof[f"{name}_mean"] = binned_wmean(q_idx, q_vals, q_w, nbins)
     Q_prof[f"{name}_p50"]  = binned_wquantile(q_idx, q_vals, q_w, nbins, 0.5)
@@ -751,6 +839,19 @@ def _process_snapshot_disk(args):
       "alpha_mag"  : np.where(E_b_p > 0, -2.0 * sgn_p * S_p / E_b_p, np.nan),
     }
   del wB_d, E_R_p, E_phi_p, E_z_p, E_b_p, S_p, sgn_p # Free up memory.
+
+  # Mass-weighted field composition, inverse plasma beta and grid spacing per R bin.
+  wBm_p = wprof(B_RR + B_PP + B_ZZ)
+  with np.errstate(invalid="ignore", divide="ignore"):
+    for c, Bc in (("R", B_RR), ("phi", B_PP), ("z", B_ZZ)):
+      B_prof[f"fB_{c}_M"] = np.where(wBm_p > 0, wprof(Bc) / wBm_p, np.nan)
+    B_prof["betainv_M"]   = wprof(betainv)
+    B_prof["betainv_p50"] = binned_wquantile(idx, betainv[disk][valid], wd, nbins, 0.5)
+    dz_p50 = binned_wquantile(idx, dz[disk][valid], wd, nbins, 0.5)
+    B_prof["dz_p50_m"]  = dz_p50 * L_UNIT * 1.0e-2
+    B_prof["H_over_dz"] = H / dz_p50
+    B_prof["P_orb_ms"]  = 2.0 * np.pi / np.abs(wprof(omega)) * T_UNIT * 1.0e3
+  del wBm_p, dz_p50 # Free up memory.
 
   prof.update({
     "n_cells": counts,
@@ -786,7 +887,9 @@ def _process_snapshot_disk(args):
   hists = {}
   for name, q, bins in (("Ye", ye[disk], np.linspace(0.0, 0.6, 61)),
                         ("entropy_kB", entropy[disk], np.linspace(0.0, 40.0, 81)),
-                        ("T_MeV", temp[disk], np.geomspace(0.4, 20.0, 61))):
+                        ("T_MeV", temp[disk], np.geomspace(0.4, 20.0, 61)),
+                        ("dz_m", dz[disk] * L_UNIT * 1.0e-2,
+                         dz_min * L_UNIT * 1.0e-2 * 2.0**np.arange(-0.5, 12.0))):
     hh, ee = np.histogram(q, bins=bins, weights=wd_all)
     hists[name] = (ee, hh)
 
@@ -849,6 +952,12 @@ JRHO_YBINS_TOP = np.geomspace(1.0e20, 1.0e31, 60)
 JRHO_YBINS_BOT = np.linspace(0.0, 20.0, 60)
 JRHO_R_INT_KM  = 10.0
 JRHO_THRESHOLD = 1.0e-5
+
+VPROF_ZMAX = 1.5 # outer |z|/R of the vertical profiles
+VPROF_DR   = 0.1 # relative half-width of the annuli
+
+BAVG_RHO_DISK  = 1.0e8  # g/cm^3, disk density cut of Izquierdo et al. (2025)
+BAVG_BULK_FRAC = 0.75   # bulk = densest cells holding this fraction of the disk mass
 
 MN_MEV = 939.56535                # neutron mass, must match the table's `mn` scalar
 MEV_PER_FM3_TO_CGS = MEV * 1.0e39 # erg/cm^3 per MeV/fm^3
@@ -1113,6 +1222,7 @@ def analyze(args):
                             Default: rmax.
   args.parker_smooth (int): box-smoothing width in cells before differencing (1 = none).
                             Default: 3.
+  args.vprof_R (list): cylindrical radii of the vertical profiles (in code units).
   args.n_workers (int): number of worker processes per snapshot loop.
   """
   # Find the files with the signature.
@@ -1160,7 +1270,7 @@ def analyze(args):
                   args.slice_extent, args.slice_npts,
                   args.parker_dir, args.parker_eps,
                   args.parker_rmax if args.parker_rmax is not None else args.rmax,
-                  args.parker_smooth, args.outdir)
+                  args.parker_smooth, args.vprof_R, args.outdir)
                  for n in numbers]
   print(f"$ Processing {len(worker_args)} snapshots with n_worker={n_workers}...")
 
@@ -1250,6 +1360,10 @@ def main(argv=None):
                        "[default: --rmax]")
   ap.add_argument("--parker-smooth", type=int, default=3,
                   help="box-smoothing width in cells before differencing (1 = none)")
+  ap.add_argument("--vprof-R", type=lambda v: [float(x) for x in v.split(",")],
+                  default=[20.0, 40.0, 80.0],
+                  help="comma-separated cylindrical radii of the vertical T, rho, "
+                       "Gamma_bg profiles [code units]")
 
   ap.add_argument("--n-workers", type=int, default=None,
                   help="Worker processes for the snapshot loop. "
