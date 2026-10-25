@@ -121,6 +121,11 @@ from kplot.system.checkpoints import find_segments
 # The disk analysis script needs the following 3D output.
 VARIABLES = ("mhd_w_bcc", "adm", "alpha", "betax", "betay", "betaz")
 
+# EOS quantities interpolated from the table, and the number of points per
+# interpolation chunk.
+EOS_FIELDS = ("Q1", "Q2", "Q7", "cs2")
+EOS_CHUNK  = 4_000_000
+
 # ======================================================================
 # MULTIPROCESS WORKER
 # ======================================================================
@@ -146,7 +151,7 @@ def _process_snapshot_disk(args):
   r_disk_max, nbins, rmax, slice_extent, slice_npts,
   parker_dir, parker_eps, parker_rmax, parker_smooth, vprof_R, outdir) = args
 
-  snapshot = mhd_file.split("/")[-1].split(".")[-2].strip()
+  snapshot = snapshot_tag(mhd_file)
 
   # ======================================================================
   # MHD
@@ -278,13 +283,13 @@ def _process_snapshot_disk(args):
   # Spatial components of u_\mu.
   ux_d = gxx * velx + gxy * vely + gxz * velz
   uy_d = gxy * velx + gyy * vely + gyz * velz
-  uz_d = gxz * velx + gyz * vely + gzz * velz
 
   # u^i.
   ut_u = W / alpha
   ux_u = velx - ut_u * betax
   uy_u = vely - ut_u * betay
   uz_u = velz - ut_u * betaz
+  del ut_u # Free up memory.
 
   # Coordinate 3-velocity dx^i/dt = alpha utilde^i / W - beta^i
   vcx = (alpha * velx / W - betax).astype(np.float32)
@@ -349,23 +354,23 @@ def _process_snapshot_disk(args):
   ye_clip  = np.clip(ye, tab.ye_min, tab.ye_max)
   log_temp = np.clip(np.log(temp), tab.t_min, tab.t_max)
 
-  # Call the interpolators.
-  pts = np.column_stack((log_nb, ye_clip, log_temp))
-  eosvals = {}
-  eosvals["Q1"] = tab.interpolator_Q1(pts)
-  eosvals["Q2"] = tab.interpolator_Q2(pts)
-  eosvals["Q7"] = tab.interpolator_Q7(pts)
-  eosvals["cs2"] = tab.interpolator_cs2(pts)
+  # Call the interpolator.
+  eosvals = tab.interpolate(log_nb, ye_clip, log_temp)
 
   # Compute the enthalpy and store the entropy.
   h = 1.0 + eosvals["Q7"] + eosvals["Q1"] / tab.mb
   entropy = eosvals["Q2"].astype(np.float32)
-  hut_d = h * ut_d
+
+  # Unbound material (geodesic: -u_t > 1; Bernoulli: -h u_t > h_min).
+  unbound_geo  = ut_d < -1.0
+  unbound_bern = h * ut_d < -tab.hmin
+  unbound      = unbound_bern if bound_criterion == "bernoulli" else unbound_geo
+  del ut_d, unbound_geo, unbound_bern # Free up memory.
 
   # Adiabatic index Gamma_1 = (dln p/dln rho)_s = c_s^2 (e + p) / p = c_s^2 h m_b / Q1.
   gamma1 = (eosvals["cs2"] * h * tab.mb / np.maximum(eosvals["Q1"], 1e-30)).astype(np.float32)
 
-  del eosvals, nb, rho_cgs, log_nb, ye_clip, log_temp, pts # Free up memory.
+  del eosvals, nb, rho_cgs, log_nb, ye_clip, log_temp # Free up memory.
 
   # ======================================================================
   # GEOMETRY RELATIVE TO BH/NS
@@ -383,15 +388,11 @@ def _process_snapshot_disk(args):
   # Compute the conserved rest mass.
   dM = rho * W * sqrtg * dV
 
-  # Exact GR specific angular momentum: j = h u_phi, u_phi = -y u_x + x u_y
+  # Exact GR specific angular momentum: j = h u_phi, u_phi = -y u_x + x u_y.
+  # dJ = dM j is only summed over masks, so integrate() forms it per mask.
   u_phi = -yg * ux_d + xg * uy_d
   j_spec = h * u_phi
-  dJ = dM * j_spec
-
-  # Full MHD angular momentum: T^t_phi = (rho h + b^2) u^t u_phi - b^t b_phi,
-  # with alpha u^t = W and alpha b^t = BWv.
   b_phi = -yg * bx_d + xg * by_d
-  dJ_mhd = sqrtg * ((rho * h + bsq) * W * u_phi - BWv * b_phi) * dV
 
   # Toroidal/poloidal split of the Eulerian field B^i around the BH. The mixed
   # products B_RR = B_R B^R, B_PP = B_phi B^phi, B_ZZ = B_z B^z sum exactly to
@@ -410,6 +411,11 @@ def _process_snapshot_disk(args):
     b_phih = (b_phi * Rinv).astype(np.float32)
   del Rinv, BR_u, BP_d, Bx_d, By_d, Bz_d, By # Free up memory.
 
+  # Full MHD angular momentum: T^t_phi = (rho h + b^2) u^t u_phi - b^t b_phi,
+  # with alpha u^t = W and alpha b^t = BWv.
+  dJ_mhd = sqrtg * ((rho * h + bsq) * W * u_phi - BWv * b_phi) * dV
+  del BWv # Free up memory.
+
   # Angular velocity Omega = dphi/dt.
   Rsafe = np.maximum(Rcyl, 1e-30)
   with np.errstate(divide="ignore", invalid="ignore"):
@@ -426,10 +432,8 @@ def _process_snapshot_disk(args):
   # - density has to be larger than some cut
   # - density has to be lower than some upper threshold (only for BNS remnant)
   # - radius has to smaller than some value (optional; to remove tidal tails)
+  # - unbound: computed with the EOS above
   outside_bh = rsph > r_exclude
-  unbound_geo = ut_d < -1.0
-  unbound_bern = hut_d < -tab.hmin
-  unbound = unbound_bern if bound_criterion == "bernoulli" else unbound_geo
 
   rho_cut_code = rho_cut / RHO_UNIT
   rho_rem_code = rho_remnant / RHO_UNIT
@@ -546,6 +550,9 @@ def _process_snapshot_disk(args):
     vprof["Gbg"][i] = binned_wquantile(z_idx[g], gbg[a][ok][g], w_a[g], nbins, 0.5)
   np.savez(os.path.join(outdir, "parker", f"disk_vprof_{snapshot}.npz"),
            R=np.asarray(vprof_R, dtype=float), zR=0.5 * (z_edges[:-1] + z_edges[1:]), **vprof)
+  # The loop variables still reference the last arrays they iterated over
+  # (newcomb, gamma1); drop them too, or the del below frees nothing.
+  crit = ok = q = None
   del p_idx, p_in, dVp, i_in, m, i_m, buoy_ok, gamma1, vprof # Free up memory.
 
   keys = list(parker_prof.keys())
@@ -570,7 +577,7 @@ def _process_snapshot_disk(args):
   Q_z   = (lambda_z / dz).astype(np.float32)
   Q_phi = (lambda_phi / dz).astype(np.float32)
   Q_tot = (lambda_tot / dz).astype(np.float32)
-  del lambda_z, lambda_phi, lambda_tot # Free up memory.
+  del lambda_z, lambda_phi, lambda_tot, h, bz_d, b_phih # Free up memory.
   Q_ok = disk & np.isfinite(Q_z) & np.isfinite(Q_phi) & np.isfinite(Q_tot)
 
   om_full = np.full(ncells_total, np.nan, dtype=np.float32)
@@ -582,7 +589,7 @@ def _process_snapshot_disk(args):
   with np.errstate(invalid="ignore"):
     dOmega_dR = ((xg * dOdx + yg * dOdy) / np.maximum(Rcyl, 1e-30)).astype(np.float32)
     mri = Q_ok & (dOmega_dR < 0.0)
-  del dOdx, dOdy, dOmega_dR
+  del dOdx, dOdy, dOmega_dR, xg, yg
   Q_loc    = np.where(mri, Q_z, np.nan).astype(np.float32)
   Qtot_loc = np.where(mri, Q_tot, np.nan).astype(np.float32)
 
@@ -605,7 +612,7 @@ def _process_snapshot_disk(args):
   slices.update(plane((0, 2, 1), center[1], {**base, **parker_fd}, "xz"))
   np.savez(os.path.join(outdir, "slices", f"disk_slices_{snapshot}.npz"), u=u, **slices)
   del Q_loc, Qtot_loc, rho_cells, base, parker_fd, slices, parker, parker_ok, gbg, newcomb, \
-      newcomb_ok, Bx, Bz, vcx, vcz # Free up memory.
+      newcomb_ok, Bx, Bz, vcx, vcz, sel # Free up memory.
 
   wq     = dM[mri]
   Q_scal = {}
@@ -615,7 +622,8 @@ def _process_snapshot_disk(args):
     Q_scal[f"{name}_f10"]  = (float(wq[qv[mri] > 10.0].sum() / wq.sum())
                               if wq.sum() > 0.0 else np.nan)
 
-  del b_phi # Free up memory.
+  qv = None # Loop variable, still references Q_tot[mri].
+  del b_phi, wq # Free up memory.
   dz_min = float(np.min(dzv)) # Finest grid spacing on the whole mesh.
 
   # ======================================================================
@@ -628,7 +636,7 @@ def _process_snapshot_disk(args):
       "n_cells": int(mask.sum()),
       "M_MSUN_CGS": M,
       "M_g": M * MSUN_CGS,
-      "J": float(dJ[mask].sum()),
+      "J": float((w * j_spec[mask]).sum()),
       "J_mhd": float(dJ_mhd[mask].sum()),
     }
     if M > 0:
@@ -711,6 +719,7 @@ def _process_snapshot_disk(args):
     return out
 
   res_disk        = integrate(disk)
+  del rsph, dJ_mhd, W # Free up memory.
 
   # Volume-averaged field strengths <|B|>, <|B_pol|>, <|B_tor|> as in Izquierdo et al.
   # (2025, arXiv:2501.13154, Sec. II D, Fig. 5): over the disk with rho > BAVG_RHO_DISK
@@ -718,7 +727,7 @@ def _process_snapshot_disk(args):
   avg_disk = disk & (rho > BAVG_RHO_DISK / RHO_UNIT)
   order    = np.argsort(rho[avg_disk])[::-1] # densest first
   rho_a    = rho[avg_disk][order]
-  cum_a    = np.cumsum(dM[avg_disk][order])
+  cum_a    = np.cumsum(dM[avg_disk][order], dtype=np.float64)
   rho_bulk = (rho_a[np.searchsorted(cum_a, BAVG_BULK_FRAC * cum_a[-1])]
               if cum_a.size else np.inf)
   avg_bulk = avg_disk & (rho >= rho_bulk)
@@ -730,11 +739,12 @@ def _process_snapshot_disk(args):
     for name, Bv in B_mag.items():
       res_disk[f"{name}_avg_{region}_G"] = wmean(Bv[mk], wv) * B_UNIT
   res_disk["rho_bulk_g_cm3"] = float(rho_bulk) * RHO_UNIT
-  del avg_disk, avg_bulk, order, rho_a, cum_a, B_mag # Free up memory.
+  del avg_disk, avg_bulk, order, rho_a, cum_a, B_mag, Bv, wv # Free up memory.
 
   Rcyl_km  = Rcyl * L_UNIT / KM
   disk_ext = disk & (Rcyl_km >= JRHO_R_INT_KM)
   disk_int = disk & (Rcyl_km <  JRHO_R_INT_KM)
+  del Rcyl_km # Free up memory.
 
   rho_cgs    = rho * RHO_UNIT
   jspec_cgs  = j_spec * JSPEC_UNIT
@@ -753,6 +763,7 @@ def _process_snapshot_disk(args):
     "bot_ext": jrho_hist(disk_ext, jspec_1e16, JRHO_YBINS_BOT),
     "bot_int": jrho_hist(disk_int, jspec_1e16, JRHO_YBINS_BOT),
   }
+  del rho_cgs, jspec_cgs, jdens_cgs, jspec_1e16, disk_ext, disk_int # Free up memory.
 
   # res_ejecta_bern = integrate(dense & outside_bh & unbound_bern)
   # res_ejecta_geo  = integrate(dense & outside_bh & unbound_geo)
@@ -805,12 +816,12 @@ def _process_snapshot_disk(args):
     H = np.sqrt(np.maximum(zsq - zmean**2, 0.0))
 
   dz_mid = np.abs(zg[disk][valid] - np.nan_to_num(zmean)[idx])
-  z_half = binned_wquantile(idx, dz_mid, wd, nbins, 0.5)
-  z_90   = binned_wquantile(idx, dz_mid, wd, nbins, 0.9)
-  del dz_mid # Free up memory.
+  z_half, z_90 = binned_wquantile(idx, dz_mid, wd, nbins, (0.5, 0.9))
+  del dz_mid, zg # Free up memory.
   area = np.pi * (edges[1:]**2 - edges[:-1]**2)
 
   q_idx   = np.digitize(Rcyl[mri], edges) - 1
+  del Rcyl # Free up memory.
   q_valid = (q_idx >= 0) & (q_idx < nbins)
   q_idx   = q_idx[q_valid]
   q_w     = dM[mri][q_valid]
@@ -819,16 +830,19 @@ def _process_snapshot_disk(args):
   for name, qv in (("Q_z", Q_z), ("Q_phi", Q_phi), ("Q_tot", Q_tot)):
     q_vals = qv[mri][q_valid]
     Q_prof[f"{name}_mean"] = binned_wmean(q_idx, q_vals, q_w, nbins)
-    Q_prof[f"{name}_p50"]  = binned_wquantile(q_idx, q_vals, q_w, nbins, 0.5)
-    Q_prof[f"{name}_p90"]  = binned_wquantile(q_idx, q_vals, q_w, nbins, 0.9)
-  del q_idx, q_valid, q_vals, q_w, mri
+    Q_prof[f"{name}_p50"], Q_prof[f"{name}_p90"] = \
+      binned_wquantile(q_idx, q_vals, q_w, nbins, (0.5, 0.9))
+  qv = None # Loop variable, still references Q_tot.
+  del q_idx, q_valid, q_vals, q_w, mri, Q_z, Q_phi, Q_tot
 
   # Field geometry per R bin (same weights as in integrate()).
   wB_d = (0.5 * sqrtg * dV)[disk][valid]
+  del sqrtg, dV # Free up memory.
   def bsum(q):
     return np.bincount(idx, weights=wB_d * q[disk][valid], minlength=nbins)
   E_R_p, E_phi_p, E_z_p = bsum(B_RR), bsum(B_PP), bsum(B_ZZ)
   S_p                   = bsum(B_RP)
+  del B_RP # Free up memory.
   E_b_p                 = E_R_p + E_phi_p + E_z_p
   sgn_p = np.where(np.nan_to_num(wprof(omega)) < 0.0, -1.0, 1.0)
   with np.errstate(invalid="ignore", divide="ignore"):
@@ -912,9 +926,6 @@ def _process_snapshot_disk(args):
               "P_erg_cm3": P_UNIT, "B_G": B_UNIT, "J_cgs": J_UNIT},
   }
 
-  with open(os.path.join(outdir, "scalars", f"disk_scalars_{snapshot}.json"), "w") as fp:
-    json.dump(scalars, fp, indent=2)
-
   keys = list(prof.keys())
   with open(os.path.join(outdir, "profiles", f"disk_profiles_{snapshot}.csv"), "w") as fp:
     fp.write(",".join(keys) + "\n")
@@ -928,6 +939,23 @@ def _process_snapshot_disk(args):
         fp.write(f"{name},{ee[b]:.8e},{ee[b + 1]:.8e},{hh[b]:.8e}\n")
 
   np.savez(os.path.join(outdir, "jrho", f"disk_jrho_{snapshot}.npz"), **jrho_hists)
+
+  # The scalars go last and are renamed into place only once complete: their
+  # presence marks the snapshot as done (see analyze()).
+  path = scalars_path(outdir, snapshot)
+  with open(path + ".tmp", "w") as fp:
+    json.dump(scalars, fp, indent=2)
+  os.replace(path + ".tmp", path)
+
+
+def snapshot_tag(path):
+  """Snapshot number as it appears in the file name, e.g. '00010'."""
+  return path.split("/")[-1].split(".")[-2].strip()
+
+
+def scalars_path(outdir, snapshot):
+  """Scalars file of a snapshot; it is written last, so it marks a finished snapshot."""
+  return os.path.join(outdir, "scalars", f"disk_scalars_{snapshot}.json")
 
 # ======================================================================
 # CONSTANTS AND CONVERSIONS
@@ -1076,8 +1104,8 @@ class EOSTable:
   """Load a PyCompOSE HDF5 table and build interpolators.
 
   Sets the following fields:
-    interpolator_Q1, interpolator_Q2, interpolator_Q7, interpolator_cs2 - interpolators
-      for Q1, Q2, Q7 and the sound speed squared cs2
+    interpolator - interpolator for the stacked Q1, Q2, Q7 and the sound
+      speed squared cs2 (evaluate with interpolate())
     mn_mev - neutron mass [MeV]
     nb_min, nb_max, ye_min, ye_max, t_min, t_max - table bounds
   """
@@ -1109,25 +1137,22 @@ class EOSTable:
 
     self.hmin = np.min(1.0 + Q7 + Q1 / self.mb)
 
-    self.interpolator_Q1 = RegularGridInterpolator(
-      (self.log_nb, self.ye, self.log_t), Q1,
+    # One interpolator over the stacked quantities, so the grid search and
+    # corner weights are computed once per point instead of once per table.
+    self.interpolator = RegularGridInterpolator(
+      (self.log_nb, self.ye, self.log_t),
+      np.stack((Q1, Q2, Q7, cs2), axis=-1),
       method='linear', bounds_error=False, fill_value=None,
     )
 
-    self.interpolator_Q2 = RegularGridInterpolator(
-      (self.log_nb, self.ye, self.log_t), Q2,
-      method='linear', bounds_error=False, fill_value=None,
-    )
-
-    self.interpolator_Q7 = RegularGridInterpolator(
-      (self.log_nb, self.ye, self.log_t), Q7,
-      method='linear', bounds_error=False, fill_value=None,
-    )
-
-    self.interpolator_cs2 = RegularGridInterpolator(
-      (self.log_nb, self.ye, self.log_t), cs2,
-      method='linear', bounds_error=False, fill_value=None,
-    )
+  def interpolate(self, log_nb, ye, log_t, chunk=EOS_CHUNK):
+    """Interpolate Q1, Q2, Q7 and cs2 at the given points."""
+    out = np.empty((log_nb.size, len(EOS_FIELDS)))
+    for s in range(0, log_nb.size, chunk):
+      e = s + chunk
+      out[s:e] = self.interpolator(
+        np.column_stack((log_nb[s:e], ye[s:e], log_t[s:e])))
+    return {q: out[:, n] for n, q in enumerate(EOS_FIELDS)}
 
 # ======================================================================
 # WEIGHTED STATISTICS HELPER
@@ -1150,21 +1175,30 @@ def binned_wquantile(idx, x, w, nbins, q):
     Used for the half-mass scale height: rms(z) is badly inflated by the
     low-density polar material that shares a cylindrical radius with the disk,
     so the |z| containing half the shell mass is the more robust thickness.
+
+    q may be a scalar or a sequence; a sequence shares one sort and returns
+    an array of shape (len(q), nbins).
     """
-  order = np.lexsort((x, idx))
-  xs, ws, bs = x[order], w[order], idx[order]
-  cum = np.cumsum(ws)
+  bidx  = idx.astype(np.int16) if nbins <= np.iinfo(np.int16).max else idx
+  order = np.argsort(x)
+  order = order[np.argsort(bidx[order], kind="stable")]
+  xs, ws, bs = x[order], w[order], bidx[order]
+  del order # Free up memory.
+  # Accumulate in double: a float32 running sum over ~10^8 cells stops
+  # resolving individual cell weights.
+  cum = np.cumsum(ws, dtype=np.float64)
   start = np.searchsorted(bs, np.arange(nbins), side="left")
   stop = np.searchsorted(bs, np.arange(nbins), side="right")
-  out = np.full(nbins, np.nan)
+  qs  = np.atleast_1d(np.asarray(q, dtype=float))
+  out = np.full((qs.size, nbins), np.nan)
   for b in range(nbins):
     lo, hi = start[b], stop[b]
     if hi <= lo:
       continue
     base = cum[lo - 1] if lo > 0 else 0.0
-    target = base + q * (cum[hi - 1] - base)
-    out[b] = xs[min(np.searchsorted(cum[lo:hi], target) + lo, hi - 1)]
-  return out
+    target = base + qs * (cum[hi - 1] - base)
+    out[:, b] = xs[np.minimum(np.searchsorted(cum[lo:hi], target) + lo, hi - 1)]
+  return out if np.ndim(q) else out[0]
 
 
 def wpercentile(x, w, q):
@@ -1173,8 +1207,9 @@ def wpercentile(x, w, q):
     return np.full(np.shape(q), np.nan)
   order = np.argsort(x)
   xs, ws = x[order], w[order]
-  cdf = np.cumsum(ws) - 0.5 * ws
-  cdf /= ws.sum()
+  # Accumulate in double (see binned_wquantile).
+  cdf = np.cumsum(ws, dtype=np.float64) - 0.5 * ws
+  cdf /= ws.sum(dtype=np.float64)
   return np.interp(np.asarray(q, dtype=float) / 100.0, cdf, xs)
 
 
@@ -1242,6 +1277,17 @@ def analyze(args):
   if not numbers:
     raise SystemExit("No complete disk snapshot found!")
   print(f"$ Found {len(numbers)} disk snapshots...")
+
+  # Skip snapshots that a previous run already finished.
+  if not args.overwrite:
+    done = [n for n in numbers
+            if os.path.exists(scalars_path(args.outdir, snapshot_tag(files["mhd_w_bcc"][n])))]
+    if done:
+      print(f"$ Skipping {len(done)} snapshots already in {args.outdir} (--overwrite to redo)")
+      numbers = [n for n in numbers if n not in set(done)]
+    if not numbers:
+      print("$ Nothing left to do.")
+      return
 
   # Load the EOS and tracker/horizon files.
   eos       = EOSTable(args.eos_table)
@@ -1368,6 +1414,9 @@ def main(argv=None):
   ap.add_argument("--n-workers", type=int, default=None,
                   help="Worker processes for the snapshot loop. "
                         "Default: min(8, cpu_count()).")
+  ap.add_argument("--overwrite", action="store_true",
+                  help="Reprocess snapshots whose results already exist in --outdir. "
+                       "By default they are skipped.")
   args = ap.parse_args()
 
   analyze(args)

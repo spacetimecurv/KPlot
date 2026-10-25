@@ -232,11 +232,18 @@ def _process_snapshot_spectra(args):
 
   del data_mhd # Free up memory.
 
-  # Save this snapshot's spectra to its own file.
-  out_path = os.path.join(outdir, "spectra", f"spectrum_{snapshot}.txt")
-  np.savetxt(out_path, np.c_[kr_mhd, powerv_mhd, powerb_mhd, powerke_mhd],
+  # Save this snapshot's spectra to its own file. It is renamed into place only
+  # once complete, so its presence marks the snapshot as done (see analyze()).
+  out_path = spectrum_path(outdir, snapshot)
+  np.savetxt(out_path + ".tmp", np.c_[kr_mhd, powerv_mhd, powerb_mhd, powerke_mhd],
              header=f"Time = {time}\n0:k    1:P_v    2:P_B    3:P_KE",
              comments="# ")
+  os.replace(out_path + ".tmp", out_path)
+
+
+def spectrum_path(outdir, snapshot):
+  """Spectrum file of a snapshot, e.g. <outdir>/spectra/spectrum_00010.txt."""
+  return os.path.join(outdir, "spectra", f"spectrum_{snapshot}.txt")
 
 
 def analyze(args):
@@ -265,6 +272,17 @@ def analyze(args):
   numbers = sorted(snapshots)
   if args.drop_first_bins is not None:
     numbers = [n for n in numbers if n >= args.drop_first_bins]
+
+  # Skip snapshots that a previous run already finished.
+  if not args.overwrite:
+    done = [n for n in numbers if os.path.exists(spectrum_path(
+            args.outdir, snapshots[n].split("/")[-1].split(".")[-2].strip()))]
+    if done:
+      print(f"$ Skipping {len(done)} snapshots already in {args.outdir} (--overwrite to redo)")
+      numbers = [n for n in numbers if n not in set(done)]
+    if not numbers:
+      print("$ Nothing left to do.")
+      return
   files = [snapshots[n] for n in numbers]
 
   # Load the tracker file, if given.
@@ -326,6 +344,9 @@ def main(argv=None):
   ap.add_argument("--n-workers", type=int, default=None,
                   help="Worker processes for the snapshot loop. "
                         "Default: min(8, cpu_count()).")
+  ap.add_argument("--overwrite", action="store_true",
+                  help="Reprocess snapshots whose spectrum already exists in --outdir. "
+                       "By default they are skipped.")
   args = ap.parse_args()
 
   analyze(args)

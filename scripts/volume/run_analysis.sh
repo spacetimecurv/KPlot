@@ -114,6 +114,7 @@ VPROF_R="$(_cfg_get vprof_R)"
 WIN_RAD="$(_cfg_get window_radius)"
 TAR_DX="$(_cfg_get target_dx)"
 N_WORKERS="$(_cfg_get n_workers)"
+OVERWRITE="$(_cfg_get overwrite)"
 MOV_FPS="$(_cfg_get movie_fps)"
 MOV_STR="$(_cfg_get movie_stride)"
 
@@ -158,6 +159,9 @@ mkdir -p "${OUTPUT_DIR}"
 # analysis module applies its own default rather than receiving an empty string.
 DISK_ARGS=()
 [[ "${BATCHTOOLS}" == "false" ]] && DISK_ARGS+=(--no-batchtools)
+case "${OVERWRITE,,}" in
+    true|1|yes|on) DISK_ARGS+=(--overwrite) ;;
+esac
 [[ -n "${DROP_FIRST_BINS}" ]] && DISK_ARGS+=(--drop-first-bins "${DROP_FIRST_BINS}")
 [[ -n "${TRACKER}"         ]] && DISK_ARGS+=(--tracker         "${TRACKER}")
 [[ -n "${HORIZON}"         ]] && DISK_ARGS+=(--horizon         "${HORIZON}")
@@ -184,6 +188,9 @@ fi
 
 SPECTRA_ARGS=()
 [[ "${BATCHTOOLS}" == "false" ]] && SPECTRA_ARGS+=(--no-batchtools)
+case "${OVERWRITE,,}" in
+    true|1|yes|on) SPECTRA_ARGS+=(--overwrite) ;;
+esac
 [[ -n "${DROP_FIRST_BINS}" ]] && SPECTRA_ARGS+=(--drop-first-bins "${DROP_FIRST_BINS}")
 [[ -n "${WIN_RAD}"   ]] && SPECTRA_ARGS+=(--win-radius "${WIN_RAD}")
 [[ -n "${TAR_DX}"    ]] && SPECTRA_ARGS+=(--target-dx   "${TAR_DX}")
