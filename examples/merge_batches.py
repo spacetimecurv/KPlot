@@ -4,7 +4,7 @@
 #########################################################################
 
 # Import the batch merger class.
-from kplot.system.batchmerge import BatchMerger
+from kplot.system.batchutils import BatchMerger
 
 # Create a BatchMerger instance.
 merger = BatchMerger()
@@ -22,4 +22,14 @@ merger.merge(
     output_file=lambda k: f"rpsi4_{k[0]}_{k[1]}_master.txt",
     output_dir="output/waveforms",
     input_dir="data/batch"
+)
+
+merger.merge_auto(
+  history=False,
+  horizon=False,
+  tracker=True,
+  waveforms=True,
+  strip_header=True,
+  output_dir="output",
+  input_dir="data/batch"
 )

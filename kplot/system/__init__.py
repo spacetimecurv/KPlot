@@ -6,7 +6,7 @@ SystemPlotter``, ``from kplot.system.horizon import HorizonFinder``.
 A automated pipeline lives in ``scripts/system/plot_system.sh``.
 """
 
-from . import batchmerge
+from . import batchutils
 from . import bin_convert
 from . import checkpoints
 from . import history
@@ -18,7 +18,7 @@ from . import units
 from . import waveforms
 
 __all__ = [
-  "batchmerge",
+  "batchutils",
   "bin_convert",
   "checkpoints",
   "history",
