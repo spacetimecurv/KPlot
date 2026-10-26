@@ -28,6 +28,8 @@ class HorizonFinder:
     self.horizon_path = horizon_path
     self.horizon_data = None
 
+    self.load_horizon_data()
+
   def load_horizon_data(self):
     """
     Load the horizon data from the specified file path.
@@ -45,7 +47,7 @@ class HorizonFinder:
     headers = re.findall(r'\d+:([^\s]+)', header_line)
 
     # Read the data with numpy.
-    data = np.loadtxt(self.horizon_path, comments='#')
+    data = np.loadtxt(self.horizon_path, comments='#', usecols=range(len(headers)))
 
     # Create a dictionary.
     data_dict = {name: data[:, i] for i, name in enumerate(headers)}
@@ -65,7 +67,7 @@ class HorizonFinder:
     """
     if self.horizon_data is None:
       raise ValueError("Horizon data not loaded. Call load_horizon_data() first.")
-    
+
     # Plot style.
     mpl.rcParams['lines.linewidth'] = 1.5
     mpl.rcParams['lines.linestyle'] = 'solid'
@@ -80,7 +82,7 @@ class HorizonFinder:
     t_lim = (xmin, xmax)
     colors = ['#F0A860', '#D55E00', '#009E73']
     labels = [r'$M_{\mathrm{BH,irr}}$', r'$a_{\mathrm{BH}}$', r'$\min{\left(r_{\mathrm{BH}}\right)}$']
-    
+
     # Plot the data.
     fig, ax = plt.subplots(3,1,figsize=(8,10), sharex=True, gridspec_kw=dict(hspace=0.08))
 
@@ -106,7 +108,7 @@ class HorizonFinder:
 
     # Annotate.
     if t_merger is not None:
-      ax[0].annotate('merger', xy=(t_merger, np.nanmax(mass)-0.05), xytext=(-4, -10), 
+      ax[0].annotate('merger', xy=(t_merger, np.nanmax(mass)-0.05), xytext=(-4, -10),
                      textcoords='offset points', ha='right', va='top', fontsize=11, color='grey')
 
     fig.subplots_adjust(left=0.115, right=0.965, top=0.96, bottom=0.085, hspace=0.06)

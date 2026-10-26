@@ -20,13 +20,14 @@ class Tracker:
   A class to handle AthenaK's tracker files.
   """
 
-  def __init__(self, tracker_path_0, tracker_path_1):
+  def __init__(self, tracker_path_0, tracker_path_1=None):
     """
     Point the class to the tracker files, i.e. <job>.co_0/1.txt.
 
     Parameters:
     tracker_path_0 (str): The path to the first tracker file.
-    tracker_path_1 (str): The path to the second tracker file.
+    tracker_path_1 (str): The path to the second tracker file (optional, e.g.
+                          post-merger only one tracker is needed).
     """
     self.tracker_path_0 = tracker_path_0
     self.tracker_path_1 = tracker_path_1
@@ -39,12 +40,13 @@ class Tracker:
     Returns:
     Dictionary holding the tracker data.
     """
-    if not os.path.exists(self.tracker_path_0) or not os.path.exists(self.tracker_path_1):
-      raise FileNotFoundError(f"Tracker files not found at: {self.tracker_path_0} or {self.tracker_path_1}")
+    paths = [p for p in (self.tracker_path_0, self.tracker_path_1) if p is not None]
+    for path in paths:
+      if not os.path.exists(path):
+        raise FileNotFoundError(f"Tracker file not found at: {path}")
 
     # Build a dictionary.
     dict_complete = defaultdict(dict)
-    paths = [self.tracker_path_0, self.tracker_path_1]
     
     for j, path in enumerate(paths):
       # Find the headers.

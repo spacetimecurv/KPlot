@@ -3,9 +3,6 @@
 # Description: Unit conversions for AthenaK data.                       #
 #########################################################################
 
-# Import third-party libraries.
-from matplotlib.colors import LogNorm, Normalize
-
 # Define the Units class.
 class Units:
   """
