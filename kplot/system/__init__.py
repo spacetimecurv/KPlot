@@ -11,6 +11,8 @@ from . import bin_convert
 from . import checkpoints
 from . import history
 from . import horizon
+from . import meshblocks
+from . import parfile
 from . import plotter
 from . import seriesplot
 from . import tracker
@@ -23,6 +25,8 @@ __all__ = [
   "checkpoints",
   "history",
   "horizon",
+  "meshblocks",
+  "parfile",
   "plotter",
   "seriesplot",
   "tracker",

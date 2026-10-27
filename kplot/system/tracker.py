@@ -7,6 +7,7 @@
 import re
 import os
 from collections import defaultdict
+import warnings
 
 # Import necessary third-party libraries.
 import numpy as np
@@ -31,8 +32,9 @@ class Tracker:
     """
     self.tracker_path_0 = tracker_path_0
     self.tracker_path_1 = tracker_path_1
-    self.tracker_data = None
+    self.load_tracker_data()
 
+  # Load the tracker data.
   def load_tracker_data(self):
     """
     Load the tracker data from the specified file path.
@@ -47,7 +49,7 @@ class Tracker:
 
     # Build a dictionary.
     dict_complete = defaultdict(dict)
-    
+
     for j, path in enumerate(paths):
       # Find the headers.
       with open(path) as f:
@@ -57,7 +59,12 @@ class Tracker:
       headers = re.findall(r'\d+:([^\s]+)', header_line)
 
       # Read the data with numpy.
-      data = np.loadtxt(path, comments='#')
+      try:
+        with warnings.catch_warnings():
+          warnings.simplefilter('ignore') # empty tracker files
+          data = np.loadtxt(path, comments='#', ndmin=2)
+      except ValueError:
+        raise SystemExit(f"Error loading {path}!")
 
       # Create a dictionary.
       data_dict = {name: data[:, i] for i, name in enumerate(headers)}
@@ -65,7 +72,36 @@ class Tracker:
       dict_complete[j]["object"] = object
 
     self.tracker_data = dict_complete
+    if self.tracker_data:
+      print("$ Tracker data loaded successfully...")
+    else:
+      raise SystemExit("$ Tracker data not loaded successfully!")
 
+  # Find tracker position for tracker 'ico' at time t.
+  def tracker_pos(self, ico, t):
+    """
+    Find the tracker position for tracker 'ico' closest to
+    target time t.
+
+    Parameters:
+    ico (str): Tracker object, either 0 or 1.
+    t (float): Target time t.
+
+    Returns:
+    Tracker position at target time.
+    """
+    # Tracker data for selected object.
+    d = self.tracker_data[int(ico)]
+
+    # Find the closest time to target.
+    i = np.argmin(abs(d["time"] - t))
+    best = (d["time"][i], (d["x"][i], d["y"][i], d["z"][i]))
+    if abs(best[0] - t) > 1.0:
+      print(f"Warning: tracker {ico} nearest time is {best[0]:.1f}, not {t}")
+
+    return best[1]
+
+  # Plot the tracker data.
   def plot_tracker(self, output_path=None, save=False):
     """
     Simple function to compute the tracker points in time on the xy-plane.
@@ -76,7 +112,7 @@ class Tracker:
     """
     if self.tracker_data is None:
       raise ValueError("Tracker data not loaded. Call load_tracker_data() first.")
-    
+
     # Plot style.
     mpl.rcParams['lines.linewidth'] = 1.5
     mpl.rcParams['lines.linestyle'] = 'solid'
@@ -106,6 +142,7 @@ class Tracker:
     else:
       plt.show()
 
+  # Calculate the eccentricity from tracker data.
   def calc_eccentricity(self, t_fit_min, t_fit_max, t_min_plot, t_max_plot,
                         init_guess, bounds, output_path=None, save=False):
     """
@@ -123,7 +160,7 @@ class Tracker:
     """
     if self.tracker_data is None:
       raise ValueError("Tracker data not loaded. Call load_tracker_data() first.")
-      
+
     # Define the fit formula.
     def tracker_fit(t, S0, A0, A1, B, of, phi):
       """
@@ -181,4 +218,36 @@ class Tracker:
       plt.show()
 
     return parameters, covariance, e
-    
+
+
+# Define RefineTracker class.
+class RefineTracker:
+  """
+  Small wrapper class taking tracker refinement parameters
+  and determining whether a certain block will be refined.
+  """
+  def __init__(self, c, r, level):
+    """
+    Initialize RefineTracker class.
+
+    Parameters:
+    c    (list): Current tracker position.
+    r   (float): Tracker refinement radius.
+    level (int): Tracker 'reflevel'.
+    """
+    self.c, self.r, self.level = np.asarray(c, float), r, level
+
+  # Whether a MeshBlock with bounds will be refined by tracker.
+  def hits(self, lo, hi):
+    """
+    Determines whether a block with bounds 'lo' and 'hi'
+    will be refined based on the current tracker position and
+    tracker radius.
+
+    Parameters:
+    lo (float): Lower bound of the block.
+    hi (float): Upper bound of the block.
+    """
+    p = np.clip(self.c, lo, hi)
+    inside = np.all((self.c >= lo) & (self.c <= hi))
+    return np.sum((p - self.c)**2) < self.r**2 or inside
