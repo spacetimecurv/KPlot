@@ -10,7 +10,7 @@ A automated pipeline lives in ``scripts/sphere/run_analysis.sh``.
 import importlib
 
 __all__ = ["accretion", "butterfly", "comparison", "ejecta", "mad", "mergertime", "neutrinos",
-           "plots", "poynting"]
+           "penrose", "plots", "poynting"]
 
 
 def __getattr__(name):
