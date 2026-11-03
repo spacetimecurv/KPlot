@@ -22,14 +22,15 @@ environment to keep it from the global PATH.
 
 ## Usage
 Currently supported are the following classes:
-- ```HorizonFinder``` (reads in data from the AthenaK horizon finder)
+- ```HorizonFinder``` (reads in data from the AthenaK horizon finder, and rebuilds the horizon
+  surface ```r(theta, phi)``` from the ```horizon_shape``` files)
 - ```BatchMerger``` (concatenates batchtools ```output-*``` files)
 - ```Waveform``` (reads in waveform data)
 - ```SeriesPlot``` (reads in ```.bin``` files and creates a 2D plot series)
 - ```History``` (reads in ```.hst``` files)
 - ```Units``` (creates a unit conversion system for derived variables)
 - ```SystemPlotter``` (full-run simulation visualizer spanning all ```output-XXXX``` restart segments)
-- ```kplot.sphere``` (ejecta, neutrino and merger-time analysis of spherical-surface extraction output)
+- ```kplot.sphere``` (ejecta, neutrino, merger-time, MAD and Penrose analysis of spherical-surface extraction output)
 - ```kplot.volume``` (post-merger disk diagnostics from 3D volume-domain snapshots)
 
 Some examples outline the usage. Once built, the utilities can be called with, e.g.:
@@ -44,27 +45,31 @@ Each workflow has a shell driver (and there are also selected examples for usage
 |---|---|---|
 | Full-run visualization | [```examples/plot_system.py```](examples/plot_system.py) | [```scripts/system/plot_system.sh```](scripts/system/plot_system.sh) |
 | Ejecta + neutrino analysis | [```examples/analyze_sphere.py```](examples/analyze_sphere.py) | [```scripts/sphere/run_analysis.sh```](scripts/sphere/run_analysis.sh) |
+| Penrose process analysis | *(none yet)* | [```scripts/sphere/run_penrose.sh```](scripts/sphere/run_penrose.sh) |
 | Post-merger disk analysis | *(none yet)* | [```scripts/volume/run_analysis.sh```](scripts/volume/run_analysis.sh) |
 
 ### Repository layout
 The package is split into three subpackages, each with a matching driver folder in
-```scripts/```:
+```scripts/```, plus a shared ```utils/``` package:
 
 ```
 kplot/              the installed Python package
   system/           whole-run diagnostics
                       plotter.py (SystemPlotter), history.py, horizon.py,
-                      waveforms.py, seriesplot.py, batchmerge.py,
-                      units.py, athenak_units.py, bin_convert.py
+                      waveforms.py, seriesplot.py, batchutils.py, tracker.py,
+                      units.py, bin_convert.py, checkpoints.py, rhine.py,
+                      meshblocks.py, parfile.py
   sphere/           spherical-surface (sph) extraction analysis
                       ejecta.py, neutrinos.py, mergertime.py, poynting.py,
-                      butterfly.py, accretion.py, mad.py, plots.py, comparison.py
+                      butterfly.py, accretion.py, mad.py, penrose.py,
+                      plots.py, comparison.py
   volume/           3D volume-domain (bin) analysis
                       disk.py, spectra.py, plots.py
+  utils/            helpers shared by all of the above (see below)
 scripts/            ready-to-edit shell drivers, one folder per workflow
   system/           plot_system.sh, make_movies.sh                  -> kplot.system
   sphere/           run_analysis.sh, run_butterfly.sh, run_mad.sh,
-                    run_comparison.sh, config.ini                   -> kplot.sphere
+                    run_penrose.sh, run_comparison.sh, config.ini   -> kplot.sphere
   volume/           run_analysis.sh, config.ini                     -> kplot.volume
 examples/           small, self-contained usage examples
 ```
@@ -77,11 +82,26 @@ batchtools-like arrangement, i.e. in folders with the signature ```output-XXXX``
 ```simpath```. If the data lives in a single directory instead, set ```batchtools = false``` in
 the driver's ```config.ini``` (or pass ```--no-batchtools``` on the command line).
 
+### Shared helpers (```kplot.utils```)
+Code used by more than one analysis lives in ```kplot.utils```, so each analysis
+script only holds its own physics:
+- ```surface.py``` - the common driver for all sph analyses: finds the dumps, builds one
+  ```Surface``` per snapshot and radius, and runs a ```compute(surface, ctx)``` function
+  in parallel. A new sph analysis only needs to write that one function.
+- ```sph.py``` - finds the sph VTK dumps (single or multi-radius files) across segments
+- ```bin3d.py``` - 3D binary dumps: snapshot lookup, meshblock geometry, tracker/horizon files
+- ```grmhd.py``` - 3+1 GRMHD operations (four-velocity, magnetic four-vector, metric determinant, ...)
+- ```eos.py``` - PyCompOSE HDF5 EOS tables
+- ```quadrature.py``` - surface integration weights
+- ```parallel.py``` - the process pool used for the per-snapshot loops
+- ```cli.py```, ```plotting.py```, ```constants.py``` - shared command-line options,
+  plotting helpers and unit conversions
+
 ### Full-run simulation visualization
 ```SystemPlotter``` combines every batchtools ```output-XXXX``` restart segment (see note above) of an AthenaK run and renders 1-D history/time-series plots plus parallel 2-D slice frames
 (density, temperature, Y_e, radiation-M1 fields, neutrino energies) with optional
 compact-object tracker, black-hole apparent-horizon and AMR-grid overlays.
-Physical quantities are converted through ```kplot.athenak_units```
+Physical quantities are converted through ```kplot.system.units```
 (```code```/```cgs```/```ngs```). The slice plane is selectable
 (```plane```: ```xy```, ```xz```, ```yz```)
 and the time axis/title units can be ```Msun``` (default) or ```ms```
@@ -136,6 +156,12 @@ batchtools ```output-XXXX``` restart segments:
   rate and magnetic flux on black-hole centred spheres, the dimensionless flux
   $\phi = \Phi_B / \sqrt{\dot{M} r_g^2}$ (Gaussian units, MAD at $\phi \sim 50$) and
   $\eta = L_\nu / (\dot{M} c^2)$ (figures ```fig_mad```, ```fig_eta_mdot```)
+- ```kplot.sphere.penrose``` - generalized Penrose process after
+  [Lasota et al. 2014](https://arxiv.org/abs/1310.7499): energy and angular-momentum fluxes
+  through spheres close to the horizon, their EM and matter parts, theta profiles,
+  the field-line angular velocity $\Omega_F / \omega_H$, and the Noether current
+  $P^\mu = -T^\mu_{\ t}$; optionally also $P^2$ on x-z slices through the black hole
+  from the 3D dumps
 Also here a pipeline exists under [```scripts/sphere/```](scripts/sphere/):
 ```bash
 cd scripts/sphere
@@ -146,6 +172,9 @@ bash run_butterfly.sh               # butterfly diagram at butterfly_radius (own
 bash run_butterfly.sh --plot        # re-plot without re-running the analysis
 bash run_mad.sh                     # SANE/MAD flux + cooling efficiency (own output dir)
 bash run_mad.sh --plot              # re-plot, e.g. with another mad_t_avg
+bash run_penrose.sh                 # Penrose analysis + plots + x-z slices (own output dir)
+bash run_penrose.sh --plot          # re-plot only
+bash run_penrose.sh --slices        # only redo the x-z slices (+ the quick re-plot)
 ```
 The butterfly diagram is written to ```<simpath>/butterfly_<R>M/```. Its time axis is
 ```t - t_merger``` if ```butterfly_t_merger``` is set in ```config.ini```, and the absolute
@@ -155,6 +184,13 @@ The MAD diagnostics are written to ```<simpath>/mad/```. They take $L_\nu$ and t
 merger time from the ```run_analysis.sh``` output directory, so run that first for
 $\eta$, and $M_\mathrm{BH}$ from the merged horizon summary (see the ```[mad]``` section of
 ```config.ini```).
+
+The Penrose outputs are written to ```<simpath>/penrose/```. The analysis needs
+```mhd_w_bcc```, ```adm``` and ```z4c``` sph output on spheres centred on the black hole
+(radii in ```penrose_radii```), the EOS table, and the horizon summary for $M_\mathrm{BH}$ and
+$\omega_H$. The slices also read the 3D dumps, the black-hole tracker and the horizon shape
+files. By default every 3D snapshot is plotted; set ```penrose_slice_snapshots``` to pick a few
+(see the ```[penrose]``` section of ```config.ini```).
 
 Each step is also an installed console script, so it can be run directly:
 ```bash
