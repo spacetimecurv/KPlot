@@ -1,7 +1,4 @@
-#########################################################################
-# File: parfile.py                                                      #
-# Description: Some utility for dealing with AthenaK parfiles.          #
-#########################################################################
+"""Utility for dealing with AthenaK parfiles."""
 
 # Built-in libraries.
 from pathlib import Path
@@ -14,7 +11,7 @@ class Parfile:
   parfiles.
   """
 
-  def __init__(self, parfile_path):
+  def __init__(self, parfile_path: str) -> None:
     """
     Initialize Parfile class object, by reading the
     specified parfile.
@@ -27,15 +24,12 @@ class Parfile:
     self.read_parfile()
 
   # Read parfile parameters, if existing.
-  def read_parfile(self):
+  def read_parfile(self) -> None:
     """
-    Read parfile and store the parfile parameters.
+    Read the parfile and store its blocks and parameter values in self.parfile_dict.
 
-    Parameters:
-    None
-
-    Returns;
-    Dict class member with the parfile blocks and parameter values.
+    Returns:
+    None.
     """
     if not self.parfile_path.is_file():
       raise SystemExit(f"File {self.parfile_path} does not exist!")
@@ -60,7 +54,7 @@ class Parfile:
       print("$ Parfile loaded successfully...")
 
   # Small getter function to get parameter value.
-  def get(self, block, key, default=None, typ=float):
+  def get(self, block: str, key: str, default: object = None, typ: type = float) -> object:
     """
     Getter function to return the value of a parameter within
     a certain block of the parfile.
@@ -68,11 +62,11 @@ class Parfile:
     Parameters:
     block   (str): Parfile <block>.
     key     (str): Parameter name.
-    default (str): Default value if value cannot be fetched.
+    default (object): Default value if value cannot be fetched.
     typ    (type): Type of the returned parameter.
 
     Returns:
-    Returns parameter value of type 'typ'.
+    Parameter value of type 'typ', or default.
     """
     try:
       return typ(self.parfile_dict[block][key])

@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_penrose.sh  —  KPlot generalized Penrose process analysis
+# run_penrose.sh  -  KPlot generalized Penrose process analysis
 #
 # Usage:
-#   bash run_penrose.sh [--analysis] [--plot] [--all]
+#   bash run_penrose.sh [--analysis] [--plot] [--all] [--slices]
 #
-# With no flags both steps (analysis, plot) are run.
+# --slices also plots P^2 on the x-z plane through the BH from the 3D dumps
+# (penrose_slice_snapshots; blank = all).
 #
-# Loads spheres close to the horizon and then evaluates the generalized 
+# With no flags (or --all) all steps (analysis, plot, slices) are run.
+#
+# Loads spheres close to the horizon and then evaluates the generalized
 # criteria for an active Penrose process by Lasota et al. 2014.
 #
 # Requires KPlot to be installed in the active Python environment:
@@ -20,9 +23,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/config.ini"
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Read paths from config.ini  (plain INI: parsed, never executed)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if [[ ! -f "${CONFIG_FILE}" ]]; then
   echo "ERROR: ${CONFIG_FILE} not found."
   echo "       Copy config.example.ini to config.ini and set 'simpath'."
@@ -59,14 +62,15 @@ if [[ -z "${SIMPATH}" ]]; then
   echo "ERROR: 'simpath' is not set in ${CONFIG_FILE}."; exit 1
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # RUN SETTINGS
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 JOBNAME="$(_cfg_get jobname)"
 N_WORKERS="$(_cfg_get n_workers)"
 PEN_RADII="$(_cfg_get penrose_radii)"
 PEN_HORIZON="$(_cfg_get penrose_horizon)"
 PEN_T_MERGER="$(_cfg_get penrose_t_merger)"
+PEN_SLICE_SNAPS="$(_cfg_get penrose_slice_snapshots)"
 EOS_TABLE="$(_cfg_get eos_table)"
 
 # Defaults: the black hole horizon of the merged run, extracted at `radius`.
@@ -75,7 +79,7 @@ EOS_TABLE="$(_cfg_get eos_table)"
 # Directory where the Penrose outputs are written.
 OUTPUT_DIR="${SIMPATH}/penrose"
 
-# ── auto-discover all output-*/sph directories (sorted) ──────────────────────
+# -- auto-discover all output-*/sph directories (sorted) ----------------------
 SPH_PATTERN="output-*/sph"
 if [[ "${BATCHTOOLS}" == "false" ]]; then
   SPH_PATTERN="sph"
@@ -86,29 +90,31 @@ for d in "${SIMPATH}"/${SPH_PATTERN}; do
   [[ -d "$d" ]] && SPH_DIRS+=("$d")
 done
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # ARG PARSING
-# ─────────────────────────────────────────────────────────────────────────────
-RUN_ANALYSIS=0; RUN_PLOT=0
+# -----------------------------------------------------------------------------
+RUN_ANALYSIS=0; RUN_PLOT=0; RUN_SLICES=0
 if [[ $# -eq 0 ]]; then
-  RUN_ANALYSIS=1; RUN_PLOT=1
+  RUN_ANALYSIS=1; RUN_PLOT=1; RUN_SLICES=1
 fi
 for arg in "$@"; do
   case "$arg" in
     --analysis) RUN_ANALYSIS=1 ;;
     --plot)     RUN_PLOT=1     ;;
-    --all)      RUN_ANALYSIS=1; RUN_PLOT=1 ;;
-    *) echo "Unknown flag: $arg"; echo "Usage: $0 [--analysis] [--plot] [--all]"; exit 1 ;;
+    --all)      RUN_ANALYSIS=1; RUN_PLOT=1; RUN_SLICES=1 ;;
+    --slices)   RUN_SLICES=1   ;;
+    *) echo "Unknown flag: $arg"; echo "Usage: $0 [--analysis] [--plot] [--all] [--slices]"; exit 1 ;;
   esac
 done
+[[ $RUN_SLICES -eq 1 && $RUN_ANALYSIS -eq 0 ]] && RUN_PLOT=1
 
 if [[ $RUN_ANALYSIS -eq 1 && ${#SPH_DIRS[@]} -eq 0 ]]; then
   echo "ERROR: no ${SPH_PATTERN} directories found under ${SIMPATH}"; exit 1
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # SETUP
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Prefer the installed console script; fall back to the module form if KPlot
 # has not been reinstalled since the kplot.sphere entry points were added.
 _kplot() {
@@ -129,6 +135,10 @@ PEN_ARGS=(--output-dir "${OUTPUT_DIR}")
 for r in ${PEN_RADII//,/ }; do PEN_ARGS+=(--radius "$r"); done
 [[ -n "${JOBNAME}"   ]] && PEN_ARGS+=(--jobname   "${JOBNAME}")
 [[ -n "${N_WORKERS}" ]] && PEN_ARGS+=(--n-workers "${N_WORKERS}")
+[[ $RUN_SLICES -eq 1 ]] && PEN_ARGS+=(--slices "${SIMPATH}" --horizon-file "${PEN_HORIZON}")
+if [[ $RUN_SLICES -eq 1 ]]; then
+  for n in ${PEN_SLICE_SNAPS//,/ }; do PEN_ARGS+=(--slice-snapshot "$n"); done
+fi
 
 PLOT_ARGS=()
 PLOT_ARGS+=(--horizon-file "${PEN_HORIZON}")
@@ -147,17 +157,17 @@ echo "============================================================"
 
 if [[ $RUN_ANALYSIS -eq 1 ]]; then
   echo ""
-  echo "── Penrose analysis ─────────────────────────────────────────────"
+  echo "-- Penrose analysis ---------------------------------------------"
   PLOT_FLAG=()
   [[ $RUN_PLOT -eq 1 ]] && PLOT_FLAG=(--plot "${PLOT_ARGS[@]}")
   _kplot kplot-sphere-penrose kplot.sphere.penrose \
     "${SPH_ARGS[@]}" "${PEN_ARGS[@]}" "${PLOT_FLAG[@]+"${PLOT_FLAG[@]}"}"
-  echo "── Penrose analysis done ────────────────────────────────────────"
+  echo "-- Penrose analysis done ----------------------------------------"
 elif [[ $RUN_PLOT -eq 1 ]]; then
   echo ""
-  echo "── Plotting Penrose diagnostics ─────────────────────────────────"
+  echo "-- Plotting Penrose diagnostics ---------------------------------"
   _kplot kplot-sphere-penrose kplot.sphere.penrose "${PEN_ARGS[@]}" --plot-only "${PLOT_ARGS[@]}"
-  echo "── Plotting done ────────────────────────────────────────────"
+  echo "-- Plotting done --------------------------------------------"
 fi
 
 echo ""

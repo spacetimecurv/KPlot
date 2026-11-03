@@ -1,7 +1,4 @@
-#########################################################################
-# File: meshblocks.py                                                   #
-# Description: Some MeshBlock utility.                                  #
-#########################################################################
+"""Some MeshBlock utility targeted for AthenaK."""
 
 # Built-in libraries.
 import itertools
@@ -20,7 +17,7 @@ class MeshBlock:
   Define MeshBlock class with various utilities targeted at AthenaK simulations.
   """
 
-  def __init__(self, parfile_path = None):
+  def __init__(self, parfile_path: str | None = None) -> None:
     """
     MeshBlock class initializer.
 
@@ -33,14 +30,17 @@ class MeshBlock:
 
   # Refinement function that predicts number of MeshBlocks based on
   # refinement criterion (wrapper).
-  def predict_meshblocks(self, mode = "disk", **refargs):
+  def predict_meshblocks(self, mode: str = "disk", **refargs) -> None:
     """
     Wrapper function predicting the number of MeshBlocks upon refinement,
     based on the refinement criterion used, and the underlying mesh from the parfile.
 
     Parameters:
     mode (str): Which refinement criterion is used.
-    **refargs : Dictionary of refinement arguments for each refinement function.
+    **refargs: Refinement arguments passed to the refinement function.
+
+    Returns:
+    None.
     """
     # Add more refinement criteria here.
     choices = ["disk"]
@@ -52,7 +52,7 @@ class MeshBlock:
       raise SystemExit(f"$ Choices are {choices}...")
 
   # Disk refinement function.
-  def __predict_meshblocks_disk(self, **kwargs):
+  def __predict_meshblocks_disk(self, **kwargs) -> None:
     """
     Function that predicts the number of MeshBlocks upon refinement
     of a criterion, where the same resolution is targeted within
@@ -68,6 +68,9 @@ class MeshBlock:
               'disk-tracker-path'. Also needs 'disk-t', i.e. the time at which to refine.
               Optionally, specify the number of nodes via 'nodes' and number of GPUs
               per node 'gpus-per-node' to get the load balancing after refinement.
+
+    Returns:
+    None.
     """
     print("\nPredicting MeshBlocks after disk refinement R < rmax & |z| < zmax...")
     # Arguments needed for the prediction.
@@ -145,46 +148,83 @@ class MeshBlock:
 
   # Function that builds an octree.
   @staticmethod
-  def build_octree(regions, xmin, xmax, nroot, maxlev):
+  def build_octree(regions: list, xmin: float, xmax: float, nroot: int,
+                   maxlev: int) -> set[tuple[int, int, int, int]]:
     """
     Builds an octree from the domain bounds 'xmin'/'xmax', the number of
     MeshBlocks on the root level, and the maximum refinement level of
     the AMR.
 
     Parameters:
-    regions: Refinement regions determined by the respective criterion.
+    regions (list): Refinement regions, each with a hits(lo, hi) method and a level.
     xmin (float): Lower domain boundary.
     xmax (float): Upper domain boundary.
     nroot  (int): Number of MeshBlocks on the root level.
     maxlev (int): Maximum refinement level.
+
+    Returns:
+    Set of leaf MeshBlocks as (level, i, j, k).
     """
     # Size of the MeshBlocks on the root level.
     w0 = (xmax - xmin) / nroot
 
     # Helper functions.
-    def bounds(L, i, j, k):
-      """Get the bounds of a MeshBlock on level 'L'."""
+    def bounds(L: int, i: int, j: int, k: int) -> tuple[np.ndarray, np.ndarray]:
+      """
+      Get the bounds of a MeshBlock on level 'L'.
+
+      Parameters:
+      L (int): Refinement level.
+      i, j, k (int): Logical location on that level.
+
+      Returns:
+      (lower corner, upper corner).
+      """
       w = w0 / 2**L
       lo = np.array([xmin + i*w, xmin + j*w, xmin + k*w])
       return lo, lo + w
 
 
-    def target(key):
+    def target(key: tuple[int, int, int, int]) -> int:
       """
       Get the target refinement level based on if MeshBlock fulfills
       any of the criteria in 'regions'.
+
+      Parameters:
+      key (tuple): MeshBlock as (level, i, j, k).
+
+      Returns:
+      Highest level of the regions hitting the MeshBlock (0 if none).
       """
       lo, hi = bounds(*key)
       return max([r.level for r in regions if r.hits(lo, hi)], default=0)
 
 
-    def children(L, i, j, k):
-      """Get the children MeshBlocks after refinement."""
+    def children(L: int, i: int, j: int, k: int) -> list[tuple[int, int, int, int]]:
+      """
+      Get the children MeshBlocks after refinement.
+
+      Parameters:
+      L (int): Refinement level.
+      i, j, k (int): Logical location on that level.
+
+      Returns:
+      The eight children as (level, i, j, k).
+      """
       return [(L+1, 2*i+a, 2*j+b, 2*k+c) for a in (0, 1) for b in (0, 1) for c in (0, 1)]
 
 
-    def find(L, i, j, k):
-      """Find neighboring blocks."""
+    def find(L: int, i: int, j: int, k: int) -> tuple[int, int, int, int] | None:
+      """
+      Find the leaf covering a (possibly neighboring) MeshBlock location.
+
+      Parameters:
+      L (int): Refinement level.
+      i, j, k (int): Logical location on that level.
+
+      Returns:
+      The covering leaf as (level, i, j, k), or None if outside the domain.
+      """
       n = nroot * 2**L
       if not (0 <= i < n and 0 <= j < n and 0 <= k < n):
         return None
@@ -225,7 +265,7 @@ class OriginRadius:
   Determines whether minimum corner distance from origin is below some radius
   (needed for RefineRadii refinement).
   """
-  def __init__(self, r, level):
+  def __init__(self, r: float, level: int) -> None:
     """
     OriginRadius initializer.
 
@@ -236,14 +276,17 @@ class OriginRadius:
     self.r, self.level = r, level
 
   # Whether a cell is a distance from the origin below the tracker radius.
-  def hits(self, lo, hi):
+  def hits(self, lo: np.ndarray, hi: np.ndarray) -> bool:
     """
     Determines whether a cell is below the tracker radius and therefore
     flagged for refinement.
 
     Parameters:
-    lo (float): Lower bound of the block.
-    hi (float): Upper bound of the block.
+    lo (np.ndarray): Lower corner of the block.
+    hi (np.ndarray): Upper corner of the block.
+
+    Returns:
+    True if the block is refined.
     """
     corners = np.array(list(itertools.product(*zip(lo, hi))))
     return np.min(np.sum(corners**2, axis=1)) < self.r**2
@@ -255,7 +298,7 @@ class RefineDisk:
     Class that determines closest point of a block to the axis
     R < rmax and |z| < zmax.
     """
-    def __init__(self, c, rmax, zmax, level):
+    def __init__(self, c: list, rmax: float, zmax: float, level: int) -> None:
       """
       Initialize RefineDisk class.
 
@@ -268,14 +311,17 @@ class RefineDisk:
       self.c, self.rmax, self.zmax, self.level = np.asarray(c, float), rmax, zmax, level
 
     # Whether a MeshBlock with bounds will be refined by disk refinement criterion.
-    def hits(self, lo, hi):
+    def hits(self, lo: np.ndarray, hi: np.ndarray) -> bool:
       """
       Determines whether a block with bounds 'lo' and 'hi'
       will be refined based on the disk refinement criterion.
 
       Parameters:
-      lo (float): Lower bound of the block.
-      hi (float): Upper bound of the block.
+      lo (np.ndarray): Lower corner of the block.
+      hi (np.ndarray): Upper corner of the block.
+
+      Returns:
+      True if the block is refined.
       """
       p = np.clip(0.0, lo - self.c, hi - self.c)
       return p[0]**2 + p[1]**2 < self.rmax**2 and abs(p[2]) < self.zmax

@@ -1,13 +1,13 @@
-#########################################################################
-# File: bin_convert.py                                                  #
-# Description: Binary file reader of athenak/vis/python.                #
-#########################################################################
+"""Read .bin dumps by AthenaK (mirrors the built-in K reader)."""
+
+# Built-in libraries.
+from collections.abc import Callable
 
 # Third-party libraries.
 import numpy as np
 
 
-def read_binary(filename):
+def read_binary(filename: str, keep: Callable[[tuple], bool] | None = None) -> dict:
   """
   Reads a bin file from filename to dictionary.
 
@@ -15,13 +15,12 @@ def read_binary(filename):
   Updated to support mesh refinement by George Wong (gnwong@ias.edu) on 01/27/2022
   Made faster by Drummond Fielding on 09/09/2024
 
-  args:
-    filename - string
-        filename of bin file to read
+  Parameters:
+  filename (str): filename of bin file to read
+  keep (callable): keep(mb_geometry) -> bool; meshblocks it rejects are skipped unread
 
-  returns:
-    filedata - dict
-        dictionary of fluid file data
+  Returns:
+  dict of the file data.
   """
 
   filedata = {}
@@ -73,7 +72,18 @@ def read_binary(filename):
   varfmt = "d" if varsizebytes == 8 else "f"
 
   # load grid information from header and validate
-  def get_from_header(header, blockname, keyname):
+  def get_from_header(header: list[str], blockname: str, keyname: str) -> str:
+    """
+    Look up one parameter in the par dump of the file header.
+
+    Parameters:
+    header (list[str]): Header lines.
+    blockname (str): Parfile <block>.
+    keyname (str): Parameter name.
+
+    Returns:
+    The parameter value as a string.
+    """
     blockname = blockname.strip()
     keyname = keyname.strip()
     if not blockname.startswith("<"):
@@ -131,6 +141,10 @@ def read_binary(filename):
             dtype=np.float64 if locfmt == "d" else np.float32,
         )
     )
+    if keep is not None and not keep(mb_geometry[-1]):
+      fp.seek(nx1_out * nx2_out * nx3_out * n_vars * varsizebytes, 1)
+      del mb_index[-1], mb_logical[-1], mb_geometry[-1]
+      continue
 
     data = np.fromfile(
         fp,

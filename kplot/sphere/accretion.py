@@ -25,10 +25,19 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy.ndimage import uniform_filter1d
 
-MSUN_TO_MS = 6.67430e-11 * 1.98892e30 / 2.99792458e8**3 * 1e3  # 4.9268e-3
+from ..utils.constants import MSUN_TO_MS
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
+  """
+  Command-line entry point of the accretion analysis.
+
+  Parameters:
+  argv (list[str]): Command-line arguments (default: sys.argv).
+
+  Returns:
+  None.
+  """
   p = argparse.ArgumentParser(description=__doc__,
                               formatter_class=argparse.RawDescriptionHelpFormatter)
   p.add_argument("--analysis-dir", required=True,

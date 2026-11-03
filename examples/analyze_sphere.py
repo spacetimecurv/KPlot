@@ -1,7 +1,4 @@
-#########################################################################
-# File: analyze_sphere.py                                               #
-# Description: Ejecta + neutrino analysis of AthenaK sph output.        #
-#########################################################################
+"""Ejecta + neutrino analysis from surfaces."""
 
 # Analysis of AthenaK's spherical-surface extraction output (file_type = sph):
 # what crosses the extraction sphere.

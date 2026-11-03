@@ -3,10 +3,10 @@ Ejecta analysis on an AthenaK spherical extraction surface: Mej_rate + 2D
 ejecta histogram (vinf x theta).
 
 Per snapshot, loads 6 VTK files:
-  <job>.r=R.mhd_w_bcc.NNNNN.vtk — primitives dens, s_00, T (primitive variables)
-  <job>.r=R.adm.NNNNN.vtk       — adm_gxx..gyz             (ADM 3-metric)
-  <job>.r=R.z4c_alpha.NNNNN.vtk — z4c_alpha                (lapse)
-  <job>.r=R.z4c_beta*.NNNNN.vtk — z4c_beta*                (shift)
+  <job>.r=R.mhd_w_bcc.NNNNN.vtk - primitives dens, s_00, T (primitive variables)
+  <job>.r=R.adm.NNNNN.vtk       - adm_gxx..gyz             (ADM 3-metric)
+  <job>.r=R.z4c_alpha.NNNNN.vtk - z4c_alpha                (lapse)
+  <job>.r=R.z4c_beta*.NNNNN.vtk - z4c_beta*                (shift)
 
 The 2D histogram dMej[i_v, i_theta] unifies the former separate vinf histogram
 and rhoej_theta outputs: its marginals reproduce both.
@@ -28,22 +28,17 @@ Command line:
     [--per_iteration_out True]
 """
 
-import argparse
 import os
-from multiprocessing import Pool, cpu_count
 
-import h5py
 import numpy as np
 from scipy.integrate import simpson
-from scipy.interpolate import RegularGridInterpolator
 
-from athplot.utils.units import cgs
-
-from ._files import Shell, locate
-from ._integrate import get_riemann_weights, sum_over_time
-
-# M_sun in seconds (G M_sun / c^3), for the --t-post-ms window.
-MSUN_TO_S = 6.67430e-11 * 1.98892e30 / 2.99792458e8**3
+from ..utils.cli import bool_arg, sphere_parser
+from ..utils.constants import MSUN_TO_S
+from ..utils.eos import enthalpy, load_eos
+from ..utils.grmhd import fluid, sqrt_det
+from ..utils.quadrature import sum_over_time
+from ..utils.surface import Surface, run, save_centers, stack
 
 DEFAULT_RADIUS = 300.0
 DEFAULT_DFLOOR = 3e-15
@@ -51,385 +46,172 @@ DEFAULT_JOBNAME = "bns"
 DEFAULT_DV = 0.01
 DEFAULT_DYE = 0.01
 
-# The sph output variables a snapshot needs, in the order the worker unpacks them.
-VARIABLES = ('mhd_w_bcc', 'adm', 'z4c_alpha', 'z4c_betax', 'z4c_betay', 'z4c_betaz')
 
+def velocity_bins(dv: float = DEFAULT_DV) -> np.ndarray:
+  """
+  Bin edges for vinf [c] on [0, 1].
 
-def velocity_bins(dv=DEFAULT_DV):
-  """Bin edges for vinf [c] on [0, 1]."""
+  Parameters:
+  dv (float): Bin width.
+
+  Returns:
+  The bin edges.
+  """
   return np.arange(0.0, 1.0 + dv, dv)
 
 
-def ye_bins(dye=DEFAULT_DYE):
-  """Bin edges for the electron fraction Y_e on [0, 0.6]."""
+def ye_bins(dye: float = DEFAULT_DYE) -> np.ndarray:
+  """
+  Bin edges for the electron fraction Y_e on [0, 0.6].
+
+  Parameters:
+  dye (float): Bin width.
+
+  Returns:
+  The bin edges.
+  """
   return np.arange(0.0, 0.6 + dye, dye)
 
 
-def bin_centers(edges):
-  return 0.5 * (edges[:-1] + edges[1:])
-
-
-# ===================================================================
-# EOS table
-# ===================================================================
-
-def load_eos(path):
-  """Load a PyCompOSE HDF5 table and build enthalpy interpolators.
-
-  Returns a dict with:
-    interp_e, interp_p_rho  — interpolators for Q7 and p/(nb*m_n)
-    mn_mev                  — neutron mass [MeV]
-    h_min                   — minimum specific enthalpy over the table
-    nb_min, nb_max, ye_min, ye_max, t_min, t_max  — table bounds
+def bin_centers(edges: np.ndarray) -> np.ndarray:
   """
-  with h5py.File(path, 'r') as f:
-    nb_axis = f['nb'][:]         # [fm^-3]
-    yq_axis = f['yq'][:]         # [dimensionless]
-    t_axis  = f['t'][:]          # [MeV]
-    mn_mev  = float(f['mn'][()]) # neutron mass [MeV]
-    Q1_grid = f['Q1'][:]         # p / nb  [MeV]
-    Q7_grid = f['Q7'][:]         # e / (nb * m_n) - 1
+  Centers of the bins.
 
-  log_nb_axis = np.log(nb_axis)
-  log_t_axis  = np.log(t_axis)
+  Parameters:
+  edges (np.ndarray): Bin edges.
 
-  nb_min, nb_max = nb_axis.min(), nb_axis.max()
-  t_min,  t_max  = t_axis.min(),  t_axis.max()
-  ye_min, ye_max = yq_axis.min(), yq_axis.max()
-
-  # Minimum specific enthalpy h = 1 + e/(nb*m_n) + p/(nb*m_n)
-  # over the full EOS table — used in the Bernoulli unbound criterion.
-  h_min = np.min(1.0 + Q7_grid + Q1_grid / mn_mev)
-
-  interp_e = RegularGridInterpolator(
-    (log_nb_axis, yq_axis, log_t_axis), Q7_grid,
-    method='linear', bounds_error=False, fill_value=None,
-  )
-  interp_p_rho = RegularGridInterpolator(
-    (log_nb_axis, yq_axis, log_t_axis), Q1_grid / mn_mev,
-    method='linear', bounds_error=False, fill_value=None,
-  )
-
-  return dict(
-    interp_e=interp_e,
-    interp_p_rho=interp_p_rho,
-    mn_mev=mn_mev,
-    h_min=h_min,
-    nb_min=nb_min,
-    nb_max=nb_max,
-    ye_min=ye_min,
-    ye_max=ye_max,
-    t_min=t_min,
-    t_max=t_max,
-  )
+  Returns:
+  The bin centers.
+  """
+  return 0.5 * (edges[:-1] + edges[1:])
 
 
 # ===================================================================
 # Main analysis
 # ===================================================================
 
-# Per-worker state set by the Pool initializer (once per worker process).
-_W_EOS     = None
-_W_MN_GRAM = None
-_W_V_BINS  = None
-_W_YE_BINS = None
+def _compute(s: Surface, ctx: dict) -> dict:
+  """
+  Ejecta rates, mean properties and histograms on the surface, for the
+  geodesic and Bernoulli criteria.
 
+  Parameters:
+  s (Surface): Extraction surface of one snapshot.
+  ctx (dict): 'eos', 'dfloor', 'v_bins', 'ye_bins' and 't_stop'.
 
-def _init_ejecta_worker(eos, mn_gram, v_bins, ye_bins_):
-  """Pool initializer: load the EOS and histogram bins into each worker once."""
-  global _W_EOS, _W_MN_GRAM, _W_V_BINS, _W_YE_BINS
-  _W_EOS     = eos
-  _W_MN_GRAM = mn_gram
-  _W_V_BINS  = v_bins
-  _W_YE_BINS = ye_bins_
+  Returns:
+  The per-snapshot results, keyed by quantity and criterion.
+  """
+  eos = ctx['eos']
+  dens, ye = s['dens'], s['s_00']
+  f = fluid(s.metric, s.alpha, s.beta, s.vel)
+  ur, ut_cov = s.radial(f['u_up']), f['u_t']
+  hut_cov = enthalpy(eos, dens, ye, s['temperature']) * ut_cov
 
+  mask_out = (ur > 0) & (dens > ctx['dfloor'])
+  mask_Ber = (hut_cov < -eos['h_min']) & mask_out
+  mask_geo = (ut_cov < -1) & mask_out
 
-def _process_snapshot_ejecta(args):
-  """Per-snapshot worker for ejecta analysis."""
-  (mhd_file, adm_file, alpha_file, betax_file, betay_file, betaz_file,
-    riemann_weights, theta_edges, dfloor, t_stop) = args
-
-  import numpy as _np
-  from athplot.utils.units import (conv_dens as _conv_dens,
-                                    cactus as _cactus, cgs as _cgs)
-
-  import os as _os
-
-  from ._files import Shell as _Shell, CENTER_TOL as _CENTER_TOL
-  from ._integrate import calc_ur as _calc_ur, sqrt_det_metric_adm as _sqrt_det
-
-  # ------- EJECTA -------
-  eos     = _W_EOS
-  mn_gram = _W_MN_GRAM
-
-  # Every entry is (path, surface index): a dump may hold more than one radius.
-  mhd   = _Shell(*mhd_file)
-  adm   = _Shell(*adm_file)
-  alpha = _Shell(*alpha_file)
-  betax = _Shell(*betax_file)
-  betay = _Shell(*betay_file)
-  betaz = _Shell(*betaz_file)
-
-  time  = mhd.time
-  r     = mhd.radius
-  theta = mhd.theta
-  phi   = mhd.phi
-
-  shells  = (mhd, adm, alpha, betax, betay, betaz)
-  centers = _np.array([sh.center for sh in shells])
-  if not _np.allclose(centers, centers[0], rtol=0.0, atol=_CENTER_TOL):
-    detail = '\n'.join(f'  {_os.path.basename(sh.path)}: '
-                        f'({c[0]:.6g}, {c[1]:.6g}, {c[2]:.6g})'
-                        for sh, c in zip(shells, centers))
-    raise RuntimeError(
-        f'Sphere centers disagree at t = {time:g} M_sun:\n{detail}\n'
-        'Every sph output block feeding the ejecta analysis must use the same '
-        'center_tracker.')
-
-  z4c_alpha_raw = alpha.shell('z4c_alpha')
-  phi_zero    = (phi == phi.min())
-  theta_north = (theta == theta.min())
-  dup_corr = _np.ones(z4c_alpha_raw.shape)
-  if z4c_alpha_raw[phi_zero & ~theta_north].max() > 1.0:
-    dup_corr[phi_zero] = 0.5
-  if z4c_alpha_raw[theta_north].max() > 1.0:
-    dup_corr[theta_north] = 0.25
-
-  dens        = mhd.shell('dens')        * dup_corr
-  ye          = mhd.shell('s_00')        * dup_corr
-  temperature = mhd.shell('temperature') * dup_corr
-  velx = mhd.shell('velx') * dup_corr
-  vely = mhd.shell('vely') * dup_corr
-  velz = mhd.shell('velz') * dup_corr
-
-  gxx = adm.shell('adm_gxx') * dup_corr
-  gyy = adm.shell('adm_gyy') * dup_corr
-  gzz = adm.shell('adm_gzz') * dup_corr
-  gxy = adm.shell('adm_gxy') * dup_corr
-  gxz = adm.shell('adm_gxz') * dup_corr
-  gyz = adm.shell('adm_gyz') * dup_corr
-  z4c_alpha = z4c_alpha_raw * dup_corr
-  z4c_betax = betax.shell('z4c_betax') * dup_corr
-  z4c_betay = betay.shell('z4c_betay') * dup_corr
-  z4c_betaz = betaz.shell('z4c_betaz') * dup_corr
-
-  input_shape = dens.shape
-  nb = _conv_dens(_cactus, _cgs, dens) * 1e-39 / mn_gram
-
-  pts = _np.column_stack((
-      _np.log(_np.clip(nb.flatten(), eos['nb_min'], eos['nb_max'])),
-      _np.clip(ye.flatten(), eos['ye_min'], eos['ye_max']),
-      _np.log(_np.clip(temperature.flatten(), eos['t_min'], eos['t_max'])),
-  ))
-  e_interp = eos['interp_e'](pts).reshape(input_shape)
-  p_rho    = eos['interp_p_rho'](pts).reshape(input_shape)
-  h        = 1.0 + e_interp + p_rho
-
-  W = _np.sqrt(1.0 + gxx*velx**2 + gyy*vely**2 + gzz*velz**2
-                + 2*gxy*velx*vely + 2*gxz*velx*velz + 2*gyz*vely*velz)
-  ut_contrav = W / z4c_alpha
-  ux_u = velx - z4c_betax * ut_contrav
-  uy_u = vely - z4c_betay * ut_contrav
-  uz_u = velz - z4c_betaz * ut_contrav
-  ur = _calc_ur(ux_u, uy_u, uz_u, theta, phi)
-  ut_cov = (- z4c_alpha * W
-            + gxx*z4c_betax*velx + gyy*z4c_betay*vely + gzz*z4c_betaz*velz
-            + gxy*(z4c_betax*vely + z4c_betay*velx)
-            + gxz*(z4c_betax*velz + z4c_betaz*velx)
-            + gyz*(z4c_betay*velz + z4c_betaz*vely))
-
-  mask_floor = dens > dfloor
-  mask_out   = (ur > 0) & mask_floor
-  hut_cov    = h * ut_cov
-  mask_Ber   = (hut_cov < -eos["h_min"])             & mask_out
-  mask_geo   = (ut_cov  < -1)             & mask_out
-
-  sqrt_det       = _sqrt_det(gxx, gyy, gzz, gxy, gxz, gyz, z4c_alpha)
-  base_integrand = dens * ur * sqrt_det * r**2 * _np.sin(theta)
-
-  cell_rate     = base_integrand * riemann_weights
-  flux_rate_geo = _np.where(mask_geo, cell_rate, 0.0)
-  flux_rate_Ber = _np.where(mask_Ber, cell_rate, 0.0)
-
+  cell_rate = dens * ur * sqrt_det(s.metric) * s.alpha * s.dA
+  flux_rate_geo = np.where(mask_geo, cell_rate, 0.0)
+  flux_rate_Ber = np.where(mask_Ber, cell_rate, 0.0)
   total_geo = flux_rate_geo.sum()
   total_Ber = flux_rate_Ber.sum()
 
-  vinf_geo = _np.sqrt(_np.where(ut_cov  < -1, 1.0 - ut_cov**-2, 0.0))
-  vinf_Ber = _np.sqrt(_np.where(hut_cov < -eos["h_min"],
-                                1.0 - (eos["h_min"] / hut_cov)**2, 0.0))
+  vinf_geo = np.sqrt(np.where(ut_cov < -1, 1.0 - ut_cov**-2, 0.0))
+  vinf_Ber = np.sqrt(np.where(hut_cov < -eos['h_min'],
+                              1.0 - (eos['h_min'] / hut_cov)**2, 0.0))
+
+  def avg(x: np.ndarray, w: np.ndarray, tot: float) -> float:
+    """
+    Weighted mean of x (0 if the total weight is 0).
+
+    Parameters:
+    x (np.ndarray): Values.
+    w (np.ndarray): Weights.
+    tot (float): Sum of the weights.
+
+    Returns:
+    The weighted mean.
+    """
+    return np.sum(x * w) / tot if tot > 0 else 0.0
 
   result = {
-    'time':         time,
-    'center':       centers[0],
-    'Mej_rate':     _np.where(mask_out, cell_rate, 0.0).sum(),
+    'theta':        s.theta_1d,
+    'Mej_rate':     np.where(mask_out, cell_rate, 0.0).sum(),
     'Mej_rate_geo': total_geo,
     'Mej_rate_Ber': total_Ber,
-    'vinf_avg_geo': (_np.sum(vinf_geo * flux_rate_geo) / total_geo if total_geo > 0 else 0.0),
-    'vinf_avg_Ber': (_np.sum(vinf_Ber * flux_rate_Ber) / total_Ber if total_Ber > 0 else 0.0),
-    'ye_avg_geo':   (_np.sum(ye * flux_rate_geo) / total_geo if total_geo > 0 else 0.0),
-    'ye_avg_Ber':   (_np.sum(ye * flux_rate_Ber) / total_Ber if total_Ber > 0 else 0.0),
-    'in_2d':        time <= t_stop,
+    'vinf_avg_geo': avg(vinf_geo, flux_rate_geo, total_geo),
+    'vinf_avg_Ber': avg(vinf_Ber, flux_rate_Ber, total_Ber),
+    'ye_avg_geo':   avg(ye, flux_rate_geo, total_geo),
+    'ye_avg_Ber':   avg(ye, flux_rate_Ber, total_Ber),
+    'in_2d':        s.time <= ctx['t_stop'],
   }
+  if not result['in_2d']:
+    return result
 
-  if result['in_2d']:
-    sel_geo = (ut_cov  < -1).flatten()
-    sel_Ber = (hut_cov < -eos["h_min"]).flatten()
-    result['hist2d_geo'], _, _ = _np.histogram2d(
-      vinf_geo.flatten()[sel_geo], theta.flatten()[sel_geo],
-      bins=[_W_V_BINS, theta_edges],
-      weights=flux_rate_geo.flatten()[sel_geo],
-    )
-    result['hist2d_Ber'], _, _ = _np.histogram2d(
-      vinf_Ber.flatten()[sel_Ber], theta.flatten()[sel_Ber],
-      bins=[_W_V_BINS, theta_edges],
-      weights=flux_rate_Ber.flatten()[sel_Ber],
-    )
-    result['hist_ye_geo'], _ = _np.histogram(
-      ye.flatten()[sel_geo], bins=_W_YE_BINS,
-      weights=flux_rate_geo.flatten()[sel_geo],
-    )
-    result['hist_ye_Ber'], _ = _np.histogram(
-      ye.flatten()[sel_Ber], bins=_W_YE_BINS,
-      weights=flux_rate_Ber.flatten()[sel_Ber],
-    )
-    result['hist2d_ye_theta_geo'], _, _ = _np.histogram2d(
-      ye.flatten()[sel_geo], theta.flatten()[sel_geo],
-      bins=[_W_YE_BINS, theta_edges],
-      weights=flux_rate_geo.flatten()[sel_geo],
-    )
-    result['hist2d_ye_theta_Ber'], _, _ = _np.histogram2d(
-      ye.flatten()[sel_Ber], theta.flatten()[sel_Ber],
-      bins=[_W_YE_BINS, theta_edges],
-      weights=flux_rate_Ber.flatten()[sel_Ber],
-    )
-
+  theta = s.theta.ravel()
+  theta_edges = s.theta_edges
+  for crit, sel, vinf, w in (('geo', ut_cov < -1, vinf_geo, flux_rate_geo),
+                             ('Ber', hut_cov < -eos['h_min'], vinf_Ber, flux_rate_Ber)):
+    sel, w, y = sel.ravel(), w.ravel()[sel.ravel()], ye.ravel()[sel.ravel()]
+    result[f'hist2d_{crit}'] = np.histogram2d(vinf.ravel()[sel], theta[sel],
+                                              bins=[ctx['v_bins'], theta_edges], weights=w)[0]
+    result[f'hist_ye_{crit}'] = np.histogram(y, bins=ctx['ye_bins'], weights=w)[0]
+    result[f'hist2d_ye_theta_{crit}'] = np.histogram2d(y, theta[sel],
+                                                       bins=[ctx['ye_bins'], theta_edges],
+                                                       weights=w)[0]
   return result
 
 
-def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
-            dfloor=DEFAULT_DFLOOR, t_stop=np.inf, jobname=DEFAULT_JOBNAME,
-            n_workers=None, dv=DEFAULT_DV, dye=DEFAULT_DYE,
-            per_iteration_out=False):
-  """Run the ejecta analysis over every snapshot found in `sph_dirs`.
-
-  Parameters
-  ----------
-  sph_dirs : list of str
-      AthenaK ``output-XXXX/sph`` directories to scan (all treated as one run).
-  eos_table : str
-      Path to the PyCompOSE HDF5 EOS table (must match the simulation EOS).
-  output_dir : str
-      Directory the .txt/.npy outputs are written to.
-  radius : float
-      SPH extraction radius [M_sun]; must have mhd_w_bcc/adm/z4c output.  A dump
-      bundling several radii is accepted, and the surface at `radius` is used.
-  dfloor : float
-      Density floor used in the simulation [code units].
-  t_stop : float
-      Include snapshots up to this time [M_sun] in the 2D histogram.  The
-      Mej_rate time series always accumulates every snapshot.
-  jobname : str
-      AthenaK job name prefixing the VTK files (``<jobname>.r=R....vtk``, or
-      ``<jobname>.r=RMIN-RMAX....vtk`` when one dump holds several radii).
-  n_workers : int, optional
-      Worker processes for the snapshot loop.  Default: min(8, cpu_count()).
-  per_iteration_out: bool, optional
-      Whether per iteration output of the histograms should be enabled.
+def analyze(sph_dirs: list[str], eos_table: str, output_dir: str,
+            radius: float = DEFAULT_RADIUS, dfloor: float = DEFAULT_DFLOOR,
+            t_stop: float = np.inf, jobname: str = DEFAULT_JOBNAME,
+            n_workers: int | None = None, dv: float = DEFAULT_DV, dye: float = DEFAULT_DYE,
+            per_iteration_out: bool = False) -> None:
   """
-  if n_workers is None:
-    n_workers = min(8, cpu_count())
+  Run the ejecta analysis over every snapshot found in sph_dirs.
 
+  Parameters:
+  sph_dirs (list[str]): AthenaK output-XXXX/sph directories (all treated as one run).
+  eos_table (str): Path to the PyCompOSE HDF5 EOS table (must match the simulation EOS).
+  output_dir (str): Directory the outputs are written to.
+  radius (float): SPH extraction radius [M_sun]; must have mhd_w_bcc/adm/z4c output.
+  dfloor (float): Density floor used in the simulation [code units].
+  t_stop (float): Include snapshots up to this time [M_sun] in the 2D histogram; the
+                  Mej_rate time series always accumulates every snapshot.
+  jobname (str): AthenaK job name prefixing the VTK files.
+  n_workers (int): Worker processes for the snapshot loop (default: min(8, cpu_count())).
+  dv (float): Bin width of vinf [c].
+  dye (float): Bin width of Y_e.
+  per_iteration_out (bool): Also write the histograms of every snapshot.
+
+  Returns:
+  None.
+  """
   v_bins     = velocity_bins(dv)
   v_centers  = bin_centers(v_bins)
   ye_bins_   = ye_bins(dye)
   ye_centers = bin_centers(ye_bins_)
 
-  # ------------------------------------------------------------------
-  # Locate the dumps holding `radius` and build the snapshot index.  An output
-  # block may write one surface per file or bundle several radii into one file,
-  # and the two forms can be mixed between variables within a run, so every
-  # variable is looked up on its own.
-  # ------------------------------------------------------------------
-  located = {v: locate(sph_dirs, jobname, v, radius) for v in VARIABLES}
-  for v in VARIABLES:
-    print(f"  {located[v].describe()}")
+  ctx = dict(eos=load_eos(eos_table), v_bins=v_bins, ye_bins=ye_bins_,
+             dfloor=dfloor, t_stop=t_stop)
+  results = run(sph_dirs, jobname, radius, _compute, ctx=ctx,
+                n_workers=n_workers)[float(radius)]
+  theta_centers = np.sort(results[0]['theta'])
+  theta_edges = np.concatenate([[0.0], 0.5 * (theta_centers[:-1] + theta_centers[1:]),
+                                [np.pi]])
+  os.makedirs(output_dir, exist_ok=True)
+  save_centers(os.path.join(output_dir, 'sphere_center.txt'), results)
 
-  index_sets = [set(located[v].paths) for v in VARIABLES]
-  indices = sorted(set.intersection(*index_sets))
-  if not indices:
-    raise RuntimeError(
-      f"No snapshot in {list(sph_dirs)} has all of {', '.join(VARIABLES)} "
-      f"at r = {radius:g}.\n"
-      "Check the sph directories, the job name and the extraction radius.")
-  incomplete = len(set.union(*index_sets)) - len(indices)
-  if incomplete:
-    print(f"  [skip] {incomplete} snapshots missing one of {', '.join(VARIABLES)}")
-  print(f"Found {len(indices)} snapshots. Loading EOS and grid...")
-
-  eos     = load_eos(eos_table)
-  mn_gram = eos['mn_mev'] * cgs.eV * 1e6 / cgs.light_speed**2
-
-  # Compute Riemann weights and theta grid from first snapshot's geometry
-  _first_mhd = Shell(*located['mhd_w_bcc'].shell(indices[0]))
-  theta_1d        = _first_mhd.theta[0, :]
-  phi_1d          = _first_mhd.phi[:, 0]
-  riemann_weights = get_riemann_weights(
-      np.ones(_first_mhd.theta.shape), theta_1d, phi_1d)
-  theta_1d_sorted = np.sort(theta_1d)
-  theta_edges     = np.concatenate([[0.0],
-                                    0.5*(theta_1d_sorted[:-1]+theta_1d_sorted[1:]),
-                                    [np.pi]])
-  theta_centers   = theta_1d_sorted
-  del _first_mhd
-
-  # ------------------------------------------------------------------
-  # Build worker argument list
-  # ------------------------------------------------------------------
-  def _snapshot_files(idx):
-    """(path, surface index) of every variable of snapshot `idx`."""
-    return tuple(located[v].shell(idx) for v in VARIABLES)
-
-  worker_args = [
-    _snapshot_files(i) + (riemann_weights, theta_edges, dfloor, t_stop)
-    for i in indices
-  ]
-  print(f"Processing {len(worker_args)} snapshots with n_workers={n_workers}...")
-
-  # ------------------------------------------------------------------
-  # Parallel snapshot loop
-  # ------------------------------------------------------------------
-  init_args = (eos, mn_gram, v_bins, ye_bins_)
-  if n_workers > 1:
-    with Pool(n_workers,
-              initializer=_init_ejecta_worker,
-              initargs=init_args) as pool:
-      results = list(pool.imap_unordered(
-          _process_snapshot_ejecta, worker_args,
-          chunksize=max(1, len(worker_args) // (n_workers * 4))))
-  else:
-    _init_ejecta_worker(*init_args)
-    results = [_process_snapshot_ejecta(a) for a in worker_args]
-
-  results.sort(key=lambda r: r['time'])
-
-  # ------------------------------------------------------------------
-  # Unpack results
-  # ------------------------------------------------------------------
-  time_arr         = np.array([r['time']         for r in results])
-  Mej_rate_arr     = np.array([r['Mej_rate']     for r in results])
-  Mej_rate_geo_arr = np.array([r['Mej_rate_geo'] for r in results])
-  Mej_rate_Ber_arr = np.array([r['Mej_rate_Ber'] for r in results])
-  vinf_avg_geo_arr = np.array([r['vinf_avg_geo'] for r in results])
-  vinf_avg_Ber_arr = np.array([r['vinf_avg_Ber'] for r in results])
-  ye_avg_geo_arr   = np.array([r['ye_avg_geo']   for r in results])
-  ye_avg_Ber_arr   = np.array([r['ye_avg_Ber']   for r in results])
-  center_arr       = np.array([r['center']       for r in results])  # (Nt, 3)
-
-  center_shift = np.linalg.norm(center_arr - center_arr[0], axis=1).max()
-  print(f"Sphere center: ({center_arr[0][0]:.6g}, {center_arr[0][1]:.6g}, "
-        f"{center_arr[0][2]:.6g}) -> ({center_arr[-1][0]:.6g}, "
-        f"{center_arr[-1][1]:.6g}, {center_arr[-1][2]:.6g}) M_sun, "
-        f"max excursion {center_shift:.6g}")
+  time_arr         = stack(results, 'time')
+  Mej_rate_arr     = stack(results, 'Mej_rate')
+  Mej_rate_geo_arr = stack(results, 'Mej_rate_geo')
+  Mej_rate_Ber_arr = stack(results, 'Mej_rate_Ber')
+  vinf_avg_geo_arr = stack(results, 'vinf_avg_geo')
+  vinf_avg_Ber_arr = stack(results, 'vinf_avg_Ber')
+  ye_avg_geo_arr   = stack(results, 'ye_avg_geo')
+  ye_avg_Ber_arr   = stack(results, 'ye_avg_Ber')
 
   res_2d           = [r for r in results if r['in_2d']]
   if len(res_2d) < 2:
@@ -439,13 +221,13 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
       f"to integrate over time. Snapshots span "
       f"t = {time_arr.min():g} .. {time_arr.max():g} M_sun. "
       f"Check the merger time and the post-merger window (--t-post-ms).")
-  time_2d_arr           = np.array([r['time']               for r in res_2d])
-  hist2d_geo_arr        = np.array([r['hist2d_geo']          for r in res_2d])
-  hist2d_Ber_arr        = np.array([r['hist2d_Ber']          for r in res_2d])
-  hist_ye_geo_arr       = np.array([r['hist_ye_geo']         for r in res_2d])
-  hist_ye_Ber_arr       = np.array([r['hist_ye_Ber']         for r in res_2d])
-  hist2d_ye_theta_geo_arr = np.array([r['hist2d_ye_theta_geo'] for r in res_2d])
-  hist2d_ye_theta_Ber_arr = np.array([r['hist2d_ye_theta_Ber'] for r in res_2d])
+  time_2d_arr             = stack(res_2d, 'time')
+  hist2d_geo_arr          = stack(res_2d, 'hist2d_geo')
+  hist2d_Ber_arr          = stack(res_2d, 'hist2d_Ber')
+  hist_ye_geo_arr         = stack(res_2d, 'hist_ye_geo')
+  hist_ye_Ber_arr         = stack(res_2d, 'hist_ye_Ber')
+  hist2d_ye_theta_geo_arr = stack(res_2d, 'hist2d_ye_theta_geo')
+  hist2d_ye_theta_Ber_arr = stack(res_2d, 'hist2d_ye_theta_Ber')
 
   # ------------------------------------------------------------------
   # Post-processing
@@ -460,7 +242,7 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
   dMej_Ye_theta_Ber = sum_over_time(hist2d_ye_theta_Ber_arr, time_2d_arr)
 
   # Marginals
-  dMej_geo = dMej_2d_geo.sum(axis=1)          # (Nv,)  — vinf histogram
+  dMej_geo = dMej_2d_geo.sum(axis=1)          # (Nv,)  - vinf histogram
   dMej_Ber = dMej_2d_Ber.sum(axis=1)
 
   dtheta = np.diff(theta_edges)                # (Ntheta,)
@@ -501,8 +283,6 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
   # ------------------------------------------------------------------
   # Save outputs
   # ------------------------------------------------------------------
-  os.makedirs(output_dir, exist_ok=True)
-
   # -- Mej_rate --
   with open(os.path.join(output_dir, 'Mej_rate.txt'), 'w') as f:
     f.write('# time(Msun)    Mej_rate(Msun/Msun)\n')
@@ -518,11 +298,6 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
     f.write('# time(Msun)    Mej_rate_geo(Msun/Msun)\n')
     for t, rate in zip(time_arr, Mej_rate_geo_arr):
       f.write(f'{t:.6e}    {rate:.6e}\n')
-
-  np.savetxt(os.path.join(output_dir, 'sphere_center.txt'),
-              np.column_stack((time_arr, center_arr)),
-              header='time(Msun)    xc(Msun)    yc(Msun)    zc(Msun)',
-              fmt='%.6e')
 
   # -- Mass-averaged vinf --
   np.savetxt(os.path.join(output_dir, 'vinf_avg_geo.txt'),
@@ -587,36 +362,19 @@ def analyze(sph_dirs, eos_table, output_dir, radius=DEFAULT_RADIUS,
   print(f'All outputs saved to {output_dir}')
 
 
-def _bool_arg(value):
-  """Parse a boolean flag value.
-
-  run_analysis.sh forwards whatever config.ini holds, so '0' and 'False' have to
-  mean False — plain `type=bool` would make every non-empty string True.
+def main(argv: list[str] | None = None) -> None:
   """
-  v = value.strip().lower()
-  if v in ('1', 'true', 'yes', 'on'):
-    return True
-  if v in ('0', 'false', 'no', 'off', ''):
-    return False
-  raise argparse.ArgumentTypeError(f"expected a boolean, got '{value}'")
+  Command-line entry point of the ejecta analysis.
 
+  Parameters:
+  argv (list[str]): Command-line arguments (default: sys.argv).
 
-def main(argv=None):
-  p = argparse.ArgumentParser(description=__doc__,
-                              formatter_class=argparse.RawDescriptionHelpFormatter)
-  p.add_argument("--sph-dir", action="append", required=True, dest="sph_dirs",
-                  metavar="DIR",
-                  help="AthenaK output-XXXX/sph directory (repeat for each segment).")
+  Returns:
+  None.
+  """
+  p = sphere_parser(__doc__, radius=DEFAULT_RADIUS)
   p.add_argument("--eos-table", required=True,
                   help="PyCompOSE HDF5 EOS table matching the simulation EOS.")
-  p.add_argument("--output-dir", required=True,
-                  help="Directory for the .txt/.npy outputs.")
-  p.add_argument("--radius", type=float, default=DEFAULT_RADIUS,
-                  help=f"SPH extraction radius [M_sun]; picks the surface out of "
-                      f"dumps holding several radii. Default: {DEFAULT_RADIUS:g}.")
-  p.add_argument("--jobname", default=DEFAULT_JOBNAME,
-                  help=f"AthenaK job name prefixing the VTK files. "
-                      f"Default: {DEFAULT_JOBNAME}.")
   p.add_argument("--dfloor", type=float, default=DEFAULT_DFLOOR,
                   help=f"Simulation density floor [code units]. "
                       f"Default: {DEFAULT_DFLOOR:g}.")
@@ -626,14 +384,11 @@ def main(argv=None):
   p.add_argument("--t-post-ms", type=float, default=25.0,
                   help="Post-merger window [ms] included in the 2D histogram "
                       "(needs --t-merger). Default: 25.")
-  p.add_argument("--n-workers", type=int, default=None,
-                  help="Worker processes for the snapshot loop. "
-                      "Default: min(8, cpu_count()).")
   p.add_argument("--dv", type=float, default=DEFAULT_DV,
                   help=f"vinf bin width [c]. Default: {DEFAULT_DV:g}.")
   p.add_argument("--dye", type=float, default=DEFAULT_DYE,
                   help=f"Y_e bin width. Default: {DEFAULT_DYE:g}.")
-  p.add_argument("--per_iteration_out", type=_bool_arg, nargs='?', const=True,
+  p.add_argument("--per_iteration_out", type=bool_arg, nargs='?', const=True,
                   default=False,
                   help="Y_e hist per iteration output. Default: False.")
   args = p.parse_args(argv)

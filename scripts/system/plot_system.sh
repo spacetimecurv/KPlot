@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# plot_system.sh — KPlot full-run visualization script
+# plot_system.sh - KPlot full-run visualization script
 # ----------------------------------------------------
 # Thin wrapper around the KPlot full-run visualizer (kplot.system /
 # SystemPlotter).  All plotting logic lives in the installed KPlot package, so
@@ -20,9 +20,9 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/config.ini"
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Read paths from config.ini  (plain INI: parsed, never executed)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if [[ ! -f "${CONFIG_FILE}" ]]; then
     echo "ERROR: ${CONFIG_FILE} not found."
     echo "       Copy config.example.ini to config.ini and set 'simpath'."
@@ -108,7 +108,7 @@ else
     python3 -m kplot.system "${ARGS[@]}"
 fi
 
-# Stop here if rendering failed — otherwise the movie and DELETE_FRAMES steps
+# Stop here if rendering failed - otherwise the movie and DELETE_FRAMES steps
 # below would run against stale frames and could delete a previous good run.
 _rc=$?
 if [[ ${_rc} -ne 0 ]]; then
@@ -118,7 +118,7 @@ if [[ ${_rc} -ne 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Movie generation — automatically create MP4s from rendered frames
+# Movie generation - automatically create MP4s from rendered frames
 # ---------------------------------------------------------------------------
 MOVIE_FPS="$(_cfg_get movie_fps)"       # frames per second
 MOVIE_STRIDE="$(_cfg_get movie_stride)"     # use every Nth frame (1 = all)
@@ -128,7 +128,7 @@ echo "=== Making movies from ${FIGPATH} ==="
 bash "${SCRIPT_DIR}/make_movies.sh" "${MOVIE_FPS}" "${MOVIE_STRIDE}" "${FIGPATH}"
 
 # ---------------------------------------------------------------------------
-# Optional cleanup — delete the rendered frame PNGs (movies are kept)
+# Optional cleanup - delete the rendered frame PNGs (movies are kept)
 # ---------------------------------------------------------------------------
 if [[ "${DELETE_FRAMES}" == "true" ]]; then
     echo ""

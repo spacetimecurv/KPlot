@@ -1,7 +1,4 @@
-#########################################################################
-# File: units.py                                                        #
-# Description: Unit conversions for AthenaK data.                       #
-#########################################################################
+"""Unit conventions and conversion."""
 
 # Define the Units class.
 class Units:
@@ -9,11 +6,9 @@ class Units:
   A class defining different units systems and conversions.
   """
 
-  def __init__(self,
-               unit_system,
-               c, G, kb, Msun, MeV,
-               length, time, density, mass,
-               energy, pressure, temperature, chemical_potential):
+  def __init__(self, unit_system: str, c: float, G: float, kb: float, Msun: float, MeV: float,
+               length: float, time: float, density: float, mass: float, energy: float,
+               pressure: float, temperature: float, chemical_potential: float) -> None:
     """
     Instantiate the Units class, by defining constants/derived quantities.
 
@@ -23,7 +18,7 @@ class Units:
     G (float): Gravitational constant.
     kb (float): Boltzmann constant.
     Msun (float): Solar mass.
-    Mev (float): Temperature.
+    MeV (float): One MeV.
     length (float): Length scale.
     time (float): Time scale.
     density (float): Density scale.
@@ -51,119 +46,155 @@ class Units:
     self.chemical_potential = chemical_potential
 
   # Conversion between length of one Unit system with another.
-  def length_conversion(self, b):
+  def length_conversion(self, b: "Units") -> float:
     """
     Converts length between unit systems.
 
     Parameters:
     b (Units): Unit system to be converted into.
+
+    Returns:
+    Conversion factor.
     """
     return b.length / self.length
 
   # Conversion between time of one Unit system with another.
-  def time_conversion(self, b):
+  def time_conversion(self, b: "Units") -> float:
     """
     Converts time between unit systems.
 
     Parameters:
     b (Units): Unit system to be converted into.
+
+    Returns:
+    Conversion factor.
     """
     return b.time / self.time
 
   # Conversion between velocity of one Unit system with another.
-  def velocity_conversion(self, b):
+  def velocity_conversion(self, b: "Units") -> float:
     """
     Converts velocity between unit systems.
 
     Parameters:
     b (Units): Unit system to be converted into.
+
+    Returns:
+    Conversion factor.
     """
     return (b.length / self.length) * (self.time / b.time)
 
   # Conversion between density of one Unit system with another.
-  def density_conversion(self, b):
+  def density_conversion(self, b: "Units") -> float:
     """
     Converts density between unit systems.
 
     Parameters:
     b (Units): Unit system to be converted into.
+
+    Returns:
+    Conversion factor.
     """
     return b.density / self.density
 
   # Conversion between mass of one Unit system with another.
-  def mass_conversion(self, b):
+  def mass_conversion(self, b: "Units") -> float:
     """
     Converts mass between unit systems.
 
     Parameters:
     b (Units): Unit system to be converted into.
+
+    Returns:
+    Conversion factor.
     """
     return b.mass / self.mass
 
   # Conversion between mass density of one Unit system with another.
-  def mass_density_conversion(self, b):
+  def mass_density_conversion(self, b: "Units") -> float:
     """
     Converts mass density between unit systems.
 
     Parameters:
     b (Units): Unit system to be converted into.
+
+    Returns:
+    Conversion factor.
     """
     return (b.density / self.density) * (b.mass / self.mass)
 
   # Conversion between energy of one Unit system with another.
-  def energy_conversion(self, b):
+  def energy_conversion(self, b: "Units") -> float:
     """
     Converts energy between unit systems.
 
     Parameters:
     b (Units): Unit system to be converted into.
+
+    Returns:
+    Conversion factor.
     """
     return b.energy / self.energy
 
   # Conversion between energy density of one Unit system with another.
-  def energy_density_conversion(self, b):
+  def energy_density_conversion(self, b: "Units") -> float:
     """
     Converts energy density between unit systems.
 
     Parameters:
     b (Units): Unit system to be converted into.
+
+    Returns:
+    Conversion factor.
     """
     return (b.density / self.density) * (b.energy / self.energy)
 
   # Conversion between pressure of one Unit system with another.
-  def pressure_conversion(self, b):
+  def pressure_conversion(self, b: "Units") -> float:
     """
     Converts pressure between unit systems.
 
     Parameters:
     b (Units): Unit system to be converted into.
+
+    Returns:
+    Conversion factor.
     """
     return b.pressure / self.pressure
 
   # Conversion between temperature of one Unit system with another.
-  def temperature_conversion(self, b):
+  def temperature_conversion(self, b: "Units") -> float:
     """
     Converts temperature between unit systems.
 
     Parameters:
     b (Units): Unit system to be converted into.
+
+    Returns:
+    Conversion factor.
     """
     return b.temperature / self.temperature
 
   # Conversion between chemical potential of one Unit system with another.
-  def chemical_potential_conversion(self, b):
+  def chemical_potential_conversion(self, b: "Units") -> float:
     """
     Converts chemical potential between unit systems.
 
     Parameters:
     b (Units): Unit system to be converted into.
+
+    Returns:
+    Conversion factor.
     """
     return b.chemical_potential / self.chemical_potential
 
   # Function to print the current unit system.
-  def print_units(self):
+  def print_units(self) -> None:
     """
     Prints the current unit system.
+
+    Returns:
+    None.
     """
     print(f"=============== {self.unit_system} ===============")
     print(f"$ Speed of light: {self.c}")
@@ -181,9 +212,9 @@ class Units:
     print(f"$ Chemical potential scale: {self.chemical_potential}")
     print("Done.\n")
 
-  # CGS unit system based on CODATA values (2014).
+  # CGS unit system (G from CODATA 2018).
   @staticmethod
-  def CGS():
+  def CGS() -> "Units":
     """
     Defines the CGS unit system.
 
@@ -193,9 +224,9 @@ class Units:
     return Units(
       "CGS",
       2.99792458e10,   # cm / s
-      6.67408e-8,      # cm^3 g^-1 s^-2
+      6.67430e-8,      # cm^3 g^-1 s^-2
       1.38064852e-16,  # erg K^-1
-      1.98848e33,      # g
+      1.98892e33,      # g
       1.6021766208e-6, # erg
       1.0, 1.0, 1.0, 1.0,
       1.0, 1.0, 1.0, 1.0
@@ -203,7 +234,7 @@ class Units:
 
   # Gemetric solar unit system.
   @staticmethod
-  def GeometricSolar():
+  def GeometricSolar() -> "Units":
     """
     Defines the geometric solar unit system.
 
@@ -232,7 +263,7 @@ class Units:
 
   # MKS unit system.
   @staticmethod
-  def MKS():
+  def MKS() -> "Units":
     """
     Defines the MKS unit system.
 
@@ -268,13 +299,13 @@ class AthenaK_Units:
   A class defining AthenaK units.
   """
 
-  def __init__(self):
+  def __init__(self) -> None:
     """
     Instantiate the AthenaK units class.
     """
     self.cgs = Units.CGS()
 
-    # GeometricKilometer (GK) unit scales — G = c = 1, length unit = 1 km
+    # GeometricKilometer (GK) unit scales - G = c = 1, length unit = 1 km
     self.GK_press  = self.cgs.G / self.cgs.c**4 * 1e10 # 1 erg/cm^3  expressed in km^-2
     self.GK_volume = 1e-15                             # 1 cm^3      expressed in km^3
     self.GK_energy = self.cgs.G / self.cgs.c**4 * 1e-5                   # 1 erg       expressed in km
@@ -327,55 +358,118 @@ class AthenaK_Units:
     self.CODE2MEV_AVGENE = self.GK2NGS_ENEDENS / self.CODE2NGS_NUMDENS  # ~ 7.556e5
 
   # Explicit conversion functions.
-  def conv_dens(self, val, units='cgs'):
-    """Rest-mass density (code G=c=Msun=1 units) -> target units."""
+  def conv_dens(self, val: float, units: str = 'cgs') -> float:
+    """
+    Rest-mass density (code G=c=Msun=1 units) -> target units.
+
+    Parameters:
+    val (float or np.ndarray): Value in code units.
+    units (str): Target units, 'code' or 'cgs'.
+
+    Returns:
+    Value in the target units.
+    """
     if units == 'code': return val
     if units == 'cgs' : return val * self.CODE2CGS_DENS
     raise ValueError(f"density: unsupported units {units!r} (use 'code' or 'cgs')")
 
 
-  def conv_enedens(self, val, units='cgs'):
-    """Radiation energy density E (code km^-2) -> target units."""
+  def conv_enedens(self, val: float, units: str = 'cgs') -> float:
+    """
+    Radiation energy density E (code km^-2) -> target units.
+
+    Parameters:
+    val (float or np.ndarray): Value in code units.
+    units (str): Target units, 'code', 'ngs' or 'cgs'.
+
+    Returns:
+    Value in the target units.
+    """
     if units == 'code': return val
     if units == 'ngs' : return val * self.GK2NGS_ENEDENS
     if units == 'cgs' : return val * self.CODE2CGS_ENEDENS
     raise ValueError(f"enedens: unsupported units {units!r}")
 
 
-  def conv_numdens(self, val, units='cgs'):
-    """Radiation/baryon number density N (code fm^-3) -> target units."""
+  def conv_numdens(self, val: float, units: str = 'cgs') -> float:
+    """
+    Radiation/baryon number density N (code fm^-3) -> target units.
+
+    Parameters:
+    val (float or np.ndarray): Value in code units.
+    units (str): Target units, 'code', 'ngs' or 'cgs'.
+
+    Returns:
+    Value in the target units.
+    """
     if units == 'code': return val
     if units == 'ngs' : return val * self.CODE2NGS_NUMDENS
     if units == 'cgs' : return val * self.CODE2CGS_NUMDENS
     raise ValueError(f"numdens: unsupported units {units!r}")
 
 
-  def conv_opacity(self, val, units='cgs'):
-    """Absorption/scattering opacity kappa (code km^-1) -> target units."""
+  def conv_opacity(self, val: float, units: str = 'cgs') -> float:
+    """
+    Absorption/scattering opacity kappa (code km^-1) -> target units.
+
+    Parameters:
+    val (float or np.ndarray): Value in code units.
+    units (str): Target units, 'code', 'ngs' or 'cgs'.
+
+    Returns:
+    Value in the target units.
+    """
     if units == 'code': return val
     if units == 'ngs' : return val * self.CODE2NGS_OPACITY
     if units == 'cgs' : return val * self.CODE2CGS_OPACITY
     raise ValueError(f"opacity: unsupported units {units!r}")
 
 
-  def conv_emissivity_N(self, val, units='cgs'):
-    """Number emissivity eta_0 (code) -> target units."""
+  def conv_emissivity_N(self, val: float, units: str = 'cgs') -> float:
+    """
+    Number emissivity eta_0 (code) -> target units.
+
+    Parameters:
+    val (float or np.ndarray): Value in code units.
+    units (str): Target units, 'code', 'ngs' or 'cgs'.
+
+    Returns:
+    Value in the target units.
+    """
     if units == 'code': return val
     if units == 'ngs' : return val * self.UNIT_ND_DOT
     if units == 'cgs' : return val * self.CODE2CGS_ND_DOT
     raise ValueError(f"emissivity_N: unsupported units {units!r}")
 
 
-  def conv_emissivity_E(self, val, units='cgs'):
-    """Energy emissivity eta_1 (code) -> target units."""
+  def conv_emissivity_E(self, val: float, units: str = 'cgs') -> float:
+    """
+    Energy emissivity eta_1 (code) -> target units.
+
+    Parameters:
+    val (float or np.ndarray): Value in code units.
+    units (str): Target units, 'code', 'ngs' or 'cgs'.
+
+    Returns:
+    Value in the target units.
+    """
     if units == 'code': return val
     if units == 'ngs' : return val * self.UNIT_ED_DOT
     if units == 'cgs' : return val * self.CODE2CGS_ED_DOT
     raise ValueError(f"emissivity_E: unsupported units {units!r}")
 
 
-  def conv_avg_energy(self, val, units='MeV'):
-    """Average neutrino energy E/N (code) -> target units."""
+  def conv_avg_energy(self, val: float, units: str = 'MeV') -> float:
+    """
+    Average neutrino energy E/N (code) -> target units.
+
+    Parameters:
+    val (float or np.ndarray): Value in code units.
+    units (str): Target units, 'code', 'MeV'/'ngs' or 'cgs'.
+
+    Returns:
+    Value in the target units.
+    """
     if units == 'code': return val
     if units in ('ngs', 'MeV'): return val * self.CODE2MEV_AVGENE
     if units == 'cgs':          return val * self.CODE2MEV_AVGENE * self.cgs.MeV

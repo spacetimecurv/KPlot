@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_comparison.sh  —  overlay neutrino diagnostics from 2+ models
+# run_comparison.sh  -  overlay neutrino diagnostics from 2+ models
 #
 # Wraps the kplot.sphere.comparison module.  Reuses the .txt outputs already
 # produced by run_analysis.sh in each model's analysis directory (no data
@@ -19,9 +19,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/config.ini"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SETTINGS  ← edit per run
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# SETTINGS  <- edit per run
+# -----------------------------------------------------------------------------
 
 # Models to overlay: one "analysis_dir|legend label" per line (2 to 4 models).
 # Each analysis_dir must contain the merger_time.txt / Lnu_E_*.txt / Eav_*.txt
@@ -40,9 +40,9 @@ OUTDIR=""
 # Override x-range [ms] about merger, e.g. XLIM=(-2 20).  Empty = model overlap.
 XLIM=()
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Allow overriding the MODELS list from the command line (DIR LABEL pairs).
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if [[ $# -gt 0 ]]; then
     if [[ $(( $# % 2 )) -ne 0 ]]; then
         echo "ERROR: command-line args must be DIR LABEL pairs (got $# args)."
@@ -56,9 +56,9 @@ if [[ $# -gt 0 ]]; then
     done
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # SETUP  (same Lmod handling as run_analysis.sh)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if ! command -v module &>/dev/null; then
     for _init in "${MODULESHOME:-/usr/share/lmod/lmod}/init/bash" \
                  /etc/profile.d/lmod.sh /etc/profile.d/z00_lmod.sh; do
@@ -70,7 +70,7 @@ if command -v module &>/dev/null; then
 fi
 
 # Optional extra PYTHONPATH from config.ini (the plotting step needs no vtk,
-# so config.ini is not required here — only honoured when present).
+# so config.ini is not required here - only honoured when present).
 if [[ -f "${CONFIG_FILE}" ]]; then
     PYTHONPATH_EXTRA="$(awk -v key=pythonpath_extra '
         /^[[:space:]]*[#;]/ { next }
@@ -90,9 +90,9 @@ if [[ -f "${CONFIG_FILE}" ]]; then
     fi
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Build the comparison args from MODELS
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 ARGS=()
 for entry in "${MODELS[@]}"; do
     dir="${entry%%|*}"

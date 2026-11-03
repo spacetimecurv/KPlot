@@ -116,23 +116,23 @@ otherwise default values will be applied.
 
 ### Spherical-surface analysis (ejecta + neutrinos)
 ```kplot.sphere``` analyses AthenaK's spherical-surface extraction output
-(```file_type = sph```) — what crosses the extraction sphere, spanning all
+(```file_type = sph```) - what crosses the extraction sphere, spanning all
 batchtools ```output-XXXX``` restart segments:
-- ```kplot.sphere.mergertime``` — merger time from max ```|psi4_22|^2``` of the GW (2,2) mode
-- ```kplot.sphere.ejecta``` — ejecta mass flux, ```v_inf```/```theta```/```Y_e``` distributions
+- ```kplot.sphere.mergertime``` - merger time from max ```|psi4_22|^2``` of the GW (2,2) mode
+- ```kplot.sphere.ejecta``` - ejecta mass flux, ```v_inf```/```theta```/```Y_e``` distributions
   (geodesic and Bernoulli criteria; needs a PyCompOSE HDF5 EOS table)
-- ```kplot.sphere.neutrinos``` — M1 neutrino luminosities and flux-weighted mean
+- ```kplot.sphere.neutrinos``` - M1 neutrino luminosities and flux-weighted mean
   energies per species (```rad_m1_E/F/N``` output)
-- ```kplot.sphere.poynting``` — sphere-integrated Poynting luminosity and its
+- ```kplot.sphere.poynting``` - sphere-integrated Poynting luminosity and its
   angular map vs time
-- ```kplot.sphere.butterfly``` — density-weighted, azimuthally-averaged toroidal
+- ```kplot.sphere.butterfly``` - density-weighted, azimuthally-averaged toroidal
   field vs theta and time (dynamo polarity reversals, cf. arXiv:2211.07158) and its
   figure ```fig_butterfly```; runs independently of the other steps on its own
   (typically inner-disk) radius and needs no merger time
-- ```kplot.sphere.plots``` / ```kplot.sphere.comparison``` — summary figures
+- ```kplot.sphere.plots``` / ```kplot.sphere.comparison``` - summary figures
   (```fig_ejecta```, ```fig_neutrino```, ...), and multi-model overlays
-- ```kplot.sphere.accretion``` — post-merger accretion rate from baryon bookkeeping
-- ```kplot.sphere.mad``` — SANE/MAD state and neutrino cooling efficiency: accretion
+- ```kplot.sphere.accretion``` - post-merger accretion rate from baryon bookkeeping
+- ```kplot.sphere.mad``` - SANE/MAD state and neutrino cooling efficiency: accretion
   rate and magnetic flux on black-hole centred spheres, the dimensionless flux
   $\phi = \Phi_B / \sqrt{\dot{M} r_g^2}$ (Gaussian units, MAD at $\phi \sim 50$) and
   $\eta = L_\nu / (\dot{M} c^2)$ (figures ```fig_mad```, ```fig_eta_mdot```)
@@ -180,7 +180,7 @@ kplot-sphere-plot --output-dir /path/to/sim/analysis --t-merger 3122.5 \
 kplot-sphere-butterfly --sph-dir /path/to/sim/output-0000/sph \
     --output-dir /path/to/sim/butterfly_50M --radius 50 --plot
 ```
-or driven as a library — see [```examples/analyze_sphere.py```](examples/analyze_sphere.py):
+or driven as a library - see [```examples/analyze_sphere.py```](examples/analyze_sphere.py):
 ```python
 import glob
 from kplot.sphere import ejecta, mergertime, neutrinos
@@ -200,17 +200,17 @@ neutrinos.analyze(sph_dirs, f"{simpath}/analysis", radius=radius, n_workers=8)
 ```
 
 Outputs land in ```<simpath>/analysis/``` as plain text (plus ```.npy``` for the 2-D
-```v_inf```–```theta``` histograms), so they can be re-plotted or compared later
+```v_inf```-```theta``` histograms), so they can be re-plotted or compared later
 without re-reading the VTK files.
 
 ### Post-merger disk analysis (volume)
 ```kplot.volume``` analyses AthenaK's 3D volume-domain output (```file_type = bin```)
 directly, rather than a spherical extraction surface:
-- ```kplot.volume.disk``` — per-snapshot post-merger disk diagnostics (mass,
+- ```kplot.volume.disk``` - per-snapshot post-merger disk diagnostics (mass,
   angular momentum, MRI quality factor, ...) from ```mhd_w_bcc```/```adm```/```z4c_alpha```/
   ```z4c_betax/y/z``` 3D snapshots, an EOS table and a tracker/horizon file
   (or a manual center) to locate the compact object
-- ```kplot.volume.plots``` — one histogram/profile frame per snapshot (```Ye```,
+- ```kplot.volume.plots``` - one histogram/profile frame per snapshot (```Ye```,
   entropy, temperature histograms; ```Sigma```, ```rho```, ```Ye```, ```T```,
   ```H/R```, ```Omega``` radial profiles), with fixed, log-scaled axes so
   ```make_movies.sh``` can turn them into an evolution movie

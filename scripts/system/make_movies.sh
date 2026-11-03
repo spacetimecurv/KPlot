@@ -17,23 +17,23 @@ echo "===== $(date) ====="
 echo "Log: ${_LOGFILE}"
 
 # ---------------------------------------------------------------------------
-# Configuration — edit these
+# Configuration - edit these
 # ---------------------------------------------------------------------------
 FIGPATH="/lus/flare/projects/CompactBinaryMerger/yiqiu/AthenaK_runs/lorene_bns/DD2_m1_VVLR_test/no_inelastic/Figs"
 
 
 
 # Frames per second in the output movie.
-# 10–15  → slow, good for inspecting individual frames
-# 24–30  → cinematic / standard
+# 10-15  -> slow, good for inspecting individual frames
+# 24-30  -> cinematic / standard
 FPS=10
 
 # Use every STRIDEth frame from the available PNGs.
-# 1  → all frames (00000, 00001, 00002, ...)
-# 10 → every 10th (00000, 00010, 00020, ...)
+# 1  -> all frames (00000, 00001, 00002, ...)
+# 10 -> every 10th (00000, 00010, 00020, ...)
 STRIDE=10
 
-# H.264 quality: 0 (lossless) – 51 (worst).  18 ≈ visually lossless.
+# H.264 quality: 0 (lossless) - 51 (worst).  18 ~ visually lossless.
 # Only used by encoders that support -crf (libx264, libx265, h264_nvenc).
 CRF=18
 
@@ -68,7 +68,7 @@ if [[ -z "${VCODEC}" ]]; then
 fi
 echo "Encoder : ${VCODEC}"
 
-# Quality flags (not used for GIF — palette filter handles quality instead)
+# Quality flags (not used for GIF - palette filter handles quality instead)
 case "${VCODEC}" in
     libx264|libx265|h264_nvenc)  QUALITY_FLAGS=(-crf "${CRF}") ;;
     gif)                         QUALITY_FLAGS=()               ;;
@@ -129,7 +129,7 @@ for series in "${SERIES_DIRS[@]}"; do
         FRAMES+=("${ALL_FRAMES[j]}")
     done
 
-    # GIF → .gif; everything else → .mp4.  Movie is named after the folder.
+    # GIF -> .gif; everything else -> .mp4.  Movie is named after the folder.
     [[ "${VCODEC}" == "gif" ]] && _ext="gif" || _ext="mp4"
     outfile="${series}/${series}.${_ext}"
     listfile="${series}/.fflist"

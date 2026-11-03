@@ -1,7 +1,4 @@
-#########################################################################
-# File: plot_system.py                                                 #
-# Description: Full-run simulation visualization from AthenaK output.  #
-#########################################################################
+"""Global plotter function."""
 
 # Import the full-run system plotter class.
 from kplot.system.plotter import SystemPlotter

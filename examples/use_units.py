@@ -1,7 +1,4 @@
-#########################################################################
-# File: use_units.py                                                    #
-# Description: Use unit conversion between unit systems.                #
-#########################################################################
+"""Use units and conversions."""
 
 # Import the Units class.
 from kplot.system.units import Units, CGS, MKS, GEOMETRIC_SOLAR

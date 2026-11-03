@@ -35,4 +35,4 @@ kplot-volume-spectra = "kplot.volume.spectra:main"
 kplot-volume-plot = "kplot.volume.plots:main"
 
 [tool.setuptools]
-packages = ["kplot", "kplot.system", "kplot.sphere", "kplot.volume"]
+packages = ["kplot", "kplot.system", "kplot.sphere", "kplot.volume", "kplot.utils"]

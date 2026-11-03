@@ -1,7 +1,4 @@
-#########################################################################
-# File: checkpoints.py                                                  #
-# Description: Lists the restart checkpoints of an AthenaK simulation.  #
-#########################################################################
+"""List the checkpoints of a simulation."""
 
 # Import necessary standard libaries.
 import argparse
@@ -17,8 +14,16 @@ import sys
 TIME_OFFSET = 8 + 9 * 8 + 2 * 19 * 4
 
 
-def read_checkpoint(rst_path):
-  """Return (time, dt, cycle) read from the header of one .rst file."""
+def read_checkpoint(rst_path: str) -> tuple[float, float, int]:
+  """
+  Read time, dt and cycle from the header of one .rst file.
+
+  Parameters:
+  rst_path (str): Path to the .rst checkpoint file.
+
+  Returns:
+  (time, dt, cycle) of the checkpoint.
+  """
   with open(rst_path, "rb") as f:
     head = f.read(65536)
     loc = head.find(b"<par_end>")
@@ -29,8 +34,17 @@ def read_checkpoint(rst_path):
   return time, dt, cycle
 
 
-def find_segments(simpath, batchtools=True):
-  """Return the sorted output-XXXX dirs under simpath, or simpath itself."""
+def find_segments(simpath: str, batchtools: bool = True) -> list[str]:
+  """
+  Find the output-XXXX segment directories of a simulation.
+
+  Parameters:
+  simpath (str): Simulation directory.
+  batchtools (bool): Whether simpath holds batchtools output-XXXX segments.
+
+  Returns:
+  Sorted list of segment directories, or [simpath] if there are none.
+  """
   if not batchtools:
     return [simpath]
   dirs = sorted(d for d in glob.glob(os.path.join(simpath, "output-[0-9]*"))
@@ -38,8 +52,17 @@ def find_segments(simpath, batchtools=True):
   return dirs or [simpath]
 
 
-def list_checkpoints(simpath, batchtools=True):
-  """Print time, dt and cycle of every checkpoint, grouped by segment."""
+def list_checkpoints(simpath: str, batchtools: bool = True) -> None:
+  """
+  Print time, dt and cycle of every checkpoint, grouped by segment.
+
+  Parameters:
+  simpath (str): Simulation directory.
+  batchtools (bool): Whether simpath holds batchtools output-XXXX segments.
+
+  Returns:
+  None.
+  """
   simpath = os.path.abspath(os.path.expanduser(simpath))
   print("Simulation: %s" % simpath)
 
@@ -62,7 +85,16 @@ def list_checkpoints(simpath, batchtools=True):
             % (os.path.basename(path), time, dt, cycle))
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
+  """
+  Command-line entry point of kplot-checkpoints.
+
+  Parameters:
+  argv (list[str]): Command-line arguments (default: sys.argv).
+
+  Returns:
+  Exit code (0 on success).
+  """
   parser = argparse.ArgumentParser(
     prog="kplot-checkpoints",
     description="List the restart checkpoints of each output-XXXX segment of "

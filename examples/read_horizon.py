@@ -1,7 +1,4 @@
-#########################################################################
-# File: read_horizon.py                                                 #
-# Description: Read horizon data from a file.                           #
-#########################################################################
+"""Read horizon data."""
 
 # Import the horizon finder class.
 from kplot.system.horizon import HorizonFinder

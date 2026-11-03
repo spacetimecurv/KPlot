@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_analysis.sh  —  KPlot post-merger disk analysis script
+# run_analysis.sh  -  KPlot post-merger disk analysis script
 #
 # Usage:
 #   bash run_analysis.sh [--disk] [--spectra] [--plot] [--all]
@@ -22,9 +22,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/config.ini"
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Read paths from config.ini  (plain INI: parsed, never executed)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if [[ ! -f "${CONFIG_FILE}" ]]; then
     echo "ERROR: ${CONFIG_FILE} not found."
     echo "       Copy config.example.ini to config.ini and set 'simpath' + 'eos_table'."
@@ -56,6 +56,7 @@ case "${BATCHTOOLS,,}" in
     false|0|no|off) BATCHTOOLS=false ;;
     *)              BATCHTOOLS=true  ;;
 esac
+SUFFIX="$(_cfg_get suffix)"
 EOS_TABLE="$(_cfg_get eos_table)"
 PYTHONPATH_EXTRA="$(_cfg_get pythonpath_extra)"   # optional (e.g. a vtk install)
 
@@ -63,9 +64,9 @@ if [[ -z "${SIMPATH}" ]]; then
     echo "ERROR: 'simpath' is not set in ${CONFIG_FILE}."; exit 1
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # ARG PARSING
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 RUN_DISK=0; RUN_SPECTRA=0; RUN_PLOT=0
 if [[ $# -eq 0 ]]; then
     RUN_DISK=1; RUN_SPECTRA=1; RUN_PLOT=1
@@ -84,9 +85,9 @@ if [[ $RUN_DISK -eq 1 && -z "${EOS_TABLE}" ]]; then
     echo "ERROR: 'eos_table' is not set in ${CONFIG_FILE} (required for --disk)."; exit 1
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# RUN SETTINGS  ← edit per run
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# RUN SETTINGS  <- edit per run
+# -----------------------------------------------------------------------------
 
 # Directory where all output json/csv files will be written.
 OUTPUT_DIR="${SIMPATH}/disk"
@@ -122,9 +123,9 @@ if [[ $RUN_DISK -eq 1 && -z "${TRACKER}" && -z "${CENTER}" ]]; then
     echo "ERROR: either 'tracker' or 'center' must be set in ${CONFIG_FILE} (required for --disk)."; exit 1
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # SETUP
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Aurora uses environment modules. Lmod's `module` is usually only a shell
 # function for interactive shells, so source its init first if needed.
 #if ! command -v module &>/dev/null; then
@@ -159,6 +160,11 @@ mkdir -p "${OUTPUT_DIR}"
 # analysis module applies its own default rather than receiving an empty string.
 DISK_ARGS=()
 [[ "${BATCHTOOLS}" == "false" ]] && DISK_ARGS+=(--no-batchtools)
+case "${SUFFIX,,}" in
+    "")   ;;
+    none) DISK_ARGS+=(--suffix "") ;;
+    *)    DISK_ARGS+=(--suffix "${SUFFIX}") ;;
+esac
 case "${OVERWRITE,,}" in
     true|1|yes|on) DISK_ARGS+=(--overwrite) ;;
 esac
@@ -188,6 +194,11 @@ fi
 
 SPECTRA_ARGS=()
 [[ "${BATCHTOOLS}" == "false" ]] && SPECTRA_ARGS+=(--no-batchtools)
+case "${SUFFIX,,}" in
+    "")   ;;
+    none) SPECTRA_ARGS+=(--suffix "") ;;
+    *)    SPECTRA_ARGS+=(--suffix "${SUFFIX}") ;;
+esac
 case "${OVERWRITE,,}" in
     true|1|yes|on) SPECTRA_ARGS+=(--overwrite) ;;
 esac
@@ -207,41 +218,41 @@ echo "  Simulation : ${SIMPATH} (batchtools: ${BATCHTOOLS})"
 echo "  Output     : ${OUTPUT_DIR}"
 echo "============================================================"
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # STEP 1: DISK ANALYSIS
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if [[ $RUN_DISK -eq 1 ]]; then
     echo ""
-    echo "── Disk analysis ─────────────────────────────────────────────"
+    echo "-- Disk analysis ---------------------------------------------"
     _kplot kplot-volume-disk kplot.volume.disk \
         --simpath      "${SIMPATH}" \
         --eos-table    "${EOS_TABLE}" \
         --outdir       "${OUTPUT_DIR}" \
         "${DISK_ARGS[@]+"${DISK_ARGS[@]}"}"
-    echo "── Disk analysis done ───────────────────────────────────────"
+    echo "-- Disk analysis done ---------------------------------------"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # STEP 2: SPECTRA ANALYSIS
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if [[ $RUN_SPECTRA -eq 1 ]]; then
     echo ""
-    echo "── Spectra analysis ─────────────────────────────────────────────"
+    echo "-- Spectra analysis ---------------------------------------------"
     _kplot kplot-volume-spectra kplot.volume.spectra \
         --simpath      "${SIMPATH}" \
         --outdir       "${OUTPUT_DIR}" \
         "${SPECTRA_ARGS[@]+"${SPECTRA_ARGS[@]}"}"
-    echo "── Spectra analysis done ───────────────────────────────────────"
+    echo "-- Spectra analysis done ---------------------------------------"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 3: PLOTS — one histogram/profile frame per snapshot, stitched into movies.
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# STEP 3: PLOTS - one histogram/profile frame per snapshot, stitched into movies.
+# -----------------------------------------------------------------------------
 if [[ $RUN_PLOT -eq 1 ]]; then
     FIGDIR="${OUTPUT_DIR}/frames"
 
     echo ""
-    echo "── Plotting histograms and profiles ─────────────────────────"
+    echo "-- Plotting histograms and profiles -------------------------"
     _kplot kplot-volume-plot kplot.volume.plots \
         --outdir "${OUTPUT_DIR}" \
         --figdir "${FIGDIR}"
@@ -252,7 +263,7 @@ if [[ $RUN_PLOT -eq 1 ]]; then
     echo ""
     echo "=== Making movies from ${FIGDIR} ==="
     bash "${SCRIPT_DIR}/../system/make_movies.sh" "${MOVIE_FPS}" "${MOVIE_STRIDE}" "${FIGDIR}"
-    echo "── Plotting done ────────────────────────────────────────────"
+    echo "-- Plotting done --------------------------------------------"
 fi
 
 echo ""

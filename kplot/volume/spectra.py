@@ -11,57 +11,57 @@ id        = mhd_w_bcc_3D
 
 # Built-in libraries.
 import os
-from multiprocessing import Pool, cpu_count
 import argparse
-from tqdm import tqdm
 
 # Third-party libraries.
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 # KPlot utility.
-from kplot.system.units import CGS
-from kplot.volume.disk import find_snapshots, block_cell_geometry, load_tracker
+from kplot.utils.bin3d import (block_cell_geometry, find_snapshots, load_tracker, snapshot_tag,
+                               tracker_center)
+from kplot.utils.parallel import default_workers, pool_map
 from kplot.system.bin_convert import read_binary
-
-# Manual conversion between code and physical units.
-ms    = 4.925490949141889e-6 * 1e3
-km    = 1.47662506140
-gcm3  = 6.175828283964599e+17
-Gauss = CGS.G**(-1.5) * CGS.Msun**(-1) * CGS.c**4 * np.sqrt(4 * np.pi)
 
 # Per-worker state.
 _W_TRACKER = None
 
 
-def _init_spectra_worker(tracker):
-  """Pool initializer: load the tracker file."""
+def _init_spectra_worker(tracker: dict | None) -> None:
+  """
+  Pool initializer: store the tracker data.
+
+  Parameters:
+  tracker (dict): Tracker data from load_tracker, or None.
+
+  Returns:
+  None.
+  """
   global _W_TRACKER
   _W_TRACKER = tracker
 
 
-def _process_snapshot_spectra(args):
-  """Per-snapshot worker for spectra analysis."""
+def _process_snapshot_spectra(args: tuple) -> None:
+  """
+  Per-snapshot worker for the spectra analysis; writes the spectrum file.
+
+  Parameters:
+  args (tuple): (mhd_file, target_dx, window_rad, outdir, center).
+
+  Returns:
+  None.
+  """
   # Unpack arguments.
   (mhd_file, target_dx, window_rad, outdir, center) = args
 
   # Read the data.
-  snapshot = mhd_file.split("/")[-1].split(".")[-2].strip()
+  snapshot = snapshot_tag(mhd_file)
   data_mhd = read_binary(mhd_file)
   time     = data_mhd['time']
   x1, x2, x3, _, dx, _, _ = block_cell_geometry(data_mhd) # CC-coordinates and volume for each MB.
 
   # Get the center of the remnant (the box drifts with it).
-  if _W_TRACKER is not None:
-    tracker     = _W_TRACKER
-    tracker_idx = np.argmin(np.abs(tracker["time"] - time))
-    center      = np.array([tracker["x"][tracker_idx],
-                            tracker["y"][tracker_idx],
-                            tracker["z"][tracker_idx]])
-  elif _W_TRACKER is None and center:
-    center = np.array(center)
-  else:
-    raise SystemExit("Either tracker file or manual center has to be specified!")
+  center = tracker_center(_W_TRACKER, time, center)
 
   # Primitives.
   rho = np.asarray(data_mhd['mb_data']['dens'])
@@ -241,32 +241,46 @@ def _process_snapshot_spectra(args):
   os.replace(out_path + ".tmp", out_path)
 
 
-def spectrum_path(outdir, snapshot):
-  """Spectrum file of a snapshot, e.g. <outdir>/spectra/spectrum_00010.txt."""
+def spectrum_path(outdir: str, snapshot: str) -> str:
+  """
+  Spectrum file of a snapshot.
+
+  Parameters:
+  outdir (str): Output directory.
+  snapshot (str): Snapshot number, e.g. '00010'.
+
+  Returns:
+  <outdir>/spectra/spectrum_<snapshot>.txt.
+  """
   return os.path.join(outdir, "spectra", f"spectrum_{snapshot}.txt")
 
 
-def analyze(args):
-  """Run the spectra analysis over every snapshot under `simpath`.
+def analyze(args: argparse.Namespace) -> None:
+  """
+  Run the spectra analysis over every snapshot under simpath.
 
-  Parameters (from args; in detail)
-  ---------------------------------
-  args.simpath (str): simulation directory holding the output-XXXX segments, or
-                      (without batchtools) the directory of the 3D binary files.
-                      IMPORTANT: files need to hold the signature *._3D.*.bin. The
-                      output needed at each output time is `*.mhd_w_bcc_3D.*.bin`.
-  args.batchtools (bool): whether simpath holds batchtools output-XXXX segments.
-  args.outdir (str): output directory where the snapshots are stored.
-  args.drop_first_bins (int): how many bins to drop at the start (during inspiral).
-  args.target_dx (float): target resolution on the finest MeshBlock.
-  args.win_radius (float): windowing radius.
-  args.tracker (str): path to the tracker file used to center the window
-                      on the remnant as it drifts across the domain.
-  args.center (list): fixed center of the remnant, used if no tracker is given.
-  args.n_workers (int): number of worker processes per snapshot loop.
+  Parameters:
+  args (argparse.Namespace): Parsed command-line arguments:
+    simpath (str): Simulation directory holding the output-XXXX segments, or
+                   (without batchtools) the directory of the 3D binary files.
+                   The files need the signature *.<var><suffix>.*.bin, i.e.
+                   *.mhd_w_bcc_3D.*.bin by default.
+    batchtools (bool): Whether simpath holds batchtools output-XXXX segments.
+    suffix (str): Suffix of the 3D output ids (default: _3D).
+    outdir (str): Output directory where the snapshots are stored.
+    drop_first_bins (int): How many bins to drop at the start (during inspiral).
+    target_dx (float): Target resolution on the finest MeshBlock.
+    win_radius (float): Windowing radius.
+    tracker (str): Tracker file used to center the window on the remnant as it
+                   drifts across the domain.
+    center (list): Fixed center of the remnant, used if no tracker is given.
+    n_workers (int): Number of worker processes per snapshot loop.
+
+  Returns:
+  None.
   """
   # Find the files with the signature.
-  snapshots = find_snapshots("mhd_w_bcc", args.simpath, args.batchtools)
+  snapshots = find_snapshots("mhd_w_bcc", args.simpath, args.batchtools, args.suffix)
 
   # Drop snapshots at the beginning.
   numbers = sorted(snapshots)
@@ -289,7 +303,7 @@ def analyze(args):
   tracker = load_tracker(args.tracker) if args.tracker is not None else None
 
   # Prepare the worker arguments.
-  n_workers = args.n_workers if args.n_workers is not None else min(8, cpu_count())
+  n_workers = args.n_workers or default_workers()
   worker_args = [(files[i], args.target_dx, args.win_radius, args.outdir, args.center)
                  for i in range(len(files))]
   print(f"$ Processing {len(worker_args)} snapshots with n_worker={n_workers}...")
@@ -298,27 +312,23 @@ def analyze(args):
   os.makedirs(os.path.join(args.outdir, "spectra"), exist_ok=True)
 
   # Parallel snapshot loop.
-  if n_workers > 1:
-    with Pool(n_workers,
-              initializer=_init_spectra_worker,
-              initargs=(tracker,)) as pool:
-      for _ in tqdm(
-        pool.imap_unordered(
-          _process_snapshot_spectra, worker_args,
-          chunksize=max(1, len(worker_args) // (n_workers * 4))),
-          total=len(worker_args),
-          desc="Progress"):
-        pass
-  else:
-    _init_spectra_worker(tracker)
-    for a in tqdm(worker_args, desc="Progress"):
-      _process_snapshot_spectra(a)
+  pool_map(_process_snapshot_spectra, worker_args, n_workers,
+           initializer=_init_spectra_worker, initargs=(tracker,), progress=True)
 
 
-# ----------------------------------------------------------------------------------
+# ======================================================================
 # Main
-# ----------------------------------------------------------------------------------
-def main(argv=None):
+# ======================================================================
+def main(argv: list[str] | None = None) -> None:
+  """
+  Command-line entry point of the spectra analysis.
+
+  Parameters:
+  argv (list[str]): Command-line arguments (default: sys.argv).
+
+  Returns:
+  None.
+  """
   ap = argparse.ArgumentParser(
       description="Post-merger disk diagnostics for AthenaK data.",
       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -328,6 +338,9 @@ def main(argv=None):
   ap.add_argument("--batchtools", action=argparse.BooleanOptionalAction, default=True,
                   help="Search the 3D bin files in <simpath>/output-XXXX[/bin]; "
                        "--no-batchtools searches <simpath>[/bin] only.")
+  ap.add_argument("--suffix", default="_3D",
+                  help="suffix of the 3D output ids, i.e. files <job>.<var><suffix>.NNNNN.bin "
+                       "(use '' for unsuffixed ids)")
   ap.add_argument("--outdir", required=True,
                     help="Output directory path.")
   ap.add_argument("--drop-first-bins", default=None, type=int,

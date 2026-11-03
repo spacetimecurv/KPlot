@@ -1,16 +1,23 @@
-#########################################################################
-# File: batchutils.py                                                   #
-# Description: Merges batchtools segments and removes overlaps.         #
-#########################################################################
+"""Utility for handling batchtools segments."""
 
 # Import necessary standard libaries.
 import re
 from pathlib import Path
 from collections import defaultdict
+from collections.abc import Callable
 from itertools import chain
 
 # Define a function that splits headers.
-def split_header(lines):
+def split_header(lines: list[str]) -> tuple[list[str], list[str]]:
+  """
+  Split lines into '#' header lines and data lines.
+
+  Parameters:
+  lines (list[str]): Lines of a text file.
+
+  Returns:
+  (header lines, data lines).
+  """
   header = [l for l in lines if l.startswith("#")]
   data = [l for l in lines if not l.startswith("#")]
 
@@ -22,29 +29,34 @@ class BatchMerger:
   A class to merge output files from batchtools output folders.
   """
 
-  def __init__(self, base_pattern="output-*", batchtools=True):
+  def __init__(self, base_pattern: str = "output-*", batchtools: bool = True) -> None:
     """
     Initialize the BatchMerger with the path to the batch folders.
 
     Parameters:
     base_pattern (str): The pattern to match the batch folders.
+    batchtools (bool): Whether the data is split into batchtools segments.
     """
     self.base_pattern = base_pattern
     self.batchtools = batchtools
 
 
-  def merge(self, file_glob, output_file, strip_header=True, group_regex=None,
-    output_dir=".", input_dir="."):
+  def merge(self, file_glob: str, output_file: str | Callable[[tuple], str],
+            strip_header: bool = True, group_regex: str | None = None,
+            output_dir: str = ".", input_dir: str = ".") -> None:
     """
     Generic merge function.
 
     Parameters:
-    file_glob : File pattern inside each folder, e.g. "<jobname>.co_0.txt" or "waveforms/*.txt".
-    output_file : Output filename or function(key)->filename if grouping is used.
-    strip_header : Whether to keep only first header.
-    group_regex : Optional regex with capture groups for grouping files.
-    output_dir : Where to write merged output.
-    input_dir : Where to read input files.
+    file_glob (str): File pattern inside each folder, e.g. "<jobname>.co_0.txt" or "waveforms/*.txt".
+    output_file (str): Output filename or function(key) -> filename if grouping is used.
+    strip_header (bool): Whether to keep only first header.
+    group_regex (str): Optional regex with capture groups for grouping files.
+    output_dir (str): Where to write merged output.
+    input_dir (str): Where to read input files.
+
+    Returns:
+    None.
     """
 
     input_dir = Path(input_dir)
@@ -99,8 +111,9 @@ class BatchMerger:
       print(f"Wrote {out_path}")
 
 
-  def merge_auto(self, history=True, horizon=True, tracker=True, waveforms=True,
-                 strip_header=True, output_dir=".", input_dir="."):
+  def merge_auto(self, history: bool = True, horizon: bool = True, tracker: bool = True,
+                 waveforms: bool = True, strip_header: bool = True, output_dir: str = ".",
+                 input_dir: str = ".") -> None:
     """
     Automatic merger function that detects history files etc. and
     uses the 'merger' function to directly merge them.
@@ -113,6 +126,9 @@ class BatchMerger:
     strip_header  (bool): Whether to keep only first header.
     output_dir     (str): Where to write merged output.
     input_dir      (str): Where to read input files.
+
+    Returns:
+    None.
     """
 
     input_dir = Path(input_dir)
@@ -155,9 +171,9 @@ class BatchOverlap:
   # Header patterns of the time column, "[1]=time" (hst) or "2:time" (txt).
   time_regex = re.compile(r"\[?(\d+)\]?[=:]time\b")
 
-  def __init__(self, simpath=".", base_pattern="output-*", overlap_dir="overlap",
-               snapshot_dirs=("bin", "sph"), text_patterns=("*.hst", "*.txt"),
-               tol=1e-8):
+  def __init__(self, simpath: str = ".", base_pattern: str = "output-*",
+               overlap_dir: str = "overlap", snapshot_dirs: tuple = ("bin", "sph"),
+               text_patterns: tuple = ("*.hst", "*.txt"), tol: float = 1e-8) -> None:
     """
     Initialize the BatchOverlap with the path to the simulation.
 
@@ -179,10 +195,13 @@ class BatchOverlap:
       raise FileNotFoundError(f"No segment matching {base_pattern} in {simpath}!")
 
 
-  def stale_snapshots(self):
+  def stale_snapshots(self) -> dict[Path, list[Path]]:
     """
-    Returns {segment: [stale snapshot paths]}, comparing the indices of
+    Find snapshots that a later segment overwrites, comparing the indices of
     every output stem against the first index of all later segments.
+
+    Returns:
+    {segment: [stale snapshot paths]}.
     """
     stale = defaultdict(list)
     for sub in self.snapshot_dirs:
@@ -203,9 +222,15 @@ class BatchOverlap:
     return stale
 
 
-  def time_column(self, header):
+  def time_column(self, header: list[str]) -> int | None:
     """
-    Returns the time column given in the header, or None.
+    Find the time column given in the header.
+
+    Parameters:
+    header (list[str]): Header lines of a text file.
+
+    Returns:
+    Index of the time column, or None.
     """
     for line in header:
       m = self.time_regex.search(line)
@@ -215,10 +240,12 @@ class BatchOverlap:
     return None
 
 
-  def stale_lines(self):
+  def stale_lines(self) -> dict[tuple[Path, str], tuple[list[str], list[str]]]:
     """
-    Returns {(segment, name): (kept lines, stale lines)} for every text file
-    that contains data at or after the first time of a later segment.
+    Find the text lines at or after the first time of a later segment.
+
+    Returns:
+    {(segment, name): (kept lines, stale lines)} for every affected text file.
     """
     names = sorted({f.name for segment in self.segments
                            for p in self.text_patterns
@@ -253,9 +280,12 @@ class BatchOverlap:
     return stale
 
 
-  def report(self):
+  def report(self) -> None:
     """
     Prints the stale data of every segment without changing anything.
+
+    Returns:
+    None.
     """
     snapshots = self.stale_snapshots()
     lines = self.stale_lines()
@@ -278,12 +308,15 @@ class BatchOverlap:
           print(f"{segment.name}/{name}: {len(removed)} stale of {len(kept) + len(removed)} lines")
 
 
-  def clean(self, dry_run=True):
+  def clean(self, dry_run: bool = True) -> None:
     """
     Moves stale snapshots and stale text lines to <overlap_dir>/<segment>/.
 
     Parameters:
     dry_run (bool): Only report what would be done.
+
+    Returns:
+    None.
     """
     self.report()
     if dry_run:

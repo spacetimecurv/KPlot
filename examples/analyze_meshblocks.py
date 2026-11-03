@@ -1,7 +1,4 @@
-#########################################################################
-# File: analyze_meshblocks.py                                           #
-# Description: Meshblock utility demonstration.                         #
-#########################################################################
+"""MeshBlock utility demonstration."""
 
 # Import MeshBlock class.
 from kplot.system.meshblocks import MeshBlock

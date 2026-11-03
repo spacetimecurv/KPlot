@@ -1,7 +1,4 @@
-#########################################################################
-# File: plot_series.py                                                  #
-# Description: Plot series data from AthenaK bin output.                #
-#########################################################################
+"""Plot series of 2D slices."""
 
 # Import the series plot class.
 from kplot.system.seriesplot import SeriesPlot

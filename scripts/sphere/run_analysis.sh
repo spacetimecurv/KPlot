@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_analysis.sh  —  KPlot spherical-surface ejecta + Poynting + neutrino analysis script
+# run_analysis.sh  -  KPlot spherical-surface ejecta + Poynting + neutrino analysis script
 #
 # Usage:
 #   bash run_analysis.sh [--ejecta] [--poynting] [--neutrino] [--plot] [--all]
@@ -22,9 +22,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/config.ini"
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Read paths from config.ini  (plain INI: parsed, never executed)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if [[ ! -f "${CONFIG_FILE}" ]]; then
   echo "ERROR: ${CONFIG_FILE} not found."
   echo "       Copy config.example.ini to config.ini and set 'simpath' + 'eos_table'."
@@ -63,9 +63,9 @@ if [[ -z "${SIMPATH}" ]]; then
   echo "ERROR: 'simpath' is not set in ${CONFIG_FILE}."; exit 1
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# RUN SETTINGS  ← edit per run
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# RUN SETTINGS  <- edit per run
+# -----------------------------------------------------------------------------
 
 # Extract the job-specific parameters from config.ini
 JOBNAME="$(_cfg_get jobname)"
@@ -83,7 +83,7 @@ YE_THETA_EVO="$(_cfg_get ye_theta_evo)"
 # Directory where all output txt/npy/pdf files will be written.
 OUTPUT_DIR="${SIMPATH}/$(printf '%gM_%gms' "${RADIUS:-300}" "${T_POST_MS:-25}")"
 
-# ── auto-discover all output-*/sph directories (sorted) ──────────────────────
+# -- auto-discover all output-*/sph directories (sorted) ----------------------
 SPH_PATTERN="output-*/sph"
 if [[ "${BATCHTOOLS}" == "false" ]]; then
   SPH_PATTERN="sph"
@@ -97,9 +97,9 @@ if [[ ${#SPH_DIRS[@]} -eq 0 ]]; then
   echo "ERROR: no ${SPH_PATTERN} directories found under ${SIMPATH}"; exit 1
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # ARG PARSING
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 RUN_EJECTA=0; RUN_POYNTING=0; RUN_NEUTRINO=0; RUN_PLOT=0
 if [[ $# -eq 0 ]]; then
   RUN_EJECTA=1; RUN_POYNTING=1; RUN_NEUTRINO=1; RUN_PLOT=1
@@ -115,9 +115,9 @@ for arg in "$@"; do
   esac
 done
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # SETUP
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Aurora uses environment modules. Lmod's `module` is usually only a shell
 # function for interactive shells, so source its init first if needed.
 #if ! command -v module &>/dev/null; then
@@ -175,12 +175,12 @@ echo "  Radius     : ${RADIUS} M_sun"
 echo "  Output     : ${OUTPUT_DIR}"
 echo "============================================================"
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # STEP 0: MERGER TIME  (from max |psi4_22|^2 of the (2,2) GW mode)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 MERGER_FILE="${OUTPUT_DIR}/merger_time.txt"
 echo ""
-echo "── Merger time (GW (2,2) mode) ──────────────────────────────"
+echo "-- Merger time (GW (2,2) mode) ------------------------------"
 _kplot kplot-sphere-mergertime kplot.sphere.mergertime \
     --simpath "${SIMPATH}" "${MERGER_ARGS[@]+"${MERGER_ARGS[@]}"}" --out "${MERGER_FILE}"
 # Read the merger time (first non-comment numeric line) from the file.
@@ -190,15 +190,15 @@ if [[ -z "${T_MERGER_MSUN}" ]]; then
 fi
 echo "  T_merger = ${T_MERGER_MSUN} M_sun"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 1 + 2 + 3: EJECTA, POYNTING and NEUTRINO  (run concurrently — they
+# -----------------------------------------------------------------------------
+# STEP 1 + 2 + 3: EJECTA, POYNTING and NEUTRINO  (run concurrently - they
 # share no state)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 EJECTA_PID=""; POYNTING_PID=""; NEUTRINO_PID=""
 
 if [[ $RUN_EJECTA -eq 1 ]]; then
   echo ""
-  echo "── Ejecta analysis (background) ─────────────────────────────"
+  echo "-- Ejecta analysis (background) -----------------------------"
   if [[ -z "${EOS_TABLE}" ]]; then
     echo "ERROR: 'eos_table' is not set in ${CONFIG_FILE} (required for ejecta)."; exit 1
   fi
@@ -213,7 +213,7 @@ if [[ $RUN_EJECTA -eq 1 ]]; then
 fi
 
 if [[ $RUN_POYNTING -eq 1 ]]; then
-  echo "── Poynting-flux analysis (background) ──────────────────────"
+  echo "-- Poynting-flux analysis (background) ----------------------"
   _kplot kplot-sphere-poynting kplot.sphere.poynting \
     "${SPH_ARGS[@]}" \
     --output-dir "${OUTPUT_DIR}" \
@@ -222,7 +222,7 @@ if [[ $RUN_POYNTING -eq 1 ]]; then
 fi
 
 if [[ $RUN_NEUTRINO -eq 1 ]]; then
-  echo "── Neutrino analysis (background) ───────────────────────────"
+  echo "-- Neutrino analysis (background) ---------------------------"
   _kplot kplot-sphere-neutrinos kplot.sphere.neutrinos \
     "${SPH_ARGS[@]}" \
     --output-dir "${OUTPUT_DIR}" \
@@ -231,21 +231,21 @@ if [[ $RUN_NEUTRINO -eq 1 ]]; then
 fi
 
 if [[ -n "${EJECTA_PID}" ]]; then
-  wait "${EJECTA_PID}" && echo "── Ejecta done ──" || { echo "ERROR: ejecta failed"; exit 1; }
+  wait "${EJECTA_PID}" && echo "-- Ejecta done --" || { echo "ERROR: ejecta failed"; exit 1; }
 fi
 if [[ -n "${POYNTING_PID}" ]]; then
-  wait "${POYNTING_PID}" && echo "── Poynting-flux done ──" || { echo "ERROR: poynting failed"; exit 1; }
+  wait "${POYNTING_PID}" && echo "-- Poynting-flux done --" || { echo "ERROR: poynting failed"; exit 1; }
 fi
 if [[ -n "${NEUTRINO_PID}" ]]; then
-  wait "${NEUTRINO_PID}" && echo "── Neutrino done ──" || { echo "ERROR: neutrino failed"; exit 1; }
+  wait "${NEUTRINO_PID}" && echo "-- Neutrino done --" || { echo "ERROR: neutrino failed"; exit 1; }
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # STEP 4: PLOT
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if [[ $RUN_PLOT -eq 1 ]]; then
   echo ""
-  echo "── Plotting ─────────────────────────────────────────────────"
+  echo "-- Plotting -------------------------------------------------"
   PLOT_ARGS=(--output-dir "${OUTPUT_DIR}" --t-merger "${T_MERGER_MSUN}")
   [[ -n "${RADIUS}" ]] && PLOT_ARGS+=(--radius "${RADIUS}")
   [[ "${PLOT_FROM_MERGER}" == "1" ]] && PLOT_ARGS+=(--from-merger)
@@ -254,7 +254,7 @@ if [[ $RUN_PLOT -eq 1 ]]; then
   [[ "${YE_EVO}" == "1" ]] && PLOT_ARGS+=(--ye-evo)
   [[ "${YE_THETA_EVO}" == "1" ]] && PLOT_ARGS+=(--ye-theta-evo)
   _kplot kplot-sphere-plot kplot.sphere.plots "${PLOT_ARGS[@]}"
-  echo "── Plotting done ────────────────────────────────────────────"
+  echo "-- Plotting done --------------------------------------------"
 fi
 
 echo ""

@@ -1,7 +1,4 @@
-#########################################################################
-# File: merge_batches.py                                                #
-# Description: Merge output files from batchtools output folders.       #
-#########################################################################
+"""Utility for batchtools segments."""
 
 # Import the batch merger class.
 from kplot.system.batchutils import BatchMerger

@@ -30,12 +30,14 @@ import json
 import os
 import re
 from collections import defaultdict
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.collections import QuadMesh
 from matplotlib.colors import LogNorm, ListedColormap, Normalize
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
@@ -138,15 +140,34 @@ PARKER_RHO_STYLES = ["dotted", "dashdot", "dashed", "solid"]
 PARKER_RHO_LEVELS = [1.0e9, 1.0e10, 1.0e11, 1.0e12]
 
 
-def find_snapshots(outdir, kind, ending):
-  """Snapshot ids for which a disk_<kind>_<snap>.<ending> file exists."""
+def find_snapshots(outdir: str, kind: str, ending: str) -> list[str]:
+  """
+  Snapshot ids for which a disk_<kind>_<snap>.<ending> file exists.
+
+  Parameters:
+  outdir (str): Disk analysis directory.
+  kind (str): Output kind, e.g. 'profiles'.
+  ending (str): File extension, e.g. 'csv'.
+
+  Returns:
+  Sorted snapshot ids.
+  """
   pat = os.path.join(outdir, kind, f"disk_{kind}_*.{ending}")
   ids = [re.search(rf"disk_{kind}_(.+)\.{ending}$", f).group(1) for f in glob.glob(pat)]
   return sorted(ids)
 
 
-def load_time_ms(outdir, snap):
-  """Snapshot time in ms from the matching scalars json, or NaN if missing."""
+def load_time_ms(outdir: str, snap: str) -> float:
+  """
+  Snapshot time from the matching scalars json.
+
+  Parameters:
+  outdir (str): Disk analysis directory.
+  snap (str): Snapshot id.
+
+  Returns:
+  The time [ms], or NaN if the file is missing.
+  """
   path = os.path.join(outdir, "scalars", f"disk_scalars_{snap}.json")
   if not os.path.exists(path):
     return float("nan")
@@ -154,11 +175,30 @@ def load_time_ms(outdir, snap):
     return json.load(fp)["time_ms"]
 
 
-def load_jrho(path):
+def load_jrho(path: str) -> dict[str, np.ndarray]:
+  """
+  Load the j-rho histograms of a snapshot.
+
+  Parameters:
+  path (str): Path to disk_jrho_<snap>.npz.
+
+  Returns:
+  {histogram name: histogram}.
+  """
   return dict(np.load(path))
 
 
-def load_j_mean(outdir, snap):
+def load_j_mean(outdir: str, snap: str) -> float:
+  """
+  Mean specific angular momentum of the disk from the scalars json.
+
+  Parameters:
+  outdir (str): Disk analysis directory.
+  snap (str): Snapshot id.
+
+  Returns:
+  j_mean [code units], or NaN if missing.
+  """
   path = os.path.join(outdir, "scalars", f"disk_scalars_{snap}.json")
   if not os.path.exists(path):
     return float("nan")
@@ -166,8 +206,16 @@ def load_j_mean(outdir, snap):
     return json.load(fp)["disk"].get("j_mean", float("nan"))
 
 
-def load_histograms(path):
-  """quantity -> (bin_centers, disk_mass) from a disk_histograms_<snap>.csv file."""
+def load_histograms(path: str) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+  """
+  Load a disk_histograms_<snap>.csv file.
+
+  Parameters:
+  path (str): Path to the file.
+
+  Returns:
+  {quantity: (bin centers, disk mass)}.
+  """
   data = {}
   with open(path) as fp:
     for row in csv.DictReader(fp):
@@ -184,28 +232,61 @@ def load_histograms(path):
   return out
 
 
-def load_profile(path):
-  """Structured array of a disk_profiles_<snap>.csv file, keyed by column name."""
+def load_profile(path: str) -> np.ndarray:
+  """
+  Load a disk_profiles_<snap>.csv file.
+
+  Parameters:
+  path (str): Path to the file.
+
+  Returns:
+  Structured array keyed by column name.
+  """
   return np.genfromtxt(path, delimiter=",", names=True)
 
 
-def find_spectrum_snapshots(outdir):
-  """Snapshot ids for which a spectrum_<snap>.txt file exists."""
+def find_spectrum_snapshots(outdir: str) -> list[str]:
+  """
+  Snapshot ids for which a spectrum_<snap>.txt file exists.
+
+  Parameters:
+  outdir (str): Analysis directory.
+
+  Returns:
+  Sorted snapshot ids.
+  """
   pat = os.path.join(outdir, "spectra", "spectrum_*.txt")
   ids = [re.search(r"spectrum_(.+)\.txt$", f).group(1) for f in glob.glob(pat)]
   return sorted(ids)
 
 
-def load_spectrum(path):
-  """(time, {P_v, P_B, P_KE}) from a spectrum_<snap>.txt file."""
+def load_spectrum(path: str) -> tuple[float, np.ndarray, dict[str, np.ndarray]]:
+  """
+  Load a spectrum_<snap>.txt file.
+
+  Parameters:
+  path (str): Path to the file.
+
+  Returns:
+  (time, k, {'P_v', 'P_B', 'P_KE'}).
+  """
   with open(path) as fp:
     time = float(fp.readline().split("=")[1])
   k, Pv, PB, PKE = np.loadtxt(path, unpack=True)
   return time, k, {"P_v": Pv, "P_B": PB, "P_KE": PKE}
 
 
-def hist_ylim(outdir, snaps):
-  """Fix the y-limits from the min/max over all snapshots."""
+def hist_ylim(outdir: str, snaps: list[str]) -> dict[str, tuple[float, float]]:
+  """
+  Fix the histogram y-limits from the maximum over all snapshots.
+
+  Parameters:
+  outdir (str): Disk analysis directory.
+  snaps (list[str]): Snapshot ids.
+
+  Returns:
+  {quantity: (ymin, ymax)}.
+  """
   gmax = {}
   for snap in snaps:
     hist = load_histograms(os.path.join(outdir, "histograms", f"disk_histograms_{snap}.csv"))
@@ -214,8 +295,17 @@ def hist_ylim(outdir, snaps):
   return {q: (m * 1e-6, m * 1.5) for q, m in gmax.items() if m > 0}
 
 
-def common_r_grid(outdir, snaps):
-  """Shared R_mid grid (adapts to moving excision regions)."""
+def common_r_grid(outdir: str, snaps: list[str]) -> np.ndarray:
+  """
+  Shared R_mid grid (adapts to moving excision regions).
+
+  Parameters:
+  outdir (str): Disk analysis directory.
+  snaps (list[str]): Snapshot ids.
+
+  Returns:
+  Log-spaced radii covering all snapshots.
+  """
   lo, hi, n = [], [], 0
   for snap in snaps:
     prof = load_profile(os.path.join(outdir, "profiles", f"disk_profiles_{snap}.csv"))
@@ -224,8 +314,17 @@ def common_r_grid(outdir, snaps):
   return np.geomspace(min(lo), max(hi), n)
 
 
-def resample_profile(prof, R):
-  """Profile dict resampled onto the common R grid."""
+def resample_profile(prof: np.ndarray, R: np.ndarray) -> dict[str, np.ndarray]:
+  """
+  Profile resampled onto the common R grid.
+
+  Parameters:
+  prof (np.ndarray): Profile from load_profile.
+  R (np.ndarray): Common radial grid.
+
+  Returns:
+  {column: values on R} for the PROFILE_PANELS columns.
+  """
   r = np.atleast_1d(prof["R_mid"])
   logR, logr = np.log(R), np.log(r)
   out = {}
@@ -235,8 +334,17 @@ def resample_profile(prof, R):
   return out
 
 
-def profile_ylim(outdir, snaps):
-  """Fix the y-limits from the min/max over all snapshots."""
+def profile_ylim(outdir: str, snaps: list[str]) -> dict[str, tuple[float, float]]:
+  """
+  Fix the profile y-limits from the maximum over all snapshots.
+
+  Parameters:
+  outdir (str): Disk analysis directory.
+  snaps (list[str]): Snapshot ids.
+
+  Returns:
+  {column: (ymin, ymax)}.
+  """
   gmax = {}
   for snap in snaps:
     prof = load_profile(os.path.join(outdir, "profiles", f"disk_profiles_{snap}.csv"))
@@ -254,8 +362,20 @@ def profile_ylim(outdir, snaps):
   return ylim
 
 
-def plot_histograms(hist, snap, time_ms, ylim, outfile):
-  """Plot mass-histograms for the current snapshot."""
+def plot_histograms(hist: dict, snap: str, time_ms: float, ylim: dict, outfile: str) -> None:
+  """
+  Plot mass-histograms for the current snapshot.
+
+  Parameters:
+  hist (dict): Histograms from load_histograms.
+  snap (str): Snapshot id.
+  time_ms (float): Snapshot time [ms].
+  ylim (dict): y-limits from hist_ylim.
+  outfile (str): Output figure.
+
+  Returns:
+  None.
+  """
   fig, axes = plt.subplots(1, len(HIST_QUANTITIES), figsize=(4.0 * len(HIST_QUANTITIES), 3.5))
   for ax, (q, label, logx) in zip(axes, HIST_QUANTITIES):
     if q not in hist:
@@ -276,7 +396,20 @@ def plot_histograms(hist, snap, time_ms, ylim, outfile):
   plt.close(fig)
 
 
-def _plot_jrho_panel(ax, H_ext, H_int, ybins):
+def _plot_jrho_panel(ax: plt.Axes, H_ext: np.ndarray, H_int: np.ndarray,
+                     ybins: np.ndarray) -> QuadMesh:
+  """
+  Draw one j-rho histogram panel, with the inner region shaded.
+
+  Parameters:
+  ax (plt.Axes): Axes to draw on.
+  H_ext (np.ndarray): Histogram outside the inner radius.
+  H_int (np.ndarray): Histogram inside the inner radius.
+  ybins (np.ndarray): y bin edges.
+
+  Returns:
+  The colormesh of H_ext.
+  """
   cmap = plt.get_cmap("magma").copy()
   cmap.set_under("0.75")
   im = ax.pcolormesh(JRHO_XBINS, ybins, np.where(H_ext > 0, H_ext, np.nan).T,
@@ -290,7 +423,20 @@ def _plot_jrho_panel(ax, H_ext, H_int, ybins):
   return im
 
 
-def plot_jrho(hists, snap, time_ms, j_mean_code, outfile):
+def plot_jrho(hists: dict, snap: str, time_ms: float, j_mean_code: float, outfile: str) -> None:
+  """
+  Plot the j-rho histograms of a snapshot.
+
+  Parameters:
+  hists (dict): Histograms from load_jrho.
+  snap (str): Snapshot id.
+  time_ms (float): Snapshot time [ms].
+  j_mean_code (float): Mean specific angular momentum [code units].
+  outfile (str): Output figure.
+
+  Returns:
+  None.
+  """
   a = j_mean_code * JSPEC_UNIT
   fig, axs = plt.subplots(2, sharex=True, figsize=(6, 8),
                            gridspec_kw={"height_ratios": [2, 1]})
@@ -323,8 +469,22 @@ def plot_jrho(hists, snap, time_ms, j_mean_code, outfile):
   plt.close(fig)
 
 
-def plot_profiles(R, prof, snap, time_ms, ylim, outfile):
-  """Plot the radial profiles at the current snapshot."""
+def plot_profiles(R: np.ndarray, prof: dict, snap: str, time_ms: float, ylim: dict,
+                  outfile: str) -> None:
+  """
+  Plot the radial profiles at the current snapshot.
+
+  Parameters:
+  R (np.ndarray): Common radial grid.
+  prof (dict): Profile from resample_profile.
+  snap (str): Snapshot id.
+  time_ms (float): Snapshot time [ms].
+  ylim (dict): y-limits from profile_ylim.
+  outfile (str): Output figure.
+
+  Returns:
+  None.
+  """
   fig, axes = plt.subplots(2, 3, figsize=(13, 7))
   for ax, (key, label, logy) in zip(axes.flat, PROFILE_PANELS):
     ax.plot(R, prof[key], color="tab:blue")
@@ -343,7 +503,22 @@ def plot_profiles(R, prof, snap, time_ms, ylim, outfile):
   plt.close(fig)
 
 
-def _plot_Q_panel(ax, u, v, Q, rho, cmap, norm=None):
+def _plot_Q_panel(ax: plt.Axes, u: np.ndarray, v: np.ndarray, Q: np.ndarray,
+                  rho: np.ndarray | None, cmap: str, norm: Normalize | None = None) -> QuadMesh:
+  """
+  Draw one slice panel of Q, with density contours.
+
+  Parameters:
+  ax (plt.Axes): Axes to draw on.
+  u, v (np.ndarray): Slice coordinates.
+  Q (np.ndarray): Field to draw.
+  rho (np.ndarray): Density for the contours, or None.
+  cmap (str): Colormap.
+  norm (Normalize): Colorbar norm (default: LogNorm over Q_SLICE_RANGE).
+
+  Returns:
+  The colormesh.
+  """
   im = ax.pcolormesh(u, v, np.ma.masked_invalid(Q), norm=norm or LogNorm(*Q_SLICE_RANGE),
                      cmap=cmap, shading="auto")
   if rho is not None and np.isfinite(rho).any():
@@ -355,9 +530,20 @@ def _plot_Q_panel(ax, u, v, Q, rho, cmap, norm=None):
   return im
 
 
-def plot_Q_slice(sl, snap, time_ms, outfile):
-  """Upper half of the xz plane stacked on the xy plane (as in kplot.system.plotter),
-  one column per Q_SLICE_PANELS entry present in the slice file."""
+def plot_Q_slice(sl: Mapping[str, np.ndarray], snap: str, time_ms: float, outfile: str) -> None:
+  """
+  Upper half of the xz plane stacked on the xy plane (as in kplot.system.plotter),
+  one column per Q_SLICE_PANELS entry present in the slice file.
+
+  Parameters:
+  sl (Mapping): Slices of disk_slices_<snap>.npz.
+  snap (str): Snapshot id.
+  time_ms (float): Snapshot time [ms].
+  outfile (str): Output figure.
+
+  Returns:
+  None.
+  """
   u = sl["u"]
   top = u >= 0.0
   rho = lambda key: sl[key] if key in sl.files else None
@@ -397,8 +583,24 @@ def plot_Q_slice(sl, snap, time_ms, outfile):
   plt.close(fig)
 
 
-def plot_Q_spacetime(outdir, snaps, R, outfile, key=Q_SPACETIME_KEY, qrange=Q_SPACETIME_RANGE,
-                     label=r"$\langle Q_z \rangle_M$  ($\partial_R \Omega < 0$)"):
+def plot_Q_spacetime(outdir: str, snaps: list[str], R: np.ndarray, outfile: str,
+                     key: str = Q_SPACETIME_KEY, qrange: tuple = Q_SPACETIME_RANGE,
+                     label: str = r"$\langle Q_z \rangle_M$  ($\partial_R \Omega < 0$)") -> None:
+  """
+  R-t diagram of a profile column.
+
+  Parameters:
+  outdir (str): Disk analysis directory.
+  snaps (list[str]): Snapshot ids.
+  R (np.ndarray): Common radial grid.
+  outfile (str): Output figure.
+  key (str): Profile column.
+  qrange (tuple): Color range.
+  label (str): Colorbar label.
+
+  Returns:
+  None.
+  """
   times, rows = [], []
   for snap in snaps:
     prof = load_profile(os.path.join(outdir, "profiles", f"disk_profiles_{snap}.csv"))
@@ -433,8 +635,19 @@ def plot_Q_spacetime(outdir, snaps, R, outfile, key=Q_SPACETIME_KEY, qrange=Q_SP
   plt.close(fig)
 
 
-def plot_mri_profiles(prof, snap, time_ms, outfile):
-  """Radial MRI diagnostics: Q medians, field composition, 1/beta, dz and H/dz, P_orb."""
+def plot_mri_profiles(prof: np.ndarray, snap: str, time_ms: float, outfile: str) -> None:
+  """
+  Radial MRI diagnostics: Q medians, field composition, 1/beta, dz and H/dz, P_orb.
+
+  Parameters:
+  prof (np.ndarray): Profile from load_profile.
+  snap (str): Snapshot id.
+  time_ms (float): Snapshot time [ms].
+  outfile (str): Output figure.
+
+  Returns:
+  None.
+  """
   R   = np.atleast_1d(prof["R_mid"])
   col = lambda key: np.atleast_1d(prof[key])
   fig, axes = plt.subplots(2, 3, figsize=(15, 7.5))
@@ -488,8 +701,21 @@ def plot_mri_profiles(prof, snap, time_ms, outfile):
   plt.close(fig)
 
 
-def plot_orbit_count(outdir, snaps, R, outfile, r_mark=None):
-  """Orbits elapsed since the first snapshot, N(R, t) = int dt / P_orb(R, t)."""
+def plot_orbit_count(outdir: str, snaps: list[str], R: np.ndarray, outfile: str,
+                     r_mark: float | None = None) -> None:
+  """
+  Orbits elapsed since the first snapshot, N(R, t) = int dt / P_orb(R, t).
+
+  Parameters:
+  outdir (str): Disk analysis directory.
+  snaps (list[str]): Snapshot ids.
+  R (np.ndarray): Common radial grid.
+  outfile (str): Output figure.
+  r_mark (float): Radius [code units] to mark.
+
+  Returns:
+  None.
+  """
   times, rows = [], []
   for snap in snaps:
     prof = load_profile(os.path.join(outdir, "profiles", f"disk_profiles_{snap}.csv"))
@@ -529,9 +755,18 @@ def plot_orbit_count(outdir, snaps, R, outfile, r_mark=None):
   plt.close(fig)
 
 
-def plot_B_avg(b, outfile):
-  """Volume-averaged |B| over disk and bulk, and its poloidal/toroidal parts
-  (as in Fig. 5 of Izquierdo et al. 2025)."""
+def plot_B_avg(b: dict, outfile: str) -> None:
+  """
+  Volume-averaged |B| over disk and bulk, and its poloidal/toroidal parts
+  (as in Fig. 5 of Izquierdo et al. 2025).
+
+  Parameters:
+  b (dict): Time series collected from the scalars files.
+  outfile (str): Output figure.
+
+  Returns:
+  None.
+  """
   t     = np.asarray(b["time_ms"])
   order = np.argsort(t)
   arr   = lambda key: np.asarray(b[key], dtype=float)[order]
@@ -567,8 +802,17 @@ def plot_B_avg(b, outfile):
   plt.close(fig)
 
 
-def plot_field_geometry(g, outfile):
-  """Q_z and Q_phi, toroidal vs. poloidal energy, and MRI saturation ratios vs. time."""
+def plot_field_geometry(g: dict, outfile: str) -> None:
+  """
+  Q_z and Q_phi, toroidal vs. poloidal energy, and MRI saturation ratios vs. time.
+
+  Parameters:
+  g (dict): Time series collected from the scalars files.
+  outfile (str): Output figure.
+
+  Returns:
+  None.
+  """
   t     = np.asarray(g["time_ms"])
   order = np.argsort(t)
   t     = t[order]
@@ -583,7 +827,7 @@ def plot_field_geometry(g, outfile):
     ax.plot(t, pct[:, 2], color=color, marker="o", ms=2, label=label)
     ax.axhline(HGK_Q_REFS[name], color=color, ls="--", lw=0.8)
   ax.set_yscale("log")
-  ax.set_ylabel(r"$Q$  (median, 25–75%)")
+  ax.set_ylabel(r"$Q$  (median, 25-75%)")
   ax.legend(fontsize=8)
 
   ax = axes[1]
@@ -617,7 +861,7 @@ def plot_field_geometry(g, outfile):
     ax.plot(t, arr(key), color=color, marker="o", ms=2, label=label + r"$\ (M)$")
   bi = np.asarray(g["betainv_pct"], dtype=float)[order]
   ax.fill_between(t, bi[:, 1], bi[:, 3], color="k", alpha=0.15, lw=0)
-  ax.plot(t, bi[:, 2], color="k", marker="o", ms=2, label=r"$\beta^{-1}$ (median, 25–75%)")
+  ax.plot(t, bi[:, 2], color="k", marker="o", ms=2, label=r"$\beta^{-1}$ (median, 25-75%)")
   ax.plot(t, arr("betainv_ratio"), color="k", ls="--",
           label=r"$\langle b^2/2\rangle_M / \langle p\rangle_M$")
   # Scalars from before the composition/beta diagnostics leave this panel empty.
@@ -636,8 +880,18 @@ def plot_field_geometry(g, outfile):
   plt.close(fig)
 
 
-def _rho_contours(ax, x, y, rho):
-  """Cyan iso-density lines at PARKER_RHO_LEVELS (dotted -> solid with rho)."""
+def _rho_contours(ax: plt.Axes, x: np.ndarray, y: np.ndarray, rho: np.ndarray) -> None:
+  """
+  Cyan iso-density lines at PARKER_RHO_LEVELS (dotted -> solid with rho).
+
+  Parameters:
+  ax (plt.Axes): Axes to draw on.
+  x, y (np.ndarray): Slice coordinates.
+  rho (np.ndarray): Density.
+
+  Returns:
+  None.
+  """
   if rho is None or np.ndim(rho) != 2 or min(np.shape(rho)) < 2 or not np.isfinite(rho).any():
     return
   with np.errstate(divide="ignore", invalid="ignore"):
@@ -645,8 +899,20 @@ def _rho_contours(ax, x, y, rho):
                linestyles=PARKER_RHO_STYLES, linewidths=0.8)
 
 
-def plot_parker_slice(sl, snap, time_ms, outfile):
-  """Fig. 8-like xz plane: P, N_u, 1/beta, T, Gamma_bg with field and fluid lines."""
+def plot_parker_slice(sl: Mapping[str, np.ndarray], snap: str, time_ms: float,
+                      outfile: str) -> None:
+  """
+  Fig. 8-like xz plane: P, N_u, 1/beta, T, Gamma_bg with field and fluid lines.
+
+  Parameters:
+  sl (Mapping): Slices of disk_slices_<snap>.npz.
+  snap (str): Snapshot id.
+  time_ms (float): Snapshot time [ms].
+  outfile (str): Output figure.
+
+  Returns:
+  None.
+  """
   u = sl["u"]
   fig, axes = plt.subplots(1, len(PARKER_SLICE_PANELS), sharey=True,
                            figsize=(4.2 * len(PARKER_SLICE_PANELS), 4.9))
@@ -677,8 +943,18 @@ def plot_parker_slice(sl, snap, time_ms, outfile):
   plt.close(fig)
 
 
-def plot_parker_spacetime(outdir, snaps, outfile):
-  """Fig. 7-like r-t diagrams of P, N_u and 1/beta over all polar angles."""
+def plot_parker_spacetime(outdir: str, snaps: list[str], outfile: str) -> None:
+  """
+  Fig. 7-like r-t diagrams of P, N_u and 1/beta over all polar angles.
+
+  Parameters:
+  outdir (str): Disk analysis directory.
+  snaps (list[str]): Snapshot ids.
+  outfile (str): Output figure.
+
+  Returns:
+  None.
+  """
   profs, times = [], []
   for snap in snaps:
     profs.append(load_profile(os.path.join(outdir, "parker", f"disk_parker_{snap}.csv")))
@@ -691,7 +967,16 @@ def plot_parker_spacetime(outdir, snaps, outfile):
   lo = min(np.atleast_1d(p["r_mid"])[0] for p in profs)
   hi = max(np.atleast_1d(p["r_mid"])[-1] for p in profs)
   r  = np.geomspace(lo, hi, max(np.atleast_1d(p["r_mid"]).size for p in profs))
-  def grid(key):
+  def grid(key: str) -> np.ndarray:
+    """
+    A Parker profile column of every snapshot on the common radial grid.
+
+    Parameters:
+    key (str): Column name.
+
+    Returns:
+    Array of shape (snapshots, radii).
+    """
     return np.asarray([np.interp(np.log(r), np.log(np.atleast_1d(p["r_mid"])),
                                  np.atleast_1d(p[key]), left=np.nan, right=np.nan)
                        for p in profs])
@@ -719,8 +1004,20 @@ def plot_parker_spacetime(outdir, snaps, outfile):
   plt.close(fig)
 
 
-def plot_parker_vprof(vp, snap, time_ms, outfile):
-  """T, rho and Gamma_bg (solid) vs. Gamma_1 (dashed) over |z|/R at fixed R."""
+def plot_parker_vprof(vp: Mapping[str, np.ndarray], snap: str, time_ms: float,
+                      outfile: str) -> None:
+  """
+  T, rho and Gamma_bg (solid) vs. Gamma_1 (dashed) over |z|/R at fixed R.
+
+  Parameters:
+  vp (Mapping): Vertical profiles of disk_vprof_<snap>.npz.
+  snap (str): Snapshot id.
+  time_ms (float): Snapshot time [ms].
+  outfile (str): Output figure.
+
+  Returns:
+  None.
+  """
   zR = vp["zR"]
   fig, axes = plt.subplots(1, 3, sharex=True, figsize=(13.0, 4.0))
   for i, R0 in enumerate(vp["R"]):
@@ -750,8 +1047,17 @@ def plot_parker_vprof(vp, snap, time_ms, outfile):
   plt.close(fig)
 
 
-def plot_scalars(data, outfile):
-  """Plot the scalar evolution of some important disk measures."""
+def plot_scalars(data: dict, outfile: str) -> None:
+  """
+  Plot the scalar evolution of some important disk measures.
+
+  Parameters:
+  data (dict): Time series collected from the scalars files.
+  outfile (str): Output figure.
+
+  Returns:
+  None.
+  """
   fig, axes = plt.subplots(2, 4, figsize=(18,6))
   time = data["time_ms"]
   for ax, (key, label, logy) in zip(axes.flat, SCALAR_PANELS):
@@ -768,8 +1074,21 @@ def plot_scalars(data, outfile):
   plt.close(fig)
 
 
-def plot_spectrum(k, spectra, snap, time, outfile):
-  """Plot the isotropic power spectra with Kolmogorov/Kazantsev reference slopes."""
+def plot_spectrum(k: np.ndarray, spectra: dict[str, np.ndarray], snap: str, time: float,
+                  outfile: str) -> None:
+  """
+  Plot the isotropic power spectra with Kolmogorov/Kazantsev reference slopes.
+
+  Parameters:
+  k (np.ndarray): Wavenumbers.
+  spectra (dict): {'P_v', 'P_B', 'P_KE'} from load_spectrum.
+  snap (str): Snapshot id.
+  time (float): Snapshot time.
+  outfile (str): Output figure.
+
+  Returns:
+  None.
+  """
   fig, ax = plt.subplots(figsize=(6, 5))
   for key, label, color in SPECTRUM_CURVES:
     ax.plot(k, spectra[key], color=color, label=label)
@@ -799,9 +1118,28 @@ def plot_spectrum(k, spectra, snap, time, outfile):
   plt.close(fig)
 
 
-def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=False,
-             no_spectra=False, no_jrho=False, no_slices=False, no_parker=False,
-             r_butterfly=None):
+def plot_all(outdir: str, figdir: str, no_histograms: bool = False, no_profiles: bool = False,
+             no_scalars: bool = False, no_spectra: bool = False, no_jrho: bool = False,
+             no_slices: bool = False, no_parker: bool = False,
+             r_butterfly: float | None = None) -> None:
+  """
+  Make every figure of the disk and spectra outputs.
+
+  Parameters:
+  outdir (str): Analysis directory.
+  figdir (str): Figure directory.
+  no_histograms (bool): Skip the histograms.
+  no_profiles (bool): Skip the radial profiles.
+  no_scalars (bool): Skip the scalar time series.
+  no_spectra (bool): Skip the spectra.
+  no_jrho (bool): Skip the j-rho histograms.
+  no_slices (bool): Skip the slices.
+  no_parker (bool): Skip the Parker diagnostics.
+  r_butterfly (float): Butterfly extraction radius [code units] marked in the orbit count.
+
+  Returns:
+  None.
+  """
   os.makedirs(os.path.join(figdir, "histograms"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "parker_xz"), exist_ok=True)
   os.makedirs(os.path.join(figdir, "parker_vprof"), exist_ok=True)
@@ -948,7 +1286,16 @@ def plot_all(outdir, figdir, no_histograms=False, no_profiles=False, no_scalars=
       plot_spectrum(k, spectra, snap, time, outfile)
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
+  """
+  Command-line entry point of the volume plots.
+
+  Parameters:
+  argv (list[str]): Command-line arguments (default: sys.argv).
+
+  Returns:
+  None.
+  """
   ap = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
   ap.add_argument("--outdir", required=True,

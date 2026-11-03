@@ -1,7 +1,4 @@
-#########################################################################
-# File: waveforms.py                                                    #
-# Description: Waveform utilities for the AthenaK waveform analysis.    #
-#########################################################################
+"""Utility for waveform analysis."""
 
 # Import necessary standard libaries.
 import re
@@ -25,7 +22,7 @@ class Waveform:
   A class to handle waveform data from AthenaK output files.
   """
 
-  def __init__(self, waveform_path, radius_key, Mass, Omega):
+  def __init__(self, waveform_path: str, radius_key: str, Mass: float, Omega: float) -> None:
     """
     Initialize the Waveform class with the path to the waveform files.
 
@@ -57,12 +54,12 @@ class Waveform:
     self.vkick         = None
     self.v0            = None
 
-  def load_psi4_data(self):
+  def load_psi4_data(self) -> None:
     """
-    Load the waveform data from the specified files path.
+    Load the waveform data from the specified files path into self.psi4_data.
 
     Returns:
-    Dictionary holding the waveform data.
+    None.
     """
     if not os.path.exists(self.waveform_path):
       raise FileNotFoundError(f"Waveform file not found at: {self.waveform_path}")
@@ -98,16 +95,13 @@ class Waveform:
     if self.psi4_data is not None:
       print("Psi4 data successfully loaded.")
 
-  def retarded_time(self):
+  def retarded_time(self) -> None:
     """
-    Calculates the retarded time on a Schwarzschild background in isotropic coordinates.
-
-    Parameters:
-    r: Extraction radius (in geometric units).
-    M: Total gravitational mass of the system.
+    Replace the time column in psi4_data with the retarded time on a
+    Schwarzschild background in isotropic coordinates.
 
     Returns:
-    Exchanges time column in psi4_data with retarded time.
+    None.
     """
     if self.psi4_data is None:
       raise ValueError("Waveform data not loaded. Call load_psi4_data() first.")
@@ -132,8 +126,14 @@ class Waveform:
       if "time" in self.psi4_data[radius]:
         self.psi4_data[radius]["time"] -= rs
 
-  def merger_time(self):
-    """Compute the merger time [M_sun] from the (2,2) GW mode at `radius`."""
+  def merger_time(self) -> None:
+    """
+    Compute the merger time [M_sun] from the peak of the (2,2) mode and store
+    it in self.t_merger.
+
+    Returns:
+    None.
+    """
     if self.psi4_data is None:
       raise SystemExit("Load psi4 data first with load_psi4_data()!")
 
@@ -146,53 +146,62 @@ class Waveform:
 
   # Some waveform utility.
   @staticmethod
-  def phase(signal):
+  def phase(signal: np.ndarray) -> np.ndarray:
     """
     Get the phase of the strain of a signal.
-    Signal has to be (Re(psi4)+i*Im(psi4))/M,
-      where M is the total gravitational mass of the system.
 
     Parameters:
-    signal: (Re(psi4)+i*Im(psi4)) / M.
+    signal (np.ndarray): (Re(psi4) + i*Im(psi4)) / M, with M the total
+                         gravitational mass of the system.
+
+    Returns:
+    Unwrapped phase.
     """
     return -np.unwrap(np.angle(signal))
 
   # Taken from watpy wave/wave.py.
   @staticmethod
-  def amplitude(signal):
+  def amplitude(signal: np.ndarray) -> np.ndarray:
     """
     Get the amplitude of the strain of a signal.
-    Signal has to be (Re(psi4)+i*Im(psi4))/M,
-      where M is the total gravitational mass of the system.
 
     Parameters:
-    signal: (Re(psi4)+i*Im(psi4)) / M.
+    signal (np.ndarray): (Re(psi4) + i*Im(psi4)) / M, with M the total
+                         gravitational mass of the system.
+
+    Returns:
+    Amplitude.
     """
     return np.abs(signal)
 
   @staticmethod
-  def phi_dot(time, signal):
+  def phi_dot(time: np.ndarray, signal: np.ndarray) -> np.ndarray:
     """
     Get the angular frequency of the signal.
-    Signal has to be (Re(psi4)+i*Im(psi4))/M,
-      where M is the total gravitational mass of the system.
 
     Parameters:
-    time: Retarded time.
-    signal: (Re(psi4)+i*Im(psi4)) / M.
+    time (np.ndarray): Retarded time.
+    signal (np.ndarray): (Re(psi4) + i*Im(psi4)) / M, with M the total
+                         gravitational mass of the system.
+
+    Returns:
+    Angular frequency.
     """
     phase_to_diff = Waveform.phase(signal)
     return diff1(time, phase_to_diff, pad=True)
 
   # Compute the strain and frequency.
-  def strain(self, mode_key='22', cutoff=None):
+  def strain(self, mode_key: str = '22', cutoff: float | None = None) -> None:
     """
     Compute the strain and the frequency from the real and imaginary
-      part of the psi4.
+    part of psi4 and store them in self.strain_data.
 
     Parameters:
-    mode_key: Which mode, e.g. '22' by default.
-    cutoff: FFI cutoff frequency nu_0. Defaults to Omega/pi.
+    mode_key (str): Which mode, e.g. '22' by default.
+    cutoff (float): FFI cutoff frequency nu_0. Defaults to Omega/pi.
+
+    Returns:
+    None.
     """
     # Parameters
     Omega  = self.Omega
@@ -224,7 +233,8 @@ class Waveform:
     self.strain_data = strain_data
 
   # Plot the strain.
-  def plot_strain(self, tmin=0.0, tmax=None, output_dir=None):
+  def plot_strain(self, tmin: float = 0.0, tmax: float | None = None,
+                  output_dir: str | None = None) -> None:
     """
     Plot the strain.
 
@@ -232,6 +242,9 @@ class Waveform:
     tmin (float): Minimum time for the plotting window.
     tmax (float): Maximum time for the plotting window.
     output_dir (str): Output directory to store the plot.
+
+    Returns:
+    None.
     """
     if self.strain_data is None:
       raise ValueError("Strain data not computed. Call strain() first.")
@@ -257,16 +270,32 @@ class Waveform:
 
   # Mode-coupling coefficients (https://arxiv.org/pdf/0912.1285).
   @staticmethod
-  def _a(l,m):
-    """Equ. (57)."""
+  def _a(l: int, m: int) -> float:
+    """
+    Coefficient of Equ. (57).
+
+    Parameters:
+    l, m (int): Mode numbers.
+
+    Returns:
+    Coefficient value.
+    """
     if (abs(m) > l) or (abs(m + 1) > l):
       return 0.0
     else:
       return np.sqrt((l - m) * (l + m + 1)) / (l * (l + 1))
 
   @staticmethod
-  def _b(l,m):
-    """Equ. (58)."""
+  def _b(l: int, m: int) -> float:
+    """
+    Coefficient of Equ. (58).
+
+    Parameters:
+    l, m (int): Mode numbers.
+
+    Returns:
+    Coefficient value.
+    """
     if (l < 2) or (abs(m) > l):
       return 0.0
     else:
@@ -274,13 +303,29 @@ class Waveform:
                         / ((2 * l - 1) * (2 * l + 1)))
 
   @staticmethod
-  def _c(l,m):
-    """Equ. (59)."""
+  def _c(l: int, m: int) -> float:
+    """
+    Coefficient of Equ. (59).
+
+    Parameters:
+    l, m (int): Mode numbers.
+
+    Returns:
+    Coefficient value.
+    """
     return 2.0 * m / (l * (l + 1))
 
   @staticmethod
-  def _d(l,m):
-    """Equ. (60)."""
+  def _d(l: int, m: int) -> float:
+    """
+    Coefficient of Equ. (60).
+
+    Parameters:
+    l, m (int): Mode numbers.
+
+    Returns:
+    Coefficient value.
+    """
     if (l < 2) or (abs(m) > l):
       return 0.0
     else:
@@ -288,12 +333,16 @@ class Waveform:
                         / ((2 * l - 1) * (2 * l + 1)))
 
   # Compute dh_lm/du.
-  def hdot(self, cutoff, lmax=8):
+  def hdot(self, cutoff: float, lmax: int = 8) -> None:
     """
-    dh_lm/du for R*h_lm/M.
+    Compute dh_lm/du for R*h_lm/M and store it per (l, m) in self.strain_dot.
+
+    Parameters:
+    cutoff (float): FFI cutoff frequency.
+    lmax (int): Highest l included.
 
     Returns:
-    Time array and dictionary holding hdot for each (l,m).
+    None.
     """
     if self.psi4_data is None:
       raise ValueError("Psi4 data not loaded. Call load_psi4_data() first.")
@@ -311,13 +360,16 @@ class Waveform:
     self.strain_dot = out
 
   # Compute the momentum flux.
-  def momentum_flux(self, lmax=8):
+  def momentum_flux(self, lmax: int = 8) -> None:
     """
     Eq. (12) of https://journals.aps.org/prd/pdf/10.1103/n7hg-cc2l written as Equ.(55)-(56) of
-    https://arxiv.org/pdf/0912.1285.
+    https://arxiv.org/pdf/0912.1285. Stores [Px + iPy, Pz] in self.mom_flux.
+
+    Parameters:
+    lmax (int): Highest l included.
 
     Returns:
-    Px + iPy and Pz.
+    None.
     """
     g = lambda l, m: self.strain_dot.get((l, m), 0.)
     Pxy, Pz = 0., 0.
@@ -336,18 +388,23 @@ class Waveform:
     self.mom_flux = [Pxy / (8 * np.pi), np.real(Pz) / (16 * np.pi)]
 
   # Compute the kick.
-  def compute_kick(self, t_merge=None, insp_min=300.0, insp_max=-200.0, cutoff=None, hodograph=False,
-                   output_dir=None):
+  def compute_kick(self, t_merge: float | None = None, insp_min: float = 300.0,
+                   insp_max: float = -200.0, cutoff: float | None = None,
+                   hodograph: bool = False, output_dir: str | None = None) -> None:
     """
-    Compute the kick based on Equs.(12)-(13) of https://journals.aps.org/prd/pdf/10.1103/n7hg-cc2l.
+    Compute the kick based on Equs.(12)-(13) of https://journals.aps.org/prd/pdf/10.1103/n7hg-cc2l
+    and store it in self.vkick, self.vxy and self.v0.
 
     Parameters:
-    hodograph (bool): Whether to plot a hodograph or not.
     t_merge  (float): Merger time from psi4 data (use merger_time).
     insp_min (float): Minimum time of the v0 correction window.
     insp_max (float): Maximum time of the v0 correction window w.r.t. to merger time.
     cutoff   (float): Used for the FFT of hdot.
+    hodograph (bool): Whether to plot a hodograph or not.
     output_dir (str): Where to store the hodograph.
+
+    Returns:
+    None.
     """
     CLIGHT_KMS = 299792.458
 

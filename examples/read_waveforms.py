@@ -1,7 +1,4 @@
-#########################################################################
-# File: read_waveforms.py                                               #
-# Description: Read waveform data from a file.                          #
-#########################################################################
+"""Read waveform data and compute kick velocity."""
 
 # Import the waveform reader class.
 from kplot.system.waveforms import Waveform

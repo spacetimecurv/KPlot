@@ -1,13 +1,9 @@
-#########################################################################
-# File: read_tracker.py                                                 #
-# Description: Read tracker data from a file.                           #
-#########################################################################
+"""Read tracker data from file and calculate eccentricity."""
 
 # Import the horizon finder class.
 from kplot.system.tracker import Tracker
 
 # Import necessary third-party libraries.
-import matplotlib.pyplot as plt
 import numpy as np
 
 # Call the Tracker constructor.
@@ -31,7 +27,7 @@ _, _, _ = tracker.calc_eccentricity(
   t_min_plot=0.0,
   t_max_plot=1600.0,
   init_guess=[20.0, -0.01, 1.0e-6, 0.02, 0.012, 0.0],
-  bounds=([-np.inf, -np.inf, -np.inf, -np.inf, 0.008, -2*np.pi], 
+  bounds=([-np.inf, -np.inf, -np.inf, -np.inf, 0.008, -2*np.pi],
           [np.inf, np.inf, np.inf, np.inf, 0.020, 2*np.pi]),
   output_path=None,
   save=False)

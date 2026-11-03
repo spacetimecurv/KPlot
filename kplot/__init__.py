@@ -1,12 +1,12 @@
 """Plotting utilities and tools for AthenaK, interfacing plot-tools.
 
-Three subpackages:
+Three subpackages, plus shared helpers in `kplot.utils`:
 
-- :mod:`kplot.system` — whole-run diagnostics (history, trackers, horizons,
+- :mod:`kplot.system` - whole-run diagnostics (history, trackers, horizons,
   waveforms, slice series, the full-run ``SystemPlotter``).
-- :mod:`kplot.sphere` — analysis of spherical-surface (``sph``) extraction
+- :mod:`kplot.sphere` - analysis of spherical-surface (``sph``) extraction
   output: ejecta, neutrinos, merger time.
-- :mod:`kplot.volume` — analysis of 3D volume-domain output: post-merger disk
+- :mod:`kplot.volume` - analysis of 3D volume-domain output: post-merger disk
   diagnostics etc..
 
 Names live under their subpackage and submodule: ``from kplot.system.plotter

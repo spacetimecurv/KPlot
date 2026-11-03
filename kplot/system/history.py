@@ -1,7 +1,4 @@
-#########################################################################
-# File: history.py                                                      #
-# Description: Utilities for the AthenaK history output.                #
-#########################################################################
+"""Utility for reading .hst AthenaK output."""
 
 # Import necessary standard libaries.
 import re
@@ -19,7 +16,7 @@ class History:
   A class to handle history output data from AthenaK.
   """
 
-  def __init__(self, history_path):
+  def __init__(self, history_path: str) -> None:
     """
     Initialize the History class with path to the history output file.
 
@@ -29,9 +26,9 @@ class History:
     self.history_path = history_path
     self.history_data = None
 
-  def load_history_data(self, raw=False):
+  def load_history_data(self, raw: bool = False) -> None:
     """
-    Load the history data from the specified path.
+    Load the history data from the specified path into self.history_data.
     (Adapted from ~/athenak/vis/python/athena_read.py)
 
     Parameters:
@@ -39,7 +36,7 @@ class History:
                 previous runs.
 
     Returns:
-    Dictionary holding the keys and data columns.
+    None.
     """
     if not os.path.exists(self.history_path):
       raise FileNotFoundError(f"History file not found at: {self.history_path}")
@@ -100,9 +97,11 @@ class History:
 
     self.history_data = data
 
-  def plot_history(self, variable=None, output_path=None, save=False,
-                   xmin=None, xmax=None, ymin=None, ymax=None,
-                   logx=False, logy=False, xlabel="", ylabel="", color="red"):
+  def plot_history(self, variable: str | None = None, output_path: str | None = None,
+                   save: bool = False, xmin: float | None = None, xmax: float | None = None,
+                   ymin: float | None = None, ymax: float | None = None,
+                   logx: bool = False, logy: bool = False, xlabel: str = "",
+                   ylabel: str = "", color: str = "red") -> None:
     """
     Simple function that plots a history variable.
 
@@ -119,6 +118,9 @@ class History:
     xlabel (str): Label for the x-axis.
     ylabel (str): Label for the y-axis.
     color (str): Color of the plot.
+
+    Returns:
+    None.
     """
     # Check if variable exists.
     if variable not in self.history_data.keys():

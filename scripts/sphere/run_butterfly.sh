@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_butterfly.sh  —  KPlot butterfly diagram (toroidal field) analysis script
+# run_butterfly.sh  -  KPlot butterfly diagram (toroidal field) analysis script
 #
 # Usage:
 #   bash run_butterfly.sh [--analysis] [--plot] [--all]
@@ -21,9 +21,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/config.ini"
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Read paths from config.ini  (plain INI: parsed, never executed)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if [[ ! -f "${CONFIG_FILE}" ]]; then
   echo "ERROR: ${CONFIG_FILE} not found."
   echo "       Copy config.example.ini to config.ini and set 'simpath' + 'butterfly_radius'."
@@ -60,9 +60,9 @@ if [[ -z "${SIMPATH}" ]]; then
   echo "ERROR: 'simpath' is not set in ${CONFIG_FILE}."; exit 1
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # RUN SETTINGS
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 JOBNAME="$(_cfg_get jobname)"
 N_WORKERS="$(_cfg_get n_workers)"
 BF_RADIUS="$(_cfg_get butterfly_radius)"
@@ -76,7 +76,7 @@ fi
 # ejecta/neutrino results of run_analysis.sh.
 OUTPUT_DIR="${SIMPATH}/butterfly_$(printf '%gM' "${BF_RADIUS}")"
 
-# ── auto-discover all output-*/sph directories (sorted) ──────────────────────
+# -- auto-discover all output-*/sph directories (sorted) ----------------------
 SPH_PATTERN="output-*/sph"
 if [[ "${BATCHTOOLS}" == "false" ]]; then
   SPH_PATTERN="sph"
@@ -87,9 +87,9 @@ for d in "${SIMPATH}"/${SPH_PATTERN}; do
   [[ -d "$d" ]] && SPH_DIRS+=("$d")
 done
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # ARG PARSING
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 RUN_ANALYSIS=0; RUN_PLOT=0
 if [[ $# -eq 0 ]]; then
   RUN_ANALYSIS=1; RUN_PLOT=1
@@ -107,9 +107,9 @@ if [[ $RUN_ANALYSIS -eq 1 && ${#SPH_DIRS[@]} -eq 0 ]]; then
   echo "ERROR: no ${SPH_PATTERN} directories found under ${SIMPATH}"; exit 1
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # SETUP
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Prefer the installed console script; fall back to the module form if KPlot
 # has not been reinstalled since the kplot.sphere entry points were added.
 _kplot() {
@@ -143,17 +143,17 @@ echo "============================================================"
 
 if [[ $RUN_ANALYSIS -eq 1 ]]; then
   echo ""
-  echo "── Butterfly diagram analysis ───────────────────────────────"
+  echo "-- Butterfly diagram analysis -------------------------------"
   PLOT_FLAG=()
   [[ $RUN_PLOT -eq 1 ]] && PLOT_FLAG=(--plot)
   _kplot kplot-sphere-butterfly kplot.sphere.butterfly \
     "${SPH_ARGS[@]}" "${BF_ARGS[@]}" "${PLOT_FLAG[@]+"${PLOT_FLAG[@]}"}"
-  echo "── Butterfly diagram done ───────────────────────────────────"
+  echo "-- Butterfly diagram done -----------------------------------"
 elif [[ $RUN_PLOT -eq 1 ]]; then
   echo ""
-  echo "── Plotting butterfly diagram ───────────────────────────────"
+  echo "-- Plotting butterfly diagram -------------------------------"
   _kplot kplot-sphere-butterfly kplot.sphere.butterfly "${BF_ARGS[@]}" --plot-only
-  echo "── Plotting done ────────────────────────────────────────────"
+  echo "-- Plotting done --------------------------------------------"
 fi
 
 echo ""

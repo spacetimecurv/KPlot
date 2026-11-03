@@ -29,13 +29,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
+from ..utils.constants import MSUN_TO_MS
 from .mergertime import read_merger_time
-
-# Unit conversions (match kplot.sphere.plots)
-G          = 6.67430e-11
-M_SUN      = 1.98892e30
-C          = 2.99792458e8
-MSUN_TO_MS = G * M_SUN / C**3 * 1e3   # M_sun -> ms
 
 SPECIES   = ['nue', 'nua', 'nux', 'anux']
 SP_LABEL  = [r'$\nu_e$', r'$\bar\nu_e$', r'$\nu_x$', r'$\bar\nu_x$']
@@ -43,12 +38,30 @@ SP_COLOR  = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red']
 LINESTYLES = ['-', '--', ':', '-.']
 
 
-def load_model(analysis_dir, t_merger=None):
-  """Load luminosity + mean-energy series for one model, time relative to merger [ms]."""
+def load_model(analysis_dir: str, t_merger: float | None = None) -> dict:
+  """
+  Load the luminosity and mean-energy series of one model.
+
+  Parameters:
+  analysis_dir (str): Neutrino analysis directory of the model.
+  t_merger (float): Merger time [M_sun] (default: read from analysis_dir).
+
+  Returns:
+  {'Lnu', 'Ltot', 'Eav', 't_merger'}, with times t - t_merger [ms].
+  """
   if t_merger is None:
     t_merger = read_merger_time(analysis_dir)
 
-  def load(fname):
+  def load(fname: str) -> np.ndarray:
+    """
+    Load one series and shift its time to t - t_merger [ms].
+
+    Parameters:
+    fname (str): File name inside analysis_dir.
+
+    Returns:
+    The data with the shifted time column.
+    """
     d = np.loadtxt(os.path.join(analysis_dir, fname))
     d[:, 0] = (d[:, 0] - t_merger) * MSUN_TO_MS     # -> t - t_merger [ms]
     return d
@@ -61,8 +74,16 @@ def load_model(analysis_dir, t_merger=None):
   }
 
 
-def overlap_xlim(models):
-  """x-range [ms] = overlap of all models (the shorter window) about merger."""
+def overlap_xlim(models: list[dict]) -> tuple[float, float]:
+  """
+  Time range [ms] covered by all models.
+
+  Parameters:
+  models (list[dict]): Models from load_model.
+
+  Returns:
+  (left, right) of the common window.
+  """
   lefts, rights = [], []
   for m in models:
     t = m['Ltot'][:, 0]
@@ -71,7 +92,16 @@ def overlap_xlim(models):
   return max(lefts), min(rights)
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
+  """
+  Command-line entry point of the neutrino model comparison.
+
+  Parameters:
+  argv (list[str]): Command-line arguments (default: sys.argv).
+
+  Returns:
+  None.
+  """
   parser = argparse.ArgumentParser(
       description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
   parser.add_argument("--dir", action="append", required=True, dest="dirs",
@@ -112,7 +142,7 @@ def main(argv=None):
     xlo, xhi = overlap_xlim(models)
 
   fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
-  fig.suptitle("BNS — Neutrino emission: model comparison", fontsize=13)
+  fig.suptitle("BNS - Neutrino emission: model comparison", fontsize=13)
 
   # ---- Panel 0: energy luminosity (log) ----
   ax = axes[0]

@@ -1,24 +1,25 @@
-#########################################################################
-# File: system.py                                                       #
-# Description: Multi-segment full-run visualization driver for AthenaK. #
-#########################################################################
-#
-# Combines all output-XXXX restart segments of an AthenaK simulation and
-# produces a full-run set of diagnostics: 1-D history/time-series plots
-# and parallel 2-D slice frames (density, temperature, Y_e, radiation-M1
-# fields, neutrino energies) with optional NS-tracker, black-hole horizon
-# and AMR-grid overlays.
-#
-# Binary files have to either exist in a batchtools substructure, i.e.
-# output-XXXX (in this case pass --batchtools) or in a single folder.
+"""
+Global plotter function of AthenaK .bin slices.
 
-# Each frame series is written to its own figpath/<diagnostic>_<plane>/ subfolder.
-#
-# Use in Python:
-#     from kplot.system.plotter import SystemPlotter
-#     SystemPlotter(simpath="/path/to/sim", units="cgs").run(["density", "history"])
+Combines all output-XXXX restart segments of an AthenaK simulation and
+produces a full-run set of diagnostics: 1-D history/time-series plots
+and parallel 2-D slice frames (density, temperature, Y_e, radiation-M1
+fields, neutrino energies) with optional NS-tracker, black-hole horizon
+and AMR-grid overlays.
 
-# Import necessary standard libraries.
+Binary files have to either exist in a batchtools substructure, i.e.
+output-XXXX (in this case pass --batchtools) or in a single folder.
+
+Each frame series is written to its own figpath/<diagnostic>_<plane>/ subfolder.
+
+Use in Python:
+    from kplot.system.plotter import SystemPlotter
+    SystemPlotter(simpath="/path/to/sim", units="cgs").run(["density", "history"])
+
+Import necessary standard libraries.
+"""
+
+# Built-in libraries.
 import argparse
 import functools
 import glob
@@ -26,6 +27,7 @@ import multiprocessing
 import os
 import re
 import configparser
+from collections.abc import Callable
 
 # Import necessary third-party libraries.
 import matplotlib
@@ -175,16 +177,32 @@ MSUN_TO_KM = au.unit_len_cgs / 1.0e5
 MSUN_TO_MS = (au.unit_len_cgs / au.cgs.c) * 1.0e3
 
 # Choose spatial coordinates for the plot.
-def spatial_units(units):
-  """Return (coord_scale, axis_label) for the spatial axes given a unit system."""
+def spatial_units(units: str) -> tuple[float, str]:
+  """
+  Choose the scale and label of the spatial axes.
+
+  Parameters:
+  units (str): Unit system, 'code', 'cgs' or 'ngs'.
+
+  Returns:
+  (coord_scale, axis_label).
+  """
   if units == "code":
     return 1.0, r"\mathrm{M}_\odot"
   return MSUN_TO_KM, r"\mathrm{km}"
 
 # Choose time units display for the plot.
 TIME_UNITS = ("Msun", "ms")
-def time_units_scale(time_units):
-  """Return (scale, latex_label, axis_label) for the chosen time-display units."""
+def time_units_scale(time_units: str) -> tuple[float, str, str]:
+  """
+  Choose the scale and labels of the displayed time.
+
+  Parameters:
+  time_units (str): 'Msun' or 'ms'.
+
+  Returns:
+  (scale, latex_label, axis_label).
+  """
   if time_units == "ms":
     return MSUN_TO_MS, r"\mathrm{ms}", "ms"
   return 1.0, r"\mathrm{M}_\odot", "Msun"
@@ -224,8 +242,16 @@ _CODE_VMAX = {
 }
 
 # Load the sections specified by the user.
-def load_sections(path):
-  """Return the [sections] entries of the config.ini as 'name[=lo,hi,cmap]' tokens."""
+def load_sections(path: str | None) -> list[str]:
+  """
+  Read the [sections] entries of a config.ini.
+
+  Parameters:
+  path (str): Path to the config.ini (None gives no sections).
+
+  Returns:
+  List of 'name[=lo,hi,cmap]' tokens.
+  """
   if not path: return []
 
   # Extract the sections block.
@@ -247,8 +273,16 @@ def load_sections(path):
   return [f"{name}={val}" if val else name for name, val in cp.items('sections')]
 
 # Parse a 'name[=lo,hi,cmap]' section token.
-def parse_section_spec(token):
-  """Return (name, vmin, vmax, cmap); empty fields become None."""
+def parse_section_spec(token: str) -> tuple[str, float | None, float | None, str | None]:
+  """
+  Parse a 'name[=lo,hi,cmap]' section token.
+
+  Parameters:
+  token (str): Section token.
+
+  Returns:
+  (name, vmin, vmax, cmap); empty fields become None.
+  """
   name, _, rest = token.partition('=')
   name = name.strip()
   if name not in SECTIONS + ["all"]:
@@ -283,8 +317,13 @@ SECTIONS = [
 # Configure plotting environment.
 # ---------------------------------------------------------------------------
 # Configure mpl.
-def configure_matplotlib():
-  """Select the non-interactive Agg backend and apply the plot style."""
+def configure_matplotlib() -> None:
+  """
+  Select the non-interactive Agg backend and apply the plot style.
+
+  Returns:
+  None.
+  """
   matplotlib.use("Agg", force=True)
   mpl.rcParams.update(_STYLE)
 
@@ -293,16 +332,33 @@ PLANES = ("xy", "xz", "yz")
 _PLANE_AXES = {"xy": ("x", "y"), "xz": ("x", "z"), "yz": ("y", "z")}
 
 # Fetch the coordinate labels for the given plane.
-def plane_axis_labels(plane):
-  """Return (horizontal, vertical) coordinate letters for a slice plane."""
+def plane_axis_labels(plane: str) -> tuple[str, str]:
+  """
+  Coordinate letters of a slice plane.
+
+  Parameters:
+  plane (str): 'xy', 'xz' or 'yz'.
+
+  Returns:
+  (horizontal, vertical) coordinate letters.
+  """
   return _PLANE_AXES[plane]
 
 # ---------------------------------------------------------------------------
 # Helper functions.
 # ---------------------------------------------------------------------------
 # List of binary files.
-def glob_bin_files(directory, prefix):
-  """Return sorted list of existing binary files matching prefix.NNNNN.bin."""
+def glob_bin_files(directory: str, prefix: str) -> list[str]:
+  """
+  Find the binary files prefix.NNNNN.bin in directory (or its bin/ subfolder).
+
+  Parameters:
+  directory (str): Segment directory.
+  prefix (str): File prefix, e.g. '<job>.mhd_w_bcc_xy'.
+
+  Returns:
+  Sorted list of file paths.
+  """
   # If there is no 'bin' directory, then directly search in the parent folder.
   for sub in ("bin", ""):
     files = glob.glob(os.path.join(directory, sub, f"{prefix}.?????.bin"))
@@ -311,8 +367,20 @@ def glob_bin_files(directory, prefix):
   return []
 
 # Print stats from the frame.
-def print_stats(data, var_name, time_scale=1.0, time_axis="Msun"):
-  """Print the frame time plus min/max of var_name across all blocks."""
+def print_stats(data: BinaryData, var_name: str, time_scale: float = 1.0,
+                time_axis: str = "Msun") -> None:
+  """
+  Print the frame time plus min/max of var_name across all blocks.
+
+  Parameters:
+  data (BinaryData): Loaded frame.
+  var_name (str): Variable name.
+  time_scale (float): Factor converting the time to the displayed units.
+  time_axis (str): Displayed time unit.
+
+  Returns:
+  None.
+  """
   max_val, min_val = -np.inf, np.inf
   for _, arr in data.get_block_data(var_name):
     max_val = max(max_val, arr.max())
@@ -326,7 +394,12 @@ def print_stats(data, var_name, time_scale=1.0, time_axis="Msun"):
 # CO tracker class holding the necessary data.
 class _CombinedTracker:
   """Lightweight tracker holding concatenated time/x/y/z arrays from all segments."""
-  def __init__(self, time, x, y, z):
+  def __init__(self, time: np.ndarray, x: np.ndarray, y: np.ndarray, z: np.ndarray) -> None:
+    """
+    Parameters:
+    time (np.ndarray): Times.
+    x, y, z (np.ndarray): Tracker positions.
+    """
     self.time = time
     self.x = x
     self.y = y
@@ -335,13 +408,28 @@ class _CombinedTracker:
 # Horizon class holding the times/radii.
 class _CombinedHorizon:
   """Lightweight horizon holding concatenated time/radius arrays from all segments."""
-  def __init__(self, time, radius):
+  def __init__(self, time: np.ndarray, radius: np.ndarray) -> None:
+    """
+    Parameters:
+    time (np.ndarray): Times.
+    radius (np.ndarray): Mean horizon radii.
+    """
     self.time = time
     self.radius = radius
 
 # Select the tracker position in 2D based on the specified plane.
-def _tracker_plane_coords(tracker, plane):
-  """Return the (horizontal, vertical) tracker coordinate arrays for a plane."""
+def _tracker_plane_coords(tracker: _CombinedTracker,
+                          plane: str) -> tuple[np.ndarray, np.ndarray]:
+  """
+  Tracker coordinates in a slice plane.
+
+  Parameters:
+  tracker (_CombinedTracker): Tracker data.
+  plane (str): 'xy', 'xz' or 'yz'.
+
+  Returns:
+  (horizontal, vertical) coordinate arrays.
+  """
   if plane == "xy":
     return tracker.x, tracker.y
   if plane == "xz":
@@ -349,8 +437,18 @@ def _tracker_plane_coords(tracker, plane):
   return tracker.y, tracker.z
 
 # Load the CO tracker files into a CombinedTracker object.
-def load_trackers_all(output_dirs, jobname="bhns"):
-  """Load and concatenate tracker files across all segments."""
+def load_trackers_all(output_dirs: list[str],
+                      jobname: str = "bhns") -> list[_CombinedTracker | None]:
+  """
+  Load and concatenate the tracker files co_0/co_1 across all segments.
+
+  Parameters:
+  output_dirs (list[str]): Segment directories.
+  jobname (str): AthenaK job name.
+
+  Returns:
+  Both trackers, None where no file is found.
+  """
   trackers = []
   for k in (0, 1):
     times_list, x_list, y_list, z_list = [], [], [], []
@@ -379,8 +477,18 @@ def load_trackers_all(output_dirs, jobname="bhns"):
   return trackers
 
 # Load the apparent horizon times/radii into a CombinedHorizon class.
-def load_horizons_all(output_dirs, jobname="bhns"):
-  """Load and concatenate apparent-horizon summary files across all segments."""
+def load_horizons_all(output_dirs: list[str],
+                      jobname: str = "bhns") -> list[_CombinedHorizon | None]:
+  """
+  Load and concatenate the apparent-horizon summary files across all segments.
+
+  Parameters:
+  output_dirs (list[str]): Segment directories.
+  jobname (str): AthenaK job name.
+
+  Returns:
+  Both horizons, None where no file is found.
+  """
   horizons = []
   for k in (0, 1):
     times_list, r_list = [], []
@@ -407,9 +515,25 @@ def load_horizons_all(output_dirs, jobname="bhns"):
   return horizons
 
 # Overlay the tracker positions.
-def draw_trackers(ax, trackers, time, plane="xy", colors=("cyan", "orange"),
-                  marker="x", markersize=80, coord_scale=1.0):
-  """Overlay compact-object positions on ax at the given simulation time."""
+def draw_trackers(ax: plt.Axes, trackers: list, time: float, plane: str = "xy",
+                  colors: tuple = ("cyan", "orange"), marker: str = "x",
+                  markersize: float = 80, coord_scale: float = 1.0) -> None:
+  """
+  Overlay compact-object positions on ax at the given simulation time.
+
+  Parameters:
+  ax (plt.Axes): Axes to draw on.
+  trackers (list): Trackers from load_trackers_all.
+  time (float): Simulation time.
+  plane (str): Slice plane.
+  colors (tuple): Marker color per tracker.
+  marker (str): Marker style.
+  markersize (float): Marker size.
+  coord_scale (float): Factor converting code lengths to the axis units.
+
+  Returns:
+  None.
+  """
   labels = ["CO 1", "CO 2"]
   for tracker, color, label in zip(trackers, colors, labels):
     if tracker is None:
@@ -421,9 +545,25 @@ def draw_trackers(ax, trackers, time, plane="xy", colors=("cyan", "orange"),
                linewidths=1.5, zorder=10, label=label)
 
 # Overlay apparent-horizon position.
-def draw_horizons(ax, horizons, trackers, time, plane="xy", coord_scale=1.0,
-                  edgecolor="white", facecolor="black"):
-  """Overlay filled apparent-horizon circles at the paired tracker positions."""
+def draw_horizons(ax: plt.Axes, horizons: list | None, trackers: list | None, time: float,
+                  plane: str = "xy", coord_scale: float = 1.0, edgecolor: str = "white",
+                  facecolor: str = "black") -> None:
+  """
+  Overlay filled apparent-horizon circles at the paired tracker positions.
+
+  Parameters:
+  ax (plt.Axes): Axes to draw on.
+  horizons (list): Horizons from load_horizons_all.
+  trackers (list): Trackers from load_trackers_all.
+  time (float): Simulation time.
+  plane (str): Slice plane.
+  coord_scale (float): Factor converting code lengths to the axis units.
+  edgecolor (str): Circle edge color.
+  facecolor (str): Circle fill color.
+
+  Returns:
+  None.
+  """
   if horizons is None or trackers is None:
     return
   for horizon, tracker in zip(horizons, trackers):
@@ -442,24 +582,50 @@ def draw_horizons(ax, horizons, trackers, time, plane="xy", coord_scale=1.0,
 # Data segment helpers.
 # ---------------------------------------------------------------------------
 # Read the time from the binary file.
-def _read_frame_time(fpath):
-  """Read simulation time from a binary data file. Returns (fpath, time_or_None)."""
+def _read_frame_time(fpath: str) -> tuple[str, float | None]:
+  """
+  Read the simulation time from a binary data file.
+
+  Parameters:
+  fpath (str): Path to the .bin file.
+
+  Returns:
+  (fpath, time), with time None if the file cannot be read.
+  """
   try:
     return (fpath, BinaryData(fpath).time)
   except Exception:
     return (fpath, None)
 
 # Find the output directories under the simulation path.
-def find_output_dirs(simpath, batchtools=True):
-  """Return sorted list of output-XXXX subdirectories under simpath."""
+def find_output_dirs(simpath: str, batchtools: bool = True) -> list[str]:
+  """
+  Find the output-XXXX segment directories under simpath.
+
+  Parameters:
+  simpath (str): Simulation directory.
+  batchtools (bool): Whether simpath holds batchtools output-XXXX segments.
+
+  Returns:
+  Sorted list of segment directories ([simpath] without batchtools).
+  """
   if not batchtools:
     return [simpath] if os.path.isdir(simpath) else []
   pattern = os.path.join(simpath, "output-[0-9][0-9][0-9][0-9]")
   return sorted(d for d in glob.glob(pattern) if os.path.isdir(d))
 
 # Collec the frames from the segments.
-def _collect_frames_by_time(output_dirs, file_prefix):
-  """Gather all files for file_prefix across output_dirs."""
+def _collect_frames_by_time(output_dirs: list[str], file_prefix: str) -> dict[float, str]:
+  """
+  Gather all files for file_prefix across output_dirs; later segments win.
+
+  Parameters:
+  output_dirs (list[str]): Segment directories.
+  file_prefix (str): File prefix.
+
+  Returns:
+  {time: path}.
+  """
   all_files = []
   for d in output_dirs:
     all_files.extend(glob_bin_files(d, file_prefix))
@@ -479,8 +645,21 @@ def _collect_frames_by_time(output_dirs, file_prefix):
   return time_to_fpath
 
 # Collect the frames for a given file prefix of all segments.
-def collect_combined_frames(output_dirs, file_prefix, comp_prefix=None, step=1):
-  """Collect all frames for file_prefix across all segments."""
+def collect_combined_frames(output_dirs: list[str], file_prefix: str | list[str],
+                            comp_prefix: str | list[str] | None = None,
+                            step: int = 1) -> list[tuple[int, list[str], list[str] | None]]:
+  """
+  Collect all frames for file_prefix across all segments.
+
+  Parameters:
+  output_dirs (list[str]): Segment directories.
+  file_prefix (str or list[str]): Prefix(es) that must all exist at a time.
+  comp_prefix (str or list[str]): Prefix(es) of the companion-plane files.
+  step (int): Use every step-th frame.
+
+  Returns:
+  [(frame index, file paths, companion file paths or None)].
+  """
   prefixes = [file_prefix] if isinstance(file_prefix, str) else list(file_prefix)
   comp_prefixes = None
   if comp_prefix is not None:
@@ -517,7 +696,17 @@ def collect_combined_frames(output_dirs, file_prefix, comp_prefix=None, step=1):
   return result
 
 # Get the combined history of a file.
-def combine_history(output_dirs, filename):
+def combine_history(output_dirs: list[str], filename: str) -> dict | None:
+  """
+  Load and merge a history file across all segments.
+
+  Parameters:
+  output_dirs (list[str]): Segment directories.
+  filename (str): History file name, e.g. '<job>.mhd.hst'.
+
+  Returns:
+  {column: data} sorted by time, or None if no file is found.
+  """
   parts = []
   for d in output_dirs:
     fpath = os.path.join(d, filename)
@@ -539,8 +728,17 @@ def combine_history(output_dirs, filename):
   return dict(zip(keys, cols))
 
 # Deduplicate frames.
-def _dedup_by_time(all_times, *arrays):
-  """Sort by time and keep the last occurrence of each time."""
+def _dedup_by_time(all_times: np.ndarray, *arrays: np.ndarray) -> tuple[np.ndarray, ...]:
+  """
+  Sort by time and keep the last occurrence of each time.
+
+  Parameters:
+  all_times (np.ndarray): Times.
+  *arrays (np.ndarray): Arrays aligned with all_times.
+
+  Returns:
+  (times, *arrays) after sorting and deduplication.
+  """
   sort_idx = np.argsort(all_times, kind='stable')
   all_times = all_times[sort_idx]
   arrays = [a[sort_idx] for a in arrays]
@@ -553,7 +751,23 @@ def _dedup_by_time(all_times, *arrays):
 # Diagnostic history / time-series plots
 # ---------------------------------------------------------------------------
 # Plot the baryon mass conservation and hamiltonian constraint.
-def _plot_timeseries(time, values, ylabel, figpath, fname, time_axis="Msun", logy=False):
+def _plot_timeseries(time: np.ndarray, values: np.ndarray, ylabel: str, figpath: str,
+                     fname: str, time_axis: str = "Msun", logy: bool = False) -> None:
+  """
+  Plot and save one time series.
+
+  Parameters:
+  time (np.ndarray): Times.
+  values (np.ndarray): Values.
+  ylabel (str): y-axis label.
+  figpath (str): Output directory.
+  fname (str): Output file name.
+  time_axis (str): Displayed time unit.
+  logy (bool): Log-scale y-axis.
+
+  Returns:
+  None.
+  """
   fig, ax = plt.subplots(figsize=FIGSIZE, constrained_layout=True)
   ax.plot(time, values)
   ax.set_xlabel(f"t ({time_axis})")
@@ -566,8 +780,24 @@ def _plot_timeseries(time, values, ylabel, figpath, fname, time_axis="Msun", log
   print(f"  Saved {fname}")
 
 # Plot a column of a history file.
-def _plot_history_columns(output_dirs, figpath, jobname, suffix, columns,
-                          time_scale=1.0, time_axis="Msun"):
+def _plot_history_columns(output_dirs: list[str], figpath: str, jobname: str, suffix: str,
+                          columns: list[tuple], time_scale: float = 1.0,
+                          time_axis: str = "Msun") -> None:
+  """
+  Plot columns of a history file, one figure each.
+
+  Parameters:
+  output_dirs (list[str]): Segment directories.
+  figpath (str): Output directory.
+  jobname (str): AthenaK job name.
+  suffix (str): History file suffix, e.g. 'mhd.hst'.
+  columns (list[tuple]): (column, ylabel, name, logy) per figure.
+  time_scale (float): Factor converting the time to the displayed units.
+  time_axis (str): Displayed time unit.
+
+  Returns:
+  None.
+  """
   d = combine_history(output_dirs, f"{jobname}.{suffix}")
   if d is None:
     print(f"  Skipping {suffix}: no {jobname}.{suffix} found")
@@ -580,9 +810,21 @@ def _plot_history_columns(output_dirs, figpath, jobname, suffix, columns,
                      f"{jobname}_{name}.png", time_axis=time_axis, logy=logy)
 
 # Plot the baryon mass conservation and hamiltonian constraint.
-def plot_history_all(output_dirs, figpath, jobname="bhns",
-                     time_scale=1.0, time_axis="Msun"):
-  """Baryonic mass and Hamiltonian constraint norm across all segments."""
+def plot_history_all(output_dirs: list[str], figpath: str, jobname: str = "bhns",
+                     time_scale: float = 1.0, time_axis: str = "Msun") -> None:
+  """
+  Plot the baryonic mass and Hamiltonian constraint norm across all segments.
+
+  Parameters:
+  output_dirs (list[str]): Segment directories.
+  figpath (str): Output directory.
+  jobname (str): AthenaK job name.
+  time_scale (float): Factor converting the time to the displayed units.
+  time_axis (str): Displayed time unit.
+
+  Returns:
+  None.
+  """
   _plot_history_columns(output_dirs, figpath, jobname, "mhd.hst",
                         [("mass", r"$M_b$", "history_mass", False)],
                         time_scale=time_scale, time_axis=time_axis)
@@ -591,18 +833,43 @@ def plot_history_all(output_dirs, figpath, jobname="bhns",
                         time_scale=time_scale, time_axis=time_axis)
 
 # Plot the max. density and min. lapse.
-def plot_user_history_all(output_dirs, figpath, jobname="bhns",
-                          time_scale=1.0, time_axis="Msun"):
-  """Max density and min lapse from <jobname>.user.hst across all segments."""
+def plot_user_history_all(output_dirs: list[str], figpath: str, jobname: str = "bhns",
+                          time_scale: float = 1.0, time_axis: str = "Msun") -> None:
+  """
+  Plot the max density and min lapse from <jobname>.user.hst across all segments.
+
+  Parameters:
+  output_dirs (list[str]): Segment directories.
+  figpath (str): Output directory.
+  jobname (str): AthenaK job name.
+  time_scale (float): Factor converting the time to the displayed units.
+  time_axis (str): Displayed time unit.
+
+  Returns:
+  None.
+  """
   _plot_history_columns(output_dirs, figpath, jobname, "user.hst",
                         [("rho-max", r"$\rho_\mathrm{max}$", "user_rho_max", True),
                          ("alpha-min", r"$\alpha_\mathrm{min}$", "user_alpha_min", False)],
                         time_scale=time_scale, time_axis=time_axis)
 
 # Plot the CO trajectories.
-def plot_tracker_trajectories_all(output_dirs, figpath, jobname="bhns",
-                                  coord_scale=1.0, coord_label=r"\mathrm{M}_\odot"):
-  """Plot compact-object trajectories (raw + smoothed) from tracker data."""
+def plot_tracker_trajectories_all(output_dirs: list[str], figpath: str, jobname: str = "bhns",
+                                  coord_scale: float = 1.0,
+                                  coord_label: str = r"\mathrm{M}_\odot") -> None:
+  """
+  Plot compact-object trajectories (raw + smoothed) from tracker data.
+
+  Parameters:
+  output_dirs (list[str]): Segment directories.
+  figpath (str): Output directory.
+  jobname (str): AthenaK job name.
+  coord_scale (float): Factor converting code lengths to the axis units.
+  coord_label (str): LaTeX label of the axis units.
+
+  Returns:
+  None.
+  """
   trackers = load_trackers_all(output_dirs, jobname)
   if all(t is None for t in trackers):
     print("  No tracker files found, skipping trajectory plot")
@@ -634,12 +901,16 @@ def plot_tracker_trajectories_all(output_dirs, figpath, jobname="bhns",
   print(f"  Saved {jobname}_tracker_trajectories.png")
 
 # Parse the run speed from the log file.
-def _parse_run_speed_log(logfile):
-  """Parse one AthenaK log file.
+def _parse_run_speed_log(logfile: str) -> tuple[np.ndarray | None, np.ndarray | None]:
+  """
+  Parse one AthenaK log file. Elapsed time in each log resets to 0 at the
+  start of that segment, so each log is processed independently.
 
-  Returns (sim_time_mid_array, speed_array) or (None, None).  Elapsed time in
-  each log resets to 0 at the start of that segment, so each log is processed
-  independently.
+  Parameters:
+  logfile (str): Path to the log file.
+
+  Returns:
+  (simulation time, cycles per wall-second), or (None, None).
   """
   if not os.path.exists(logfile):
     return None, None
@@ -672,9 +943,21 @@ def _parse_run_speed_log(logfile):
   return np.array(sim_time_mid), np.array(speed)
 
 # Plot the run speed with the log parser.
-def plot_run_speed_all(output_dirs, figpath, jobname="bhns",
-                       time_scale=1.0, time_axis="Msun"):
-  """Plot cycles/second vs simulation time, stitched across all segments."""
+def plot_run_speed_all(output_dirs: list[str], figpath: str, jobname: str = "bhns",
+                       time_scale: float = 1.0, time_axis: str = "Msun") -> None:
+  """
+  Plot cycles/second vs simulation time, stitched across all segments.
+
+  Parameters:
+  output_dirs (list[str]): Segment directories.
+  figpath (str): Output directory.
+  jobname (str): AthenaK job name.
+  time_scale (float): Factor converting the time to the displayed units.
+  time_axis (str): Displayed time unit.
+
+  Returns:
+  None.
+  """
   all_times, all_speeds = [], []
   for d in output_dirs:
     log_files = sorted(glob.glob(os.path.join(d, "*.out")))
@@ -710,19 +993,18 @@ def plot_run_speed_all(output_dirs, figpath, jobname="bhns",
 # ---------------------------------------------------------------------------
 # Main plotting interface function, to plot variable
 # in specific unit system.
-def plot_params(var, units='code'):
-  """Return render parameters for *var* in *units*.
+def plot_params(var: str, units: str = 'code') -> tuple[float, str, bool, float | None,
+                                                        float | None]:
+  """
+  Render parameters for var in units.
 
   Parameters:
-    var   : str -- variable name (e.g. 'dens', 'abs_1:0')
-    units : str -- 'code', 'cgs', or 'ngs'
+  var (str): Variable name (e.g. 'dens', 'abs_1:0').
+  units (str): 'code', 'cgs', or 'ngs'.
 
   Returns:
-    scale : float   -- multiply code values by this before plotting
-    label : str     -- colorbar / axis label (LaTeX)
-    use_log : bool  -- True -> LogNorm, False -> linear Normalize
-    vmin  : float   -- suggested colorbar minimum (in target units)
-    vmax  : float   -- suggested colorbar maximum (in target units)
+  (scale, label, use_log, vmin, vmax): scale multiplies the code values, use_log
+  selects LogNorm, and vmin/vmax are suggested colorbar limits in target units.
   """
   scale   = _SCALES.get((var, units), 1.0)
   label   = _LABELS.get((var, units), _LABELS.get((var, 'code'), var))
@@ -737,20 +1019,58 @@ def plot_params(var, units='code'):
   return scale, label, use_log, vmin, vmax
 
 # Rescale derived variables.
-def _rescaled(fn, scale, *args):
+def _rescaled(fn: Callable, scale: float, *args) -> np.ndarray:
+  """
+  Evaluate fn(*args) and multiply by scale.
+
+  Parameters:
+  fn (callable): Derived-variable function.
+  scale (float): Factor applied to the result.
+  *args: Arguments of fn.
+
+  Returns:
+  fn(*args) * scale.
+  """
   return fn(*args) * scale
 
 # Load frame with binary data.
-def _load_frame(fpaths):
+def _load_frame(fpaths: list[str]) -> BinaryData | GroupData:
+  """
+  Load one frame from one or several files.
+
+  Parameters:
+  fpaths (list[str]): Paths of the frame files.
+
+  Returns:
+  BinaryData for one file, GroupData for several.
+  """
   return BinaryData(fpaths[0]) if len(fpaths) == 1 else GroupData(fpaths)
 
 # Load frame base.
-def _frame_base(data):
+def _frame_base(data: BinaryData | GroupData) -> BinaryData:
+  """
+  First dataset of a frame, holding time and blocks.
+
+  Parameters:
+  data (BinaryData or GroupData): Loaded frame.
+
+  Returns:
+  The (first) BinaryData.
+  """
   return data.datasets[0] if isinstance(data, GroupData) else data
 
 # Rescale image extent by coordinate scale.
-def rescale_image_extents(ax, coord_scale):
-  """Multiply the extent of every image already drawn on ax by coord_scale."""
+def rescale_image_extents(ax: plt.Axes, coord_scale: float) -> None:
+  """
+  Multiply the extent of every image already drawn on ax by coord_scale.
+
+  Parameters:
+  ax (plt.Axes): Axes holding the images.
+  coord_scale (float): Factor applied to the extents.
+
+  Returns:
+  None.
+  """
   if coord_scale == 1.0:
     return
   for im in ax.get_images():
@@ -759,8 +1079,21 @@ def rescale_image_extents(ax, coord_scale):
                    y0 * coord_scale, y1 * coord_scale])
 
 # Draw AMR grid structure.
-def draw_refinement_grid(ax, data, alpha=0.4, linewidth=0.6, coord_scale=1.0):
-  """Draw block boundaries colored by AMR refinement level."""
+def draw_refinement_grid(ax: plt.Axes, data: BinaryData, alpha: float = 0.4,
+                         linewidth: float = 0.6, coord_scale: float = 1.0) -> None:
+  """
+  Draw block boundaries colored by AMR refinement level.
+
+  Parameters:
+  ax (plt.Axes): Axes to draw on.
+  data (BinaryData): Loaded frame.
+  alpha (float): Line transparency.
+  linewidth (float): Line width.
+  coord_scale (float): Factor converting code lengths to the axis units.
+
+  Returns:
+  None.
+  """
   levels = sorted(set(b.level for b in data.blocks))
   if len(levels) <= 1:
     return
@@ -768,7 +1101,16 @@ def draw_refinement_grid(ax, data, alpha=0.4, linewidth=0.6, coord_scale=1.0):
   cmap = mpl.colormaps.get_cmap("cool")
   level_min, level_max = levels[0], levels[-1]
 
-  def level_color(lv):
+  def level_color(lv: int) -> tuple:
+    """
+    Color of a refinement level.
+
+    Parameters:
+    lv (int): Refinement level.
+
+    Returns:
+    RGBA color.
+    """
     if level_max == level_min:
       return cmap(0.5)
     return cmap((lv - level_min) / (level_max - level_min))
@@ -790,8 +1132,16 @@ def draw_refinement_grid(ax, data, alpha=0.4, linewidth=0.6, coord_scale=1.0):
     ax.add_patch(rect)
 
 # Each worker renders a frame.
-def _render_frame_worker_all(kw):
-  """Per-frame plot worker for combined multi-segment data."""
+def _render_frame_worker_all(kw: dict) -> None:
+  """
+  Per-frame plot worker for combined multi-segment data.
+
+  Parameters:
+  kw (dict): Frame files and plot settings, as built in render_frames_all.
+
+  Returns:
+  None.
+  """
   global_idx      = kw['global_idx']
   xy_fpaths       = kw['xy_fpaths']
   xz_fpaths       = kw['xz_fpaths']   # None if not available
@@ -912,23 +1262,58 @@ def _render_frame_worker_all(kw):
   plt.close(fig)
 
 # Render all the frames by setting the worker args.
-def render_frames_all(output_dirs, figpath, file_prefix, var_name,
-                      cmap, norm=None, vmin=None, vmax=None,
-                      label=None, xlim=(-60, 60), ylim=(-60, 60),
-                      step=1, out_prefix=None,
-                      print_minmax=False,
-                      show_trackers=True, show_refinement=True,
-                      trackers=None,
-                      show_horizon=False, horizons=None,
-                      scale_factor=1.0,
-                      skip_existing=False,
-                      derived=None,
-                      plane="xy", companion="xz",
-                      subdir=None,coord_scale=1.0,
-                      coord_label=r"\mathrm{M}_\odot",
-                      time_scale=1.0, time_tex=r"\mathrm{M}_\odot",
-                      time_axis="Msun"):
-  """Render one PNG per frame across all segments, in parallel."""
+def render_frames_all(output_dirs: list[str], figpath: str, file_prefix: str | list[str],
+                      var_name: str, cmap: str, norm: Normalize | None = None,
+                      vmin: float | None = None, vmax: float | None = None,
+                      label: str | None = None, xlim: tuple = (-60, 60),
+                      ylim: tuple = (-60, 60), step: int = 1, out_prefix: str | None = None,
+                      print_minmax: bool = False, show_trackers: bool = True,
+                      show_refinement: bool = True, trackers: list | None = None,
+                      show_horizon: bool = False, horizons: list | None = None,
+                      scale_factor: float = 1.0, skip_existing: bool = False,
+                      derived: tuple | None = None, plane: str = "xy",
+                      companion: str = "xz", subdir: str | None = None,
+                      coord_scale: float = 1.0, coord_label: str = r"\mathrm{M}_\odot",
+                      time_scale: float = 1.0, time_tex: str = r"\mathrm{M}_\odot",
+                      time_axis: str = "Msun") -> None:
+  """
+  Render one PNG per frame across all segments, in parallel.
+
+  Parameters:
+  output_dirs (list[str]): Segment directories.
+  figpath (str): Output directory.
+  file_prefix (str or list[str]): Prefix(es) of the slice files.
+  var_name (str): Variable to plot, or 'derived:<name>' with derived.
+  cmap (str): Colormap.
+  norm (Normalize): Colorbar norm.
+  vmin (float): Colorbar minimum.
+  vmax (float): Colorbar maximum.
+  label (str): Colorbar label.
+  xlim (tuple): Horizontal plot range.
+  ylim (tuple): Vertical plot range.
+  step (int): Use every step-th frame.
+  out_prefix (str): Output PNG basename prefix.
+  print_minmax (bool): Print min/max of each frame.
+  show_trackers (bool): Overlay the tracker positions.
+  show_refinement (bool): Overlay the AMR grid.
+  trackers (list): Trackers from load_trackers_all.
+  show_horizon (bool): Overlay the apparent horizons.
+  horizons (list): Horizons from load_horizons_all.
+  scale_factor (float): Factor applied to the plotted values.
+  skip_existing (bool): Skip frames whose PNG already exists.
+  derived (tuple): (function, [variable names]) of a derived variable.
+  plane (str): Slice plane.
+  companion (str): Companion-plane top panel, 'xz', 'yz' or 'none'.
+  subdir (str): Subfolder of figpath for the PNGs.
+  coord_scale (float): Factor converting code lengths to the axis units.
+  coord_label (str): LaTeX label of the axis units.
+  time_scale (float): Factor converting the time to the displayed units.
+  time_tex (str): LaTeX label of the time unit.
+  time_axis (str): Displayed time unit.
+
+  Returns:
+  None.
+  """
   prefixes = [file_prefix] if isinstance(file_prefix, str) else list(file_prefix)
   comp_prefix = None
   if companion != "none" and all("_xy" in pre for pre in prefixes):
@@ -987,7 +1372,17 @@ def render_frames_all(output_dirs, figpath, file_prefix, var_name,
 # ---------------------------------------------------------------------------
 # Derived average neutrino energy (E:s / N:s)
 # ---------------------------------------------------------------------------
-def _calc_average_energy(rE, rN):
+def _calc_average_energy(rE: np.ndarray, rN: np.ndarray) -> np.ndarray:
+  """
+  Average neutrino energy E/N (0 where N = 0).
+
+  Parameters:
+  rE (np.ndarray): Radiation energy density.
+  rN (np.ndarray): Radiation number density.
+
+  Returns:
+  E/N.
+  """
   with np.errstate(divide="ignore", invalid="ignore"):
     return np.where(rN > 0, rE / rN, 0.0)
 
@@ -995,8 +1390,16 @@ def _calc_average_energy(rE, rN):
 # Area-weighted average Y_e (s_00) time series
 # ---------------------------------------------------------------------------
 # Compute the average Ye on a given slice per worker.
-def _compute_s00_avg_worker_fpath(fpath):
-  """Worker: load one frame by path and return (time, area-weighted mean of s_00)."""
+def _compute_s00_avg_worker_fpath(fpath: str) -> tuple[float, float] | None:
+  """
+  Load one frame and compute the area-weighted mean of s_00.
+
+  Parameters:
+  fpath (str): Path to the .bin file.
+
+  Returns:
+  (time, mean s_00), or None if the frame cannot be used.
+  """
   try:
     data = BinaryData(fpath)
   except FileNotFoundError:
@@ -1019,9 +1422,23 @@ def _compute_s00_avg_worker_fpath(fpath):
   return (data.time, total_sum / total_area)
 
 # Plot the 1D time series of avg. Ye against time.
-def plot_s00_timeseries_all(output_dirs, figpath, jobname="bhns", file_prefix=None,
-                            time_scale=1.0, time_axis="Msun"):
-  """Compute and plot the area-weighted average Y_e (s_00) vs time across all segments."""
+def plot_s00_timeseries_all(output_dirs: list[str], figpath: str, jobname: str = "bhns",
+                            file_prefix: str | None = None, time_scale: float = 1.0,
+                            time_axis: str = "Msun") -> None:
+  """
+  Compute and plot the area-weighted average Y_e (s_00) vs time across all segments.
+
+  Parameters:
+  output_dirs (list[str]): Segment directories.
+  figpath (str): Output directory.
+  jobname (str): AthenaK job name.
+  file_prefix (str): Prefix of the primitive slice files.
+  time_scale (float): Factor converting the time to the displayed units.
+  time_axis (str): Displayed time unit.
+
+  Returns:
+  None.
+  """
   time_to_fpath = _collect_frames_by_time(output_dirs, file_prefix)
   if not time_to_fpath:
     print(f"  No files found for prefix '{file_prefix}' across segments")
@@ -1056,32 +1473,33 @@ class SystemPlotter:
     - plot CO trackers or BH apparent-horizons
     - choose between Msun/ms time units and code units/km spatial units
   """
-  def __init__(self, simpath, figpath=None, jobname="bhns",
-               prim_prefix="mhd_w_bcc", rad_prefix="rad_m1", batchtools=True,
-               units='cgs', time_units="Msun", plane="xy", companion="xz",
-               domain=(-60,60), show_grid=True, show_trackers=True,
-               show_horizon=False, skip_existing=False):
+  def __init__(self, simpath: str, figpath: str | None = None, jobname: str = "bhns",
+               prim_prefix: str = "mhd_w_bcc", rad_prefix: str = "rad_m1",
+               batchtools: bool = True, units: str = 'cgs', time_units: str = "Msun",
+               plane: str = "xy", companion: str = "xz", domain: tuple = (-60, 60),
+               show_grid: bool = True, show_trackers: bool = True,
+               show_horizon: bool = False, skip_existing: bool = False) -> None:
     """
     Initialize the SystemPlotter.
 
     Parameters:
-      simpath (str): Parent directory containing the output-XXXX subdirectories.
-      figpath (str): Output figure directory (default: <simpath>/Figs).
-      jobname (str): AthenaK job name prefixing all input/output files.
-      prim_prefix (str): Primitive-variable file prefix (before "_{plane}") for
-                         density/temperature/s00, e.g. "mhd_w_bcc" or "prim".
-      rad_prefix (str): M1 radiation file prefix (before "_<var>_{plane}") for
-                        E/N/abs/eta, e.g. "rad_m1".
-      batchtools (bool): Whether to assume a output-XXXX segment structure.
-      units (str): Unit system for physical quantities ('code', 'cgs', 'ngs').
-      time_units (str): Time display units for titles/axes, 'Msun' or 'ms'.
-      plane (str): Slice plane to render, one of 'xy', 'xz', 'yz'.
-      companion (str): Top-panel to render, one of 'xz', 'yz'.
-      domain (tuple): Size of the plotting domain in code units.
-      show_grid (bool): Overlay the AMR grid.
-      show_trackers (bool): Overlay compact-object tracker markers on 2-D slices.
-      show_horizon (bool): Overlay black-hole apparent-horizon circles on 2-D slices.
-      skip_existing (bool): Skip frames whose output PNG already exists.
+    simpath (str): Parent directory containing the output-XXXX subdirectories.
+    figpath (str): Output figure directory (default: <simpath>/Figs).
+    jobname (str): AthenaK job name prefixing all input/output files.
+    prim_prefix (str): Primitive-variable file prefix (before "_{plane}") for
+                       density/temperature/s00, e.g. "mhd_w_bcc" or "prim".
+    rad_prefix (str): M1 radiation file prefix (before "_<var>_{plane}") for
+                      E/N/abs/eta, e.g. "rad_m1".
+    batchtools (bool): Whether to assume a output-XXXX segment structure.
+    units (str): Unit system for physical quantities ('code', 'cgs', 'ngs').
+    time_units (str): Time display units for titles/axes, 'Msun' or 'ms'.
+    plane (str): Slice plane to render, one of 'xy', 'xz', 'yz'.
+    companion (str): Top-panel to render, one of 'xz', 'yz'.
+    domain (tuple): Size of the plotting domain in code units.
+    show_grid (bool): Overlay the AMR grid.
+    show_trackers (bool): Overlay compact-object tracker markers on 2-D slices.
+    show_horizon (bool): Overlay black-hole apparent-horizon circles on 2-D slices.
+    skip_existing (bool): Skip frames whose output PNG already exists.
     """
     # Check if plane and time units fit the supported formats.
     if plane not in PLANES:
@@ -1119,39 +1537,88 @@ class SystemPlotter:
     self.section       = None
 
   # Frame output name.
-  def frame_out(self, name):
-    """Output PNG basename prefix for a frame series."""
+  def frame_out(self, name: str) -> str:
+    """
+    Output PNG basename prefix for a frame series.
+
+    Parameters:
+    name (str): Series name.
+
+    Returns:
+    '<job>_frame_<name>_<plane>'.
+    """
     suffix = f"_{self.plane}"
     return f"{self.jobname}_frame_{name}{suffix}"
 
   # Secton output directory.
-  def frame_dir(self, name):
-    """Per-series output subfolder, named '<diagnostic>_<plane>'."""
+  def frame_dir(self, name: str) -> str:
+    """
+    Per-series output subfolder.
+
+    Parameters:
+    name (str): Series name.
+
+    Returns:
+    '<name>_<plane>'.
+    """
     return f"{name}_{self.plane}"
 
   # Shared tracker/horizon data.
   @property
-  def trackers(self):
-    """Combined compact-object trackers across all segments."""
+  def trackers(self) -> list[_CombinedTracker | None]:
+    """
+    Combined compact-object trackers across all segments (loaded once).
+
+    Returns:
+    Trackers from load_trackers_all.
+    """
     if self._trackers is None:
       self._trackers = load_trackers_all(self.output_dirs, self.jobname)
     return self._trackers
 
   @property
-  def horizons(self):
-    """Combined apparent-horizon radii across all segments."""
+  def horizons(self) -> list[_CombinedHorizon | None]:
+    """
+    Combined apparent-horizon radii across all segments (loaded once).
+
+    Returns:
+    Horizons from load_horizons_all.
+    """
     if self._horizons is None:
       self._horizons = load_horizons_all(self.output_dirs, self.jobname)
     return self._horizons
 
-  def rad_file(self, var):
-    """File prefix of an M1 radiation variable, e.g. '<job>.rad_m1_E_xy'."""
+  def rad_file(self, var: str) -> str:
+    """
+    File prefix of an M1 radiation variable.
+
+    Parameters:
+    var (str): Radiation variable, e.g. 'E'.
+
+    Returns:
+    '<job>.<rad_prefix>_<var>_<plane>'.
+    """
     return f"{self.jobname}.{self.rad_prefix}_{var}_{self.plane}"
 
   # Shared render function.
-  def render_field(self, file_prefix, var_name, name, cmap="inferno",
-                   var_key=None, print_minmax=True, derived=None):
-    """Render a scalar-field frame series."""
+  def render_field(self, file_prefix: str | list[str], var_name: str, name: str,
+                   cmap: str = "inferno", var_key: str | None = None,
+                   print_minmax: bool = True, derived: tuple | None = None) -> None:
+    """
+    Render a scalar-field frame series.
+
+    Parameters:
+    file_prefix (str or list[str]): Prefix(es) of the slice files.
+    var_name (str): Variable to plot, or 'derived:<name>' with derived.
+    name (str): Series name for the output files.
+    cmap (str): Default colormap.
+    var_key (str): Key for the render parameters (default: var_name).
+    print_minmax (bool): Print min/max of each frame.
+    derived (tuple): (function, [variable names]) of a derived variable.
+
+    Returns:
+    None.
+    """
     var_key = var_key or var_name
     scale, label, use_log, lo, hi = plot_params(var_key, self.units)
     u_lo, u_hi, u_cmap = self.overrides.get(self.section, (None, None, None))
@@ -1177,101 +1644,225 @@ class SystemPlotter:
                       time_axis=self.time_axis)
 
   # Section renderer.
-  def history(self):
+  def history(self) -> None:
+    """
+    Plot the baryonic mass and Hamiltonian constraint history.
+
+    Returns:
+    None.
+    """
     print("[history] Plotting mass & H-norm2...")
     plot_history_all(self.output_dirs, self.figpath, self.jobname,
                      time_scale=self.time_scale, time_axis=self.time_axis)
 
-  def rho_max(self):
+  def rho_max(self) -> None:
+    """
+    Plot the max density and min lapse history.
+
+    Returns:
+    None.
+    """
     print("[rho_max] Plotting rho_max & alpha_min...")
     plot_user_history_all(self.output_dirs, self.figpath, self.jobname,
                           time_scale=self.time_scale, time_axis=self.time_axis)
 
-  def trackers_plot(self):
+  def trackers_plot(self) -> None:
+    """
+    Plot the compact-object trajectories.
+
+    Returns:
+    None.
+    """
     print("[trackers] Plotting object trajectories...")
     plot_tracker_trajectories_all(self.output_dirs, self.figpath, self.jobname,
                                   coord_scale=self.coord_scale,
                                   coord_label=self.coord_label)
 
-  def run_speed(self):
+  def run_speed(self) -> None:
+    """
+    Plot the run speed from the logs.
+
+    Returns:
+    None.
+    """
     print("[run_speed] Plotting run speed from logs...")
     plot_run_speed_all(self.output_dirs, self.figpath, self.jobname,
                        time_scale=self.time_scale, time_axis=self.time_axis)
 
-  def density(self):
+  def density(self) -> None:
+    """
+    Render the density frames.
+
+    Returns:
+    None.
+    """
     print("[density] Rendering density frames...")
     self.render_field(f"{self.jobname}.{self.prim_prefix}_{self.plane}", "dens",
                        "dens")
 
-  def temperature(self):
+  def temperature(self) -> None:
+    """
+    Render the temperature frames.
+
+    Returns:
+    None.
+    """
     print("[temperature] Rendering temperature frames...")
     self.render_field(f"{self.jobname}.{self.prim_prefix}_{self.plane}", "temperature",
                        "temperature")
 
-  def s00(self):
+  def s00(self) -> None:
+    """
+    Render the s_00 (Ye proxy) frames.
+
+    Returns:
+    None.
+    """
     print("[s00] Rendering s_00 (Ye proxy) frames...")
     self.render_field(f"{self.jobname}.{self.prim_prefix}_{self.plane}", "s_00",
                        "s00")
 
-  def rad_E(self):
+  def rad_E(self) -> None:
+    """
+    Render the radiation energy E:0 frames.
+
+    Returns:
+    None.
+    """
     print("[rad_E] Rendering radiation energy E:0 frames...")
     self.render_field(self.rad_file("E"), "E:0", "rad_E0")
 
-  def rad_N(self):
+  def rad_N(self) -> None:
+    """
+    Render the radiation number density N:0 frames.
+
+    Returns:
+    None.
+    """
     print("[rad_N] Rendering radiation number density N:0 frames...")
     self.render_field(self.rad_file("N"), "N:0", "rad_N0")
 
-  def rad_N2(self):
+  def rad_N2(self) -> None:
+    """
+    Render the radiation number density N:2 (heavy lepton) frames.
+
+    Returns:
+    None.
+    """
     print("[rad_N2] Rendering radiation number density N:2 (heavy lepton) frames...")
     self.render_field(self.rad_file("N"), "N:2", "rad_N2")
 
-  def rad_abs(self):
+  def rad_abs(self) -> None:
+    """
+    Render the absorption opacity abs_1:0 frames.
+
+    Returns:
+    None.
+    """
     print("[rad_abs] Rendering absorption opacity abs_1:0 frames...")
     self.render_field(self.rad_file("abs_1"), "abs_1:0", "abs1_0")
 
-  def rad_abs0(self):
+  def rad_abs0(self) -> None:
+    """
+    Render the absorption opacity abs_0:0 frames.
+
+    Returns:
+    None.
+    """
     print("[rad_abs0] Rendering absorption opacity abs_0:0 frames...")
     self.render_field(self.rad_file("abs_0"), "abs_0:0", "abs0_0")
 
-  def rad_eta0(self):
+  def rad_eta0(self) -> None:
+    """
+    Render the emissivity eta_0:0 frames.
+
+    Returns:
+    None.
+    """
     print("[rad_eta0] Rendering emissivity eta_0:0 frames...")
     self.render_field(self.rad_file("eta_0"), "eta_0:0", "eta0_0")
 
-  def rad_eta1(self):
+  def rad_eta1(self) -> None:
+    """
+    Render the emissivity eta_1:0 frames.
+
+    Returns:
+    None.
+    """
     print("[rad_eta1] Rendering emissivity eta_1:0 frames...")
     self.render_field(self.rad_file("eta_1"), "eta_1:0", "eta1_0")
 
-  def conH(self):
+  def conH(self) -> None:
+    """
+    Render the Hamiltonian constraint |con_H| frames.
+
+    Returns:
+    None.
+    """
     print("[z4c] Rendering con_H (Hamiltonian constraint) frames...")
     self.render_field(f"{self.jobname}.con_{self.plane}", "derived:abs_con_H",
                        "con_H", var_key="con_H", derived=(np.abs, ["con_H"]))
 
-  def alpha(self):
+  def alpha(self) -> None:
+    """
+    Render the lapse frames.
+
+    Returns:
+    None.
+    """
     print("[z4c] Rendering z4c_alpha (lapse) frames...")
     self.render_field(f"{self.jobname}.z4c_{self.plane}", "z4c_alpha", "alpha",
                       var_key="alpha")
 
-  def s00_avg(self):
+  def s00_avg(self) -> None:
+    """
+    Plot the average Y_e (s_00) time series.
+
+    Returns:
+    None.
+    """
     print("[s00_avg] Computing average Y_e (s_00) time series...")
     plot_s00_timeseries_all(self.output_dirs, self.figpath, self.jobname,
                             file_prefix=f"{self.jobname}.{self.prim_prefix}_{self.plane}",
                             time_scale=self.time_scale, time_axis=self.time_axis)
 
-  def avg_energy(self):
+  def avg_energy(self) -> None:
+    """
+    Render the average neutrino energy frames.
+
+    Returns:
+    None.
+    """
     print("[avg_energy] Rendering average neutrino energy frames...")
     self.render_field([self.rad_file("N"), self.rad_file("E")], "derived:avg_energy",
                       "avg_energy", cmap="viridis", var_key="avg_energy",
                       derived=(_calc_average_energy, ["E:0", "N:0"]))
 
-  def _nu_energy(self, section, species, label):
+  def _nu_energy(self, section: str, species: int, label: str) -> None:
+    """
+    Render the average neutrino energy frames of one species.
+
+    Parameters:
+    section (str): Section name for the output files.
+    species (int): M1 species index.
+    label (str): Species label.
+
+    Returns:
+    None.
+    """
     print(f"[{section}] Rendering neutrino energy E/{label} (species {species}) frames...")
     self.render_field([self.rad_file("N"), self.rad_file("E")], "derived:avg_energy",
                       section, cmap="viridis", var_key="nu_energy",
                       derived=(_calc_average_energy, [f"E:{species}", f"N:{species}"]))
 
   # Dispatch table mapping the section name to the render function.
-  def _dispatch_table(self):
-    """Ordered mapping of section name -> zero-argument callable."""
+  def _dispatch_table(self) -> dict[str, Callable[[], None]]:
+    """
+    Ordered mapping of section name to its render function.
+
+    Returns:
+    {section: zero-argument callable}.
+    """
     table = {
       "history":     self.history,
       "rho_max":     self.rho_max,
@@ -1298,12 +1889,16 @@ class SystemPlotter:
     return table
 
   # Main function to run the renderer.
-  def run(self, sections=("all",)):
-    """Run the requested sections.
+  def run(self, sections: tuple | list = ("all",)) -> None:
+    """
+    Run the requested sections.
 
     Parameters:
-    sections: iterable of section names or 'name=vmin,vmax,cmap' tokens
-              (or parsed tuples), or containing 'all' to run everything.
+    sections (list): Section names or 'name=vmin,vmax,cmap' tokens (or parsed
+                     tuples), or containing 'all' to run everything.
+
+    Returns:
+    None.
     """
     specs = [s if isinstance(s, tuple) else parse_section_spec(s) for s in sections]
     self.overrides = {name: (lo, hi, cmap) for name, lo, hi, cmap in specs}
@@ -1348,7 +1943,16 @@ class SystemPlotter:
 # ---------------------------------------------------------------------------
 # CLI options.
 # ---------------------------------------------------------------------------
-def parse_args(argv=None):
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+  """
+  Parse the command-line arguments.
+
+  Parameters:
+  argv (list[str]): Command-line arguments (default: sys.argv).
+
+  Returns:
+  The parsed arguments.
+  """
   parser = argparse.ArgumentParser(
     prog="python3 -m kplot.system",
     description="Multi-segment full-run visualization driver for AthenaK.",
@@ -1404,7 +2008,16 @@ def parse_args(argv=None):
 # ---------------------------------------------------------------------------
 # Main.
 # ---------------------------------------------------------------------------
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
+  """
+  Command-line entry point of the system plotter.
+
+  Parameters:
+  argv (list[str]): Command-line arguments (default: sys.argv).
+
+  Returns:
+  None.
+  """
   args = parse_args(argv)
   plotter = SystemPlotter(
     simpath=args.simpath,

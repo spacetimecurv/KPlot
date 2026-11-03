@@ -1,7 +1,4 @@
-#########################################################################
-# File: read_history.py                                                 #
-# Description: Read history data from a file.                           #
-#########################################################################
+"""Read .hst files."""
 
 # Import the History class.
 from kplot.system.history import History

@@ -1,7 +1,4 @@
-#########################################################################
-# File: seriesplot.py                                                   #
-# Description: Series plot utilities for AthenaK bin output.            #
-#########################################################################
+"""Plot a series of 2D slices (prefer the global plotter function)."""
 
 # Import necessary standard libaries.
 import os
@@ -24,30 +21,33 @@ class SeriesPlot:
   A class to handle plotting of series data from AthenaK bin output.
   """
 
-  def __init__(self, series_path, pattern, extent, variable, label, slice=None, sliceplot=None, plotblocks=True, lognorm=False,
-               vmin=None, vmax=None, blackhole=False, magfields=False, linedensity=1.5, output_dir=None,
-              tracker_path=None, horizon_path=None):
+  def __init__(self, series_path: str, pattern: str, extent: list, variable: str, label: str,
+               slice: float | None = None, sliceplot: str | None = None, plotblocks: bool = True,
+               lognorm: bool = False, vmin: float | None = None, vmax: float | None = None,
+               blackhole: bool = False, magfields: bool = False, linedensity: float = 1.5,
+               output_dir: str | None = None, tracker_path: str | None = None,
+               horizon_path: str | None = None) -> None:
     """
     Initialize the SeriesPlot instance with the path to the series data.
 
     Parameters:
     series_path (str): The path to the series data file (bin folder).
-    pattern (str): FIle pattern to be searched for (<jobname>.<id>.*.bin).
+    pattern (str): File pattern to be searched for (<jobname>.<id>.*.bin).
     extent (list): Range to plot inside.
     variable (str): Which variable from the bin file to plot (see athplot).
     label (str): Label to attach to the colorbar.
-    slice: Which slice to plot on (if 3D data).
+    slice (float): Which slice to plot on (if 3D data).
     sliceplot (str): Needed for magnetic field lines as flag for components.
     plotblocks (bool): Whether the MB bounds need to be plotted.
-    lognorm: Whether to use a colorbar in log-scale.
-    vmin: Minimum value of the colorbar.
-    vmax: Maximum value of the colorbar.
-    blackhole: Whether a black hole is present and needs to be plotted.
-    magfields: Whether the magnetic field lines need to be plotted.
-    linedensity: Magnetic field line density for plotting.
-    output_dir: Where to store the image series.
-    tracker_path: Path to the black hole tracker file.
-    horizon_path: Path to the horizon finder file.
+    lognorm (bool): Whether to use a colorbar in log-scale.
+    vmin (float): Minimum value of the colorbar.
+    vmax (float): Maximum value of the colorbar.
+    blackhole (bool): Whether a black hole is present and needs to be plotted.
+    magfields (bool): Whether the magnetic field lines need to be plotted.
+    linedensity (float): Magnetic field line density for plotting.
+    output_dir (str): Where to store the image series.
+    tracker_path (str): Path to the black hole tracker file.
+    horizon_path (str): Path to the horizon finder file.
     """
     self.series_path = series_path
     self.pattern = pattern
@@ -70,9 +70,12 @@ class SeriesPlot:
     self.tracker_path = tracker_path
     self.horizon_path = horizon_path
 
-  def plot(self):
+  def plot(self) -> None:
     """
     Load the series data and create the plots.
+
+    Returns:
+    None.
     """
     # Set the output directory.
     if not os.path.exists(self.output_dir):
@@ -231,9 +234,16 @@ class SeriesPlot:
 
     print("Processing complete.")
 
-  def video(self, framerate=12, outname="out.mp4"):
+  def video(self, framerate: int = 12, outname: str = "out.mp4") -> None:
     """
     Takes the images created with plot() to make a movie.
+
+    Parameters:
+    framerate (int): Frames per second.
+    outname (str): File name of the movie inside output_dir.
+
+    Returns:
+    None.
     """
     # Ensure output directory exists.
     if not os.path.exists(self.output_dir):

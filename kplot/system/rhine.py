@@ -1,7 +1,4 @@
-#########################################################################
-# File: rhine.py                                                        #
-# Description: Script to analyze transition EOS + RHINE results.        #
-#########################################################################
+"""Scripts to analyze transition EOS + RHINE output."""
 
 # Built-in libraries.
 from pathlib import Path
@@ -55,7 +52,16 @@ RATE_KEYS = {"rhine_dye", "rhine_dyn", "rhine_dya", "rhine_dyh", "rhine_dah",
 RHO_LEVELS = [1e6, 1e8, 1e10, 1e12]
 
 # Animation helper functions.
-def make_norm(spec):
+def make_norm(spec: tuple[str, float, float]) -> Normalize:
+  """
+  Build a colorbar norm from a PANELS norm-spec.
+
+  Parameters:
+  spec (tuple): (kind, lo, hi) with kind 'log', 'lin' or 'sym' (lo is then linthresh).
+
+  Returns:
+  The matplotlib norm.
+  """
   kind, lo, hi = spec
   if kind == "log":
     return LogNorm(vmin=lo, vmax=hi)
@@ -64,8 +70,19 @@ def make_norm(spec):
   return SymLogNorm(linthresh=lo, vmin=-hi, vmax=hi, base=10)
 
 
-def composite(blocks, key, npix, half_width):
-  """Paint SMR blocks onto one uniform npix x npix grid, coarse levels first."""
+def composite(blocks: list, key: str, npix: int, half_width: float) -> np.ndarray:
+  """
+  Paint SMR blocks onto one uniform npix x npix grid, coarse levels first.
+
+  Parameters:
+  blocks (list): (extent, level, values) per block, as from load_slice.
+  key (str): Variable to paint.
+  npix (int): Pixels per axis.
+  half_width (float): Half-width of the grid.
+
+  Returns:
+  The (npix, npix) image, NaN where no block covers it.
+  """
   out = np.full((npix, npix), np.nan)
   edge = np.linspace(-half_width, half_width, npix + 1)
   ctr = 0.5 * (edge[1:] + edge[:-1])
@@ -83,9 +100,17 @@ def composite(blocks, key, npix, half_width):
   return out
 
 # Slice (.bin) handling.
-def load_slice(path, plane, len_conv):
+def load_slice(path: str | Path, plane: str, len_conv: float) -> tuple[float, list, list[str]]:
   """
-  Read one slice dump.  Returns (time, blocks, names).
+  Read one slice dump.
+
+  Parameters:
+  path (str): Path to the .bin slice.
+  plane (str): Slice plane, 'xy' or 'yz'.
+  len_conv (float): Conversion factor applied to the block extents.
+
+  Returns:
+  (time, blocks as (extent, level, values), variable names).
   """
   d = bc.read_binary(str(path))
   geom = np.array(d["mb_geometry"]) * len_conv
@@ -102,9 +127,18 @@ def load_slice(path, plane, len_conv):
   return d["time"], blocks, d["var_names"]
 
 # Batchtools segment handling.
-def merge_segments(chunks, time_key="time", tol=1e-8):
+def merge_segments(chunks: list[dict], time_key: str = "time", tol: float = 1e-8) -> dict:
   """
-  Concatenate per-segment data dicts (in segment order) along time.
+  Concatenate per-segment data dicts (in segment order) along time; data a
+  later segment overwrites is dropped.
+
+  Parameters:
+  chunks (list[dict]): Data dicts, one per segment.
+  time_key (str): Key of the time array.
+  tol (float): Tolerance of the time comparison.
+
+  Returns:
+  The merged data dict.
   """
   kept, cutoff = [], np.inf
   for chunk in reversed(chunks):
@@ -125,8 +159,8 @@ class RHINE:
   A class to analyze AthenaK data from a run with transition EOS + RHINE.
   """
 
-  def __init__(self, simpath, jobname, batchtools=True,
-               hst_path=None, figpath=None):
+  def __init__(self, simpath: str, jobname: str, batchtools: bool = True,
+               hst_path: str | None = None, figpath: str | None = None) -> None:
     """
     Initialize the RHINE class.
 
@@ -149,9 +183,16 @@ class RHINE:
     self.load_hst_data()
 
 
-  def segment_files(self, name, explicit=None):
+  def segment_files(self, name: str, explicit: str | None = None) -> list[Path]:
     """
-    Returns the paths of 'name' over all segments, or [explicit] if given.
+    Find the file 'name' in all segments.
+
+    Parameters:
+    name (str): File name inside a segment.
+    explicit (str): Explicit file that overrides the segments.
+
+    Returns:
+    Paths of 'name' over all segments, or [explicit] if given.
     """
     if explicit is not None:
       if not Path(explicit).is_file():
@@ -161,9 +202,16 @@ class RHINE:
     return [s / name for s in self.segments if (s / name).is_file()]
 
 
-  def output_path(self, output_dir, name):
+  def output_path(self, output_dir: str | None, name: str) -> Path:
     """
-    Returns <output_dir>/<name>, defaulting to the figpath, and creates the folder.
+    Build an output path and create its folder.
+
+    Parameters:
+    output_dir (str): Output folder (defaults to the figpath).
+    name (str): File name.
+
+    Returns:
+    <output_dir>/<name>.
     """
     out_dir = Path(output_dir) if output_dir is not None else self.figpath
     out_dir.mkdir(exist_ok=True, parents=True)
@@ -171,7 +219,7 @@ class RHINE:
     return out_dir / name
 
 
-  def load_hst_data(self):
+  def load_hst_data(self) -> dict:
     """
     Locate the <job>.user.hst file(s) and load the data into a dict,
     merged over all segments.
@@ -207,7 +255,7 @@ class RHINE:
     return self.hst_user_data
 
 
-  def load_horizon_data(self, horizon_path=None, index=0):
+  def load_horizon_data(self, horizon_path: str | None = None, index: int = 0) -> dict | None:
     """
     Load the horizon summary <job>.horizon_summary_<index>.txt with the
     HorizonFinder class, merged over all segments.
@@ -226,7 +274,7 @@ class RHINE:
     return merge_segments(chunks) if chunks else None
 
 
-  def load_tracker_data(self, tracker_path=None, index=0):
+  def load_tracker_data(self, tracker_path: str | None = None, index: int = 0) -> dict | None:
     """
     Load the tracker <job>.co_<index>.txt with the Tracker class, merged
     over all segments.
@@ -249,9 +297,13 @@ class RHINE:
     return merge_segments(chunks) if chunks else None
 
 
-  def find_slices(self, var, plane):
+  def find_slices(self, var: str, plane: str) -> dict[int, Path]:
     """
     Locates the <job>.<var>_<plane>.<n>.bin slices over all segments.
+
+    Parameters:
+    var (str): Output variable, e.g. 'mhd_w'.
+    plane (str): Slice plane, 'xy' or 'yz'.
 
     Returns:
     Dictionary {dump index: path}, sorted by index.
@@ -271,12 +323,15 @@ class RHINE:
     return dict(sorted(hits.items()))
 
 
-  def plot_rhine_diagnostics(self, output_dir = None):
+  def plot_rhine_diagnostics(self, output_dir: str | None = None) -> None:
     """
     Plot the mass fraction conservation and heating rate.
 
     Parameters:
     output_dir (str): Directory to store 'rhine_diagnostics.png' in.
+
+    Returns:
+    None.
     """
     # Conversion factors.
     geo = GEOMETRIC_SOLAR
@@ -319,13 +374,16 @@ class RHINE:
     plt.close(fig)
 
 
-  def plot_heating_split(self, output_dir = None):
+  def plot_heating_split(self, output_dir: str | None = None) -> None:
     """
     Plot the heating rate split between physical contribution,
     matter entering in-and-put of NSE etc..
 
     Parameters:
     output_dir (str): Directory to store 'heating_split.png' in.
+
+    Returns:
+    None.
     """
     # Conversion factors.
     geo = GEOMETRIC_SOLAR
@@ -396,9 +454,11 @@ class RHINE:
     plt.close(fig)
 
 
-  def plot_rhine_slices(self, plane="xy", output_dir=None, half_width=150.0, npix=600,
-                        stride=1, fps=20, nmax=None, horizon_path=None, tracker_path=None,
-                        bh_index=0):
+  def plot_rhine_slices(self, plane: str = "xy", output_dir: str | None = None,
+                        half_width: float = 150.0, npix: int = 600, stride: int = 1,
+                        fps: int = 20, nmax: int | None = None,
+                        horizon_path: str | None = None, tracker_path: str | None = None,
+                        bh_index: int = 0) -> None:
     """
     Plot animation of 2D slices of RHINE rates and other diagnostics, with
     density contours and the BH horizon (mean coordinate radius around the
@@ -415,6 +475,9 @@ class RHINE:
     horizon_path (str): Explicit horizon file (overrides the segments).
     tracker_path (str): Explicit BH tracker file (overrides the segments).
     bh_index     (int): Index of the BH horizon and tracker, i.e. co_<bh_index>.txt.
+
+    Returns:
+    None.
     """
     # Conversion factors.
     geo = GEOMETRIC_SOLAR
@@ -467,7 +530,16 @@ class RHINE:
     state = {"cs": []}
     g = np.linspace(-half_width, half_width, npix)
 
-    def draw(n):
+    def draw(n: int) -> list:
+      """
+      Draw frame n of the movie.
+
+      Parameters:
+      n (int): Index of the dump.
+
+      Returns:
+      The updated artists.
+      """
       for cs in state["cs"]:
         cs.remove()
       state["cs"] = []

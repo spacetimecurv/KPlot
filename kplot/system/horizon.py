@@ -1,7 +1,4 @@
-#########################################################################
-# File: horizon.py                                                      #
-# Description: Horizon utilities for the AthenaK horizon finder.        #
-#########################################################################
+"""Utility for handling AthenaK apparent horizon output."""
 
 # Import necessary standard libaries.
 import re
@@ -18,24 +15,33 @@ class HorizonFinder:
   A class to handle output from the AthenaK horizon finder.
   """
 
-  def __init__(self, horizon_path):
+  def __init__(self, horizon_path: str | None = None,
+               shape_paths: list[str] | None = None) -> None:
     """
     Initialize the HorizonFinder with the path to the horizon file.
 
     Parameters:
-    horizon_path (str): The path to the horizon file.
+    horizon_path (str): The path to the horizon summary file (None: shape only).
+    shape_paths (list[str]): Paths to the <job>.horizon_shape_N.txt files, e.g. of
+                             all output-XXXX segments, for the surface reconstruction.
     """
     self.horizon_path = horizon_path
     self.horizon_data = None
+    self.shape_paths  = []
+    self.shape_times  = None
+    self._shape_locs  = None
 
-    self.load_horizon_data()
+    if horizon_path is not None:
+      self.load_horizon_data()
+    if shape_paths:
+      self.load_shape_index(shape_paths)
 
-  def load_horizon_data(self):
+  def load_horizon_data(self) -> None:
     """
-    Load the horizon data from the specified file path.
+    Load the horizon data from the specified file path into self.horizon_data.
 
     Returns:
-    Dictionary holding the horizon data.
+    None.
     """
     if not os.path.exists(self.horizon_path):
       raise FileNotFoundError(f"Horizon file not found at: {self.horizon_path}")
@@ -53,8 +59,98 @@ class HorizonFinder:
     data_dict = {name: data[:, i] for i, name in enumerate(headers)}
     self.horizon_data = data_dict
 
-  def plot_horizon(self, output_path=None, save=False,
-                   xmin=None, xmax=None, t_merger=None):
+  def load_shape_index(self, shape_paths: list[str]) -> None:
+    """
+    Index the horizon shape files: the time and file position of every entry.
+
+    Parameters:
+    shape_paths (list[str]): Paths to the horizon shape files. On equal times
+                             the entry of the earlier path is used.
+
+    Returns:
+    None.
+    """
+    times, files, offsets = [], [], []
+    for i, path in enumerate(shape_paths):
+      if not os.path.exists(path):
+        raise FileNotFoundError(f"Horizon shape file not found at: {path}")
+      with open(path, 'rb') as f:
+        pos, t = 0, None
+        for line in f:
+          pos += len(line)
+          if line.startswith(b'#'):
+            t = float(line.split(b'Time =')[1])
+          elif t is not None:
+            times.append(t)
+            files.append(i)
+            offsets.append(pos - len(line))
+            t = None
+
+    if not times:
+      raise ValueError("No horizon shape entries found.")
+    self.shape_paths = list(shape_paths)
+    self.shape_times = np.array(times)
+    self._shape_locs = (np.array(files), np.array(offsets))
+
+  def shape_coeffs(self, time: float) -> np.ndarray:
+    """
+    Y_lm coefficients of the horizon shape entry closest to time.
+
+    Parameters:
+    time (float): Target time [M_sun].
+
+    Returns:
+    The coefficients.
+    """
+    if self.shape_times is None:
+      raise ValueError("Horizon shape not loaded. Call load_shape_index() first.")
+    i = np.argmin(np.abs(self.shape_times - time))
+    with open(self.shape_paths[self._shape_locs[0][i]], 'rb') as f:
+      f.seek(self._shape_locs[1][i])
+      return np.array(f.readline().split(), dtype=float)
+
+  @staticmethod
+  def shape_radius(coeffs: np.ndarray, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
+    """
+    Apparent-horizon radius r(theta, phi) about the BH puncture (AthenaK fast-flow
+    finder), from the real Y_lm expansion of the shape file.
+
+    Parameters:
+    coeffs (np.ndarray): Y_lm coefficients from shape_coeffs.
+    theta (np.ndarray): Polar angle.
+    phi (np.ndarray): Azimuthal angle.
+
+    Returns:
+    The horizon radius.
+    """
+    from scipy.special import sph_harm_y
+    a = iter(coeffs)
+    lmax = int(round(np.sqrt(coeffs.size))) - 1
+    r = np.zeros(np.broadcast(theta, phi).shape)
+    for l in range(lmax + 1):
+      r += next(a) * sph_harm_y(l, 0, theta, phi).real
+      for m in range(1, l + 1):
+        Y = np.sqrt(2.0) * sph_harm_y(l, m, theta, phi)
+        r += next(a) * Y.real + next(a) * Y.imag
+    return r
+
+  def horizon_radius(self, time: float, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
+    """
+    Apparent-horizon radius r(theta, phi) at the shape entry closest to time.
+
+    Parameters:
+    time (float): Target time [M_sun].
+    theta (np.ndarray): Polar angle.
+    phi (np.ndarray): Azimuthal angle.
+
+    Returns:
+    The horizon radius.
+    """
+    return self.shape_radius(self.shape_coeffs(time), theta, phi)
+
+  def plot_horizon(self, output_path: str | None = None, save: bool = False,
+                   xmin: float | None = None, xmax: float | None = None,
+                   t_merger: float | None = None) -> None:
     """
     Simple function that plots irreducible mass, spin parameter, and minimum radius.
 
@@ -64,6 +160,9 @@ class HorizonFinder:
     xmin (float): Minimum value on x.
     xmax (float): Maximum value on x.
     t_merger (float): Time of merger.
+
+    Returns:
+    None.
     """
     if self.horizon_data is None:
       raise ValueError("Horizon data not loaded. Call load_horizon_data() first.")

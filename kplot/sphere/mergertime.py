@@ -26,16 +26,35 @@ import numpy as np
 COL_22 = 5
 
 
-def _load_segment(real_path, imag_path):
-  """Return (time, real_22, imag_22) arrays for one waveform file pair."""
+def _load_segment(real_path: str, imag_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+  """
+  Load the (2,2) mode of one waveform file pair.
+
+  Parameters:
+  real_path (str): Path to rpsi4_real_RRRR.txt.
+  imag_path (str): Path to rpsi4_imag_RRRR.txt.
+
+  Returns:
+  (time, real_22, imag_22).
+  """
   real = np.loadtxt(real_path)
   imag = np.loadtxt(imag_path)
   t = real[:, 0]
   return t, real[:, COL_22], imag[:, COL_22]
 
 
-def merger_time(simpath, radius, batchtools=True):
-  """Compute the merger time [M_sun] from the (2,2) GW mode at `radius`."""
+def merger_time(simpath: str, radius: float, batchtools: bool = True) -> tuple[float, float]:
+  """
+  Compute the merger time [M_sun] from the peak of the (2,2) GW mode.
+
+  Parameters:
+  simpath (str): Simulation directory.
+  radius (float): GW extraction radius [M_sun].
+  batchtools (bool): Whether simpath holds batchtools output-XXXX segments.
+
+  Returns:
+  (t_merger, radius).
+  """
   rstr = f"{int(round(radius)):04d}"
   wfdir = (os.path.join(simpath, "output-*", "waveforms") if batchtools
            else os.path.join(simpath, "waveforms"))
@@ -69,8 +88,18 @@ def merger_time(simpath, radius, batchtools=True):
   return t_merger, radius
 
 
-def write_merger_time(path, t_merger, radius):
-  """Write `t_merger` [M_sun] to `path` in the format read_merger_time expects."""
+def write_merger_time(path: str, t_merger: float, radius: float) -> None:
+  """
+  Write t_merger [M_sun] to path in the format read_merger_time expects.
+
+  Parameters:
+  path (str): Output file.
+  t_merger (float): Merger time [M_sun].
+  radius (float): GW extraction radius [M_sun].
+
+  Returns:
+  None.
+  """
   os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
   with open(path, "w") as f:
     f.write("# Merger time from max |psi4_22|^2 (real^2 + imag^2) of the (2,2) mode\n")
@@ -79,8 +108,17 @@ def write_merger_time(path, t_merger, radius):
     f.write(f"{t_merger:.6f}\n")
 
 
-def read_merger_time(analysis_dir, fname="merger_time.txt"):
-  """Parse t_merger [M_sun] from <analysis_dir>/merger_time.txt (first numeric line)."""
+def read_merger_time(analysis_dir: str, fname: str = "merger_time.txt") -> float:
+  """
+  Parse t_merger [M_sun] from <analysis_dir>/<fname> (first numeric line).
+
+  Parameters:
+  analysis_dir (str): Directory holding the file.
+  fname (str): File name.
+
+  Returns:
+  The merger time [M_sun].
+  """
   path = os.path.join(analysis_dir, fname)
   with open(path) as fh:
     for line in fh:
@@ -91,7 +129,16 @@ def read_merger_time(analysis_dir, fname="merger_time.txt"):
   raise ValueError(f"No numeric merger time found in {path}")
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
+  """
+  Command-line entry point of the merger-time tool.
+
+  Parameters:
+  argv (list[str]): Command-line arguments (default: sys.argv).
+
+  Returns:
+  None.
+  """
   parser = argparse.ArgumentParser(description=__doc__,
                                    formatter_class=argparse.RawDescriptionHelpFormatter)
   parser.add_argument("--simpath", required=True,

@@ -101,30 +101,24 @@ The written scalars are:
 
 # Built-in libraries.
 import argparse
-import glob
 import json
 import os
-import re
-from multiprocessing import Pool, cpu_count
-from tqdm import tqdm
 
 # Third-party libraries.
 import numpy as np
-import h5py
-from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import uniform_filter
 
 # AthenaK utility.
 from kplot.system.bin_convert import read_binary
-from kplot.system.checkpoints import find_segments
+from kplot.system.units import CGS
+from kplot.utils.bin3d import (block_cell_geometry, find_snapshots, load_horizon, load_tracker,
+                               par, parse_par_dump, slice_cells, snapshot_tag, tracker_center)
+from kplot.utils.constants import LENGTH_CM, MSUN_TO_S
+from kplot.utils.eos import EOSTable
+from kplot.utils.parallel import default_workers, pool_map
 
 # The disk analysis script needs the following 3D output.
 VARIABLES = ("mhd_w_bcc", "adm", "alpha", "betax", "betay", "betaz")
-
-# EOS quantities interpolated from the table, and the number of points per
-# interpolation chunk.
-EOS_FIELDS = ("Q1", "Q2", "Q7", "cs2")
-EOS_CHUNK  = 4_000_000
 
 # ======================================================================
 # MULTIPROCESS WORKER
@@ -135,16 +129,35 @@ _W_TRACKER = None
 _W_HORIZON = None
 
 
-def _init_disk_worker(eos, tracker, horizon):
-  """Pool initializer: load the EOS and the tracker/horizon files."""
+def _init_disk_worker(eos: EOSTable, tracker: dict | None, horizon: dict | None) -> None:
+  """
+  Pool initializer: store the EOS and the tracker/horizon data.
+
+  Parameters:
+  eos (EOSTable): EOS table.
+  tracker (dict): Tracker data from load_tracker, or None.
+  horizon (dict): Horizon data from load_horizon, or None.
+
+  Returns:
+  None.
+  """
   global _W_EOS, _W_TRACKER, _W_HORIZON
   _W_EOS     = eos
   _W_TRACKER = tracker
   _W_HORIZON = horizon
 
 
-def _process_snapshot_disk(args):
-  """Per-snapshot worker for disk analysis."""
+def _process_snapshot_disk(args: tuple) -> None:
+  """
+  Per-snapshot worker for the disk analysis; writes all outputs of the snapshot.
+
+  Parameters:
+  args (tuple): The six 3D files of the snapshot followed by the analysis
+                settings, as built in analyze.
+
+  Returns:
+  None.
+  """
   # Unpack.
   (mhd_file, adm_file, alpha_file, betax_file, betay_file, betaz_file,
   rho_cut, rho_keep, rho_remnant, bound_criterion, r_exclude, center,
@@ -178,7 +191,17 @@ def _process_snapshot_disk(args):
   del rho_full # Free up memory.
 
   # Write fields in single precision based on the selection.
-  def take(fdict, var):
+  def take(fdict: dict, var: str) -> np.ndarray:
+    """
+    Selected cells of a variable.
+
+    Parameters:
+    fdict (dict): Data from read_binary.
+    var (str): Variable name.
+
+    Returns:
+    The flattened values of the kept cells.
+    """
     return np.asarray(fdict["mb_data"][var]).reshape(-1)[sel]
 
   rho         = take(fd, "dens")
@@ -209,7 +232,17 @@ def _process_snapshot_disk(args):
   # ======================================================================
   # GAUGE
   # ======================================================================
-  def read_scalar_field(file, var):
+  def read_scalar_field(file: str, var: str) -> np.ndarray:
+    """
+    Read a variable of another 3D file on the kept cells.
+
+    Parameters:
+    file (str): Path to the .bin file (same mesh as the MHD file).
+    var (str): Variable name.
+
+    Returns:
+    The flattened values of the kept cells.
+    """
     f = read_binary(file)
     if not np.array_equal(f["mb_geometry"], mb_geom_ref):
       raise SystemExit(f"{file} has a different mesh than the MHD file!")
@@ -225,16 +258,7 @@ def _process_snapshot_disk(args):
   betaz = read_scalar_field(betaz_file, "z4c_betaz")
 
   # Get the center of the remnant and the radius of the black hole.
-  if _W_TRACKER is not None:
-    tracker     = _W_TRACKER
-    tracker_idx = np.argmin(np.abs(tracker["time"] - time))
-    center      = np.array([tracker["x"][tracker_idx],
-                            tracker["y"][tracker_idx],
-                            tracker["z"][tracker_idx]])
-  elif _W_TRACKER is None and center:
-    center = np.array(center)
-  else:
-    raise SystemExit("Either tracker file or manual center has to be specified!")
+  center = tracker_center(_W_TRACKER, time, center)
 
   r_ah = np.nan
   if _W_HORIZON is not None:
@@ -463,8 +487,16 @@ def _process_snapshot_disk(args):
     n_comp = ((3, dxv, xg * rinv), (2, dyv, yg * rinv), (1, dzv, zg * rinv))
     del rinv
 
-  def d_dn(q):
-    """n . grad q on the native mesh (smoothed; one-sided at MB edges)."""
+  def d_dn(q: np.ndarray) -> np.ndarray:
+    """
+    n . grad q on the native mesh (smoothed; one-sided at MB edges).
+
+    Parameters:
+    q (np.ndarray): Field on the kept cells.
+
+    Returns:
+    The directional derivative on the kept cells.
+    """
     full = np.full(ncells_total, np.nan, dtype=np.float32)
     full[sel] = q
     full = full.reshape(-1, nx3, nx2, nx1)
@@ -594,8 +626,20 @@ def _process_snapshot_disk(args):
   Qtot_loc = np.where(mri, Q_tot, np.nan).astype(np.float32)
 
   u = np.linspace(-slice_extent, slice_extent, slice_npts)
-  def plane(axes, fixed, fields, suffix):
-    """Nearest-cell samples of `fields` on the plane, keyed `<name>_<suffix>`."""
+  def plane(axes: tuple[int, int, int], fixed: float, fields: dict,
+            suffix: str) -> dict[str, np.ndarray]:
+    """
+    Nearest-cell samples of fields on a plane through the center.
+
+    Parameters:
+    axes (tuple): (horizontal, vertical, normal) axis indices.
+    fixed (float): Coordinate of the plane along the normal axis.
+    fields (dict): {name: values on the kept cells}.
+    suffix (str): Plane name appended to the keys.
+
+    Returns:
+    {<name>_<suffix>: slice}.
+    """
     pos = slice_cells(mb_geom_ref, (nx1, nx2, nx3), sel, axes, fixed,
                       center[axes[0]] + u, center[axes[1]] + u)
     ok  = pos >= 0
@@ -629,7 +673,16 @@ def _process_snapshot_disk(args):
   # ======================================================================
   # INTEGRALS
   # ======================================================================
-  def integrate(mask):
+  def integrate(mask: np.ndarray) -> dict:
+    """
+    Volume-integrated quantities of the cells in mask.
+
+    Parameters:
+    mask (np.ndarray): Boolean selection of the kept cells.
+
+    Returns:
+    The integrated scalars, keyed by name.
+    """
     w   = dM[mask]
     M   = float(w.sum())
     out = {
@@ -753,7 +806,18 @@ def _process_snapshot_disk(args):
 
   M_disk = res_disk["M_MSUN_CGS"]
 
-  def jrho_hist(mask, yvals, ybins):
+  def jrho_hist(mask: np.ndarray, yvals: np.ndarray, ybins: np.ndarray) -> np.ndarray:
+    """
+    Mass-weighted 2D histogram of density against yvals.
+
+    Parameters:
+    mask (np.ndarray): Boolean selection of the kept cells.
+    yvals (np.ndarray): Values on the y-axis.
+    ybins (np.ndarray): Bin edges of yvals.
+
+    Returns:
+    The histogram (normalized by the disk mass).
+    """
     w = dM[mask] / M_disk if M_disk > 0 else dM[mask]
     return np.histogram2d(rho_cgs[mask], yvals[mask], bins=(JRHO_XBINS, ybins), weights=w)[0]
 
@@ -805,7 +869,16 @@ def _process_snapshot_disk(args):
   counts = np.bincount(idx, minlength=nbins)
   mass   = np.bincount(idx, weights=wd, minlength=nbins)
 
-  def wprof(q):
+  def wprof(q: np.ndarray) -> np.ndarray:
+    """
+    Mass-weighted radial profile of q in the disk.
+
+    Parameters:
+    q (np.ndarray): Field on the kept cells.
+
+    Returns:
+    The profile (NaN for empty bins).
+    """
     s = np.bincount(idx, weights=wd * q[disk][valid], minlength=nbins)
     with np.errstate(invalid="ignore", divide="ignore"):
       return np.where(mass > 0, s / mass, np.nan)
@@ -838,7 +911,16 @@ def _process_snapshot_disk(args):
   # Field geometry per R bin (same weights as in integrate()).
   wB_d = (0.5 * sqrtg * dV)[disk][valid]
   del sqrtg, dV # Free up memory.
-  def bsum(q):
+  def bsum(q: np.ndarray) -> np.ndarray:
+    """
+    Binned radial sum of q weighted with the disk cell volume.
+
+    Parameters:
+    q (np.ndarray): Field on the kept cells.
+
+    Returns:
+    The sum per radial bin.
+    """
     return np.bincount(idx, weights=wB_d * q[disk][valid], minlength=nbins)
   E_R_p, E_phi_p, E_z_p = bsum(B_RR), bsum(B_PP), bsum(B_ZZ)
   S_p                   = bsum(B_RP)
@@ -948,30 +1030,32 @@ def _process_snapshot_disk(args):
   os.replace(path + ".tmp", path)
 
 
-def snapshot_tag(path):
-  """Snapshot number as it appears in the file name, e.g. '00010'."""
-  return path.split("/")[-1].split(".")[-2].strip()
+def scalars_path(outdir: str, snapshot: str) -> str:
+  """
+  Scalars file of a snapshot; it is written last, so it marks a finished snapshot.
 
+  Parameters:
+  outdir (str): Output directory.
+  snapshot (str): Snapshot number, e.g. '00010'.
 
-def scalars_path(outdir, snapshot):
-  """Scalars file of a snapshot; it is written last, so it marks a finished snapshot."""
+  Returns:
+  <outdir>/scalars/disk_scalars_<snapshot>.json.
+  """
   return os.path.join(outdir, "scalars", f"disk_scalars_{snapshot}.json")
 
 # ======================================================================
 # CONSTANTS AND CONVERSIONS
 # ======================================================================
-CLIGHT_CGS = 2.99792458e10   # cm/s
-GNEWT_CGS  = 6.67408e-8      # cm^3 g^-1 s^-2
-MSUN_CGS   = 1.98848e33      # g
-MEV        = 1.6021766208e-6 # erg
-KBOLTZ     = 1.38064852e-16  # erg/K
+CLIGHT_CGS = CGS.c
+MSUN_CGS   = CGS.Msun
+MEV        = CGS.MeV
 
-L_UNIT   = GNEWT_CGS * MSUN_CGS / CLIGHT_CGS**2 # cm  (1 code length)
-T_UNIT   = L_UNIT / CLIGHT_CGS                  # s   (1 code time)
+L_UNIT   = LENGTH_CM                            # cm  (1 code length)
+T_UNIT   = MSUN_TO_S                            # s   (1 code time)
 RHO_UNIT = MSUN_CGS / L_UNIT**3                 # g/cm^3
 P_UNIT   = RHO_UNIT * CLIGHT_CGS**2             # erg/cm^3
 B_UNIT   = np.sqrt(4.0 * np.pi * P_UNIT)        # Gauss
-J_UNIT   = GNEWT_CGS * MSUN_CGS**2 / CLIGHT_CGS # g cm^2 / s
+J_UNIT   = MSUN_CGS * L_UNIT * CLIGHT_CGS       # g cm^2 / s
 JSPEC_UNIT = L_UNIT * CLIGHT_CGS
 KM       = 1.0e5
 
@@ -987,198 +1071,64 @@ VPROF_DR   = 0.1 # relative half-width of the annuli
 BAVG_RHO_DISK  = 1.0e8  # g/cm^3, disk density cut of Izquierdo et al. (2025)
 BAVG_BULK_FRAC = 0.75   # bulk = densest cells holding this fraction of the disk mass
 
-MN_MEV = 939.56535                # neutron mass, must match the table's `mn` scalar
 MEV_PER_FM3_TO_CGS = MEV * 1.0e39 # erg/cm^3 per MeV/fm^3
 
 
 # ======================================================================
-# ATHENAK BINARY READER
-# ======================================================================
-def parse_par_dump(header):
-  """Turn the <block>/key = value par dump carried in the bin header into a dict."""
-  pars, block = {}, None
-  for line in header:
-    line = line.strip()
-    if line.startswith("<") and line.endswith(">"):
-      block = line[1:-1]
-      pars.setdefault(block, {})
-    elif "=" in line and block is not None:
-      key, val = line.split("=", 1)
-      pars[block][key.strip()] = val.strip()
-  return pars
-
-
-def par(pars, block, key, cast=float, default=None):
-  try:
-    return cast(pars[block][key])
-  except (KeyError, ValueError):
-    return default
-
-
-def block_cell_geometry(fd):
-  """Cell-centre coordinates and cell volume for every meshblock."""
-  geom = fd["mb_geometry"]
-  nx1, nx2, nx3 = fd["nx1_out_mb"], fd["nx2_out_mb"], fd["nx3_out_mb"]
-  dx1 = (geom[:, 1] - geom[:, 0]) / nx1
-  dx2 = (geom[:, 3] - geom[:, 2]) / nx2
-  dx3 = (geom[:, 5] - geom[:, 4]) / nx3
-  xv = geom[:, 0, None] + dx1[:, None] * (np.arange(nx1) + 0.5)
-  yv = geom[:, 2, None] + dx2[:, None] * (np.arange(nx2) + 0.5)
-  zv = geom[:, 4, None] + dx3[:, None] * (np.arange(nx3) + 0.5)
-  return xv, yv, zv, dx1 * dx2 * dx3, dx1, dx2, dx3
-
-
-def slice_cells(geom, nx, sel, axes, fixed, ca, cb):
-  a, b, c = axes
-  lo, hi = geom[:, 0::2], geom[:, 1::2]
-  d      = (hi - lo) / np.asarray(nx)
-  ncell  = nx[0] * nx[1] * nx[2]
-  stride = (1, nx[0], nx[0] * nx[1])
-  out    = np.full((cb.size, ca.size), -1, dtype=np.int64)
-  for m in np.flatnonzero((lo[:, c] <= fixed) & (fixed < hi[:, c])):
-    ia = slice(*np.searchsorted(ca, (lo[m, a], hi[m, a])))
-    ib = slice(*np.searchsorted(cb, (lo[m, b], hi[m, b])))
-    if ia.start == ia.stop or ib.start == ib.stop:
-      continue
-    i_a = np.minimum(((ca[ia] - lo[m, a]) / d[m, a]).astype(np.int64), nx[a] - 1)
-    i_b = np.minimum(((cb[ib] - lo[m, b]) / d[m, b]).astype(np.int64), nx[b] - 1)
-    i_c = min(int((fixed - lo[m, c]) / d[m, c]), nx[c] - 1)
-    out[ib, ia] = (m * ncell + i_c * stride[c] +
-                   i_b[:, None] * stride[b] + i_a[None, :] * stride[a])
-  pos = np.clip(np.searchsorted(sel, out), 0, sel.size - 1)
-  return np.where((out >= 0) & (sel[pos] == out), pos, -1)
-
-
-def find_snapshots(tag: str, simpath: str, batchtools: bool = True) -> dict:
-  """Locates the 3D snapshots of `tag` as {snapshot number: path}.
-
-  With batchtools every output-XXXX segment under simpath is searched (in its
-  bin/ subdirectory if present); a snapshot number found in several segments
-  is taken from the latest one. Without batchtools simpath is searched directly.
-  """
-  pat = f"*{tag}_3D.*.bin"
-  hits = {}
-  for segment in find_segments(simpath, batchtools):
-    for sub in ("bin", ""):
-      files = glob.glob(os.path.join(segment, sub, pat))
-      if files:
-        break
-    for f in sorted(files):
-      hits[int(re.search(r"\.(\d+)\.bin$", f).group(1))] = f
-  if not hits:
-    raise SystemExit(f"No file matching {pat} under {simpath}!")
-
-  return hits
-
-# ======================================================================
-# TRACKER AND HORIZON DATA
-# ======================================================================
-def load_tracker(path: str) -> dict:
-  """Loads the tracker data."""
-  data = np.loadtxt(path, comments="#")
-  out = {
-    "time": data[:,1],
-    "x"   : data[:,2],
-    "y"   : data[:,3],
-    "z"   : data[:,4]
-  }
-
-  return out
-
-
-def load_horizon(path: str) -> dict:
-  """Load the horizon data."""
-  data = np.loadtxt(path, comments="#")
-  out = {
-    "time"  : data[:,1],
-    "mass"  : data[:,2],
-    "radius": data[:,-2]
-  }
-
-  return out
-
-# ======================================================================
-# COMPOSE EOS TABLE
-# ======================================================================
-class EOSTable:
-  """Load a PyCompOSE HDF5 table and build interpolators.
-
-  Sets the following fields:
-    interpolator - interpolator for the stacked Q1, Q2, Q7 and the sound
-      speed squared cs2 (evaluate with interpolate())
-    mn_mev - neutron mass [MeV]
-    nb_min, nb_max, ye_min, ye_max, t_min, t_max - table bounds
-  """
-  def __init__(self, path):
-    # Read the table.
-    with h5py.File(path, 'r') as f:
-      nb = f['nb'][:]         # [fm^-3]
-      yq = f['yq'][:]         # [dim.less]
-      t  = f['t'][:]          # [MeV]
-      mn = float(f['mn'][()]) # neutron mass [MeV]
-      Q1 = f['Q1'][:]         # p / nb [MeV]
-      Q2 = f['Q2'][:]         # s [kB / baryon]
-      Q7 = f['Q7'][:]         # e / (nb * m_n) - 1
-      cs2 = f['cs2'][:]       # sound speed squared [c^2]
-
-    # AthenaK convention.
-    self.log_nb = np.log(nb)
-    self.log_t  = np.log(t)
-    self.ye     = yq
-
-    self.nb_min, self.nb_max = self.log_nb.min(), self.log_nb.max()
-    self.t_min, self.t_max   = self.log_t.min(), self.log_t.max()
-    self.ye_min, self.ye_max = self.ye.min(), self.ye.max()
-
-    if not np.isclose(mn, MN_MEV):
-      raise SystemExit(f"Table's mn with {mn}MeV does not match {MN_MEV}MeV!")
-    else:
-      self.mb = mn
-
-    self.hmin = np.min(1.0 + Q7 + Q1 / self.mb)
-
-    # One interpolator over the stacked quantities, so the grid search and
-    # corner weights are computed once per point instead of once per table.
-    self.interpolator = RegularGridInterpolator(
-      (self.log_nb, self.ye, self.log_t),
-      np.stack((Q1, Q2, Q7, cs2), axis=-1),
-      method='linear', bounds_error=False, fill_value=None,
-    )
-
-  def interpolate(self, log_nb, ye, log_t, chunk=EOS_CHUNK):
-    """Interpolate Q1, Q2, Q7 and cs2 at the given points."""
-    out = np.empty((log_nb.size, len(EOS_FIELDS)))
-    for s in range(0, log_nb.size, chunk):
-      e = s + chunk
-      out[s:e] = self.interpolator(
-        np.column_stack((log_nb[s:e], ye[s:e], log_t[s:e])))
-    return {q: out[:, n] for n, q in enumerate(EOS_FIELDS)}
-
-# ======================================================================
 # WEIGHTED STATISTICS HELPER
 # ======================================================================
-def wmean(x, w):
+def wmean(x: np.ndarray, w: np.ndarray) -> float:
+  """
+  Weighted mean of x.
+
+  Parameters:
+  x (np.ndarray): Values.
+  w (np.ndarray): Weights.
+
+  Returns:
+  The weighted mean (NaN if the weights sum to 0).
+  """
   tot = w.sum()
   return float((x * w).sum() / tot) if tot > 0 else float("nan")
 
 
-def binned_wmean(idx, x, w, nbins):
-  """Weighted mean of x within each bin (NaN for empty bins)."""
+def binned_wmean(idx: np.ndarray, x: np.ndarray, w: np.ndarray, nbins: int) -> np.ndarray:
+  """
+  Weighted mean of x within each bin.
+
+  Parameters:
+  idx (np.ndarray): Bin index of each value.
+  x (np.ndarray): Values.
+  w (np.ndarray): Weights.
+  nbins (int): Number of bins.
+
+  Returns:
+  The mean per bin (NaN for empty bins).
+  """
   wsum = np.bincount(idx, weights=w, minlength=nbins)
   with np.errstate(invalid="ignore", divide="ignore"):
     return np.where(wsum > 0, np.bincount(idx, weights=w * x, minlength=nbins) / wsum, np.nan)
 
 
-def binned_wquantile(idx, x, w, nbins, q):
-  """Weighted quantile of x within each bin, in one pass.
+def binned_wquantile(idx: np.ndarray, x: np.ndarray, w: np.ndarray, nbins: int,
+                     q: float | list[float]) -> np.ndarray:
+  """
+  Weighted quantile of x within each bin, in one pass.
 
-    Used for the half-mass scale height: rms(z) is badly inflated by the
-    low-density polar material that shares a cylindrical radius with the disk,
-    so the |z| containing half the shell mass is the more robust thickness.
+  Used for the half-mass scale height: rms(z) is badly inflated by the
+  low-density polar material that shares a cylindrical radius with the disk,
+  so the |z| containing half the shell mass is the more robust thickness.
 
-    q may be a scalar or a sequence; a sequence shares one sort and returns
-    an array of shape (len(q), nbins).
-    """
+  Parameters:
+  idx (np.ndarray): Bin index of each value.
+  x (np.ndarray): Values.
+  w (np.ndarray): Weights.
+  nbins (int): Number of bins.
+  q (float or list[float]): Quantile(s) in [0, 1]; a list shares one sort.
+
+  Returns:
+  The quantile per bin, shape (nbins,) or (len(q), nbins).
+  """
   bidx  = idx.astype(np.int16) if nbins <= np.iinfo(np.int16).max else idx
   order = np.argsort(x)
   order = order[np.argsort(bidx[order], kind="stable")]
@@ -1201,8 +1151,18 @@ def binned_wquantile(idx, x, w, nbins, q):
   return out if np.ndim(q) else out[0]
 
 
-def wpercentile(x, w, q):
-  """Weighted percentiles; q in percent."""
+def wpercentile(x: np.ndarray, w: np.ndarray, q: float | list[float]) -> np.ndarray:
+  """
+  Weighted percentiles.
+
+  Parameters:
+  x (np.ndarray): Values.
+  w (np.ndarray): Weights.
+  q (float or list[float]): Percentile(s) in percent.
+
+  Returns:
+  The percentile(s) (NaN if there are no weights).
+  """
   if x.size == 0 or w.sum() <= 0:
     return np.full(np.shape(q), np.nan)
   order = np.argsort(x)
@@ -1213,55 +1173,60 @@ def wpercentile(x, w, q):
   return np.interp(np.asarray(q, dtype=float) / 100.0, cdf, xs)
 
 
-def analyze(args):
-  """Run the disk analysis over every snapshot under `simpath`.
+def analyze(args: argparse.Namespace) -> None:
+  """
+  Run the disk analysis over every snapshot under simpath.
 
-  Parameters (from args; in detail)
-  ---------------------------------
-  args.simpath (str): simulation directory holding the output-XXXX segments, or
-                      (without batchtools) the directory of the 3D binary files.
-                      IMPORTANT: files need to hold the signature *._3D.*.bin. The
-                      output needed at each output time is `*.mhd_w_bcc_3D.*.bin`,
-                      `*.adm_3D.*.bin`, `*.alpha_3D.*.bin`, `*.betax_3D.*.bin`,
-                      `*.betay_3D.*.bin`, `*.betaz_3D.*.bin`.
-  args.batchtools (bool): whether simpath holds batchtools output-XXXX segments.
-  args.drop_first_bins (int): how many bins to drop at the start (during inspiral).
-  args.eos_table (str): path to the .h5 CompOSE table used for the evolution.
-  args.tracker (str): path to one of the tracker files (merged into one segment
-                      with BatchMerger; currently only supported this way).
-  args.horizon (str): path to the horizon summary file if existing (merged into
-                      one segment with BatchMerger; currently only supported this way).
-  args.outdir (str): path to the output directory, where files are written.
-  args.rho_cut (float): lower density threshold to identify the disk (default: 1e6 g/cm^3).
-                        Sensitivity information about that threshold is also in
-                        the output.
-  args.rho_keep (float): cells below this threshold are dropped from the start (in g/cm^3).
-                         Default is 1.5 times the simulation's density floor.
-  args.rho_remnant (float): upper density threshold to identify a possible remnant NS (in g/cm^3).
-                            Default is 1e13 g/cm^3.
-  args.bound_criterion (str): either use the Bernoulli or geodesic criterion to separate the
-                              ejecta from the disk.
-  args.r_exclude (float): exclude the region r < this (in code units) around a remnant
-                          BH. Default is the AH radius if given.
-  args.center (list): center of the compact object. If not given, the tracker file has to
-                      be given.
-  args.r_disk_max (float): outer cylindrical radius for the disk in code units (without the
-                           bound tidal tail might count as part of the disk).
-  args.nbins (int): number of cylindrical radius bins for the radial profiles. Default: 64.
-  args.rmax (float): outer edge of the radial profiles (in code units).
-  args.parker_dir (str): direction n of the Parker/Newcomb derivatives, either z (away from
-                         the midplane) or r (radially from the BH). Default: z.
-  args.parker_eps (float): mask the criteria where the gradients along n times dz fall below
-                           this (e.g. the midplane). Default: 1e-3.
-  args.parker_rmax (float): outer spherical radius of the Parker profiles (in code units).
-                            Default: rmax.
-  args.parker_smooth (int): box-smoothing width in cells before differencing (1 = none).
-                            Default: 3.
-  args.vprof_R (list): cylindrical radii of the vertical profiles (in code units).
-  args.n_workers (int): number of worker processes per snapshot loop.
+  Parameters:
+  args (argparse.Namespace): Parsed command-line arguments:
+    simpath (str): simulation directory holding the output-XXXX segments, or
+                   (without batchtools) the directory of the 3D binary files.
+                   IMPORTANT: files need to hold the signature *.<var><suffix>.*.bin. The
+                   output needed at each output time is `*.mhd_w_bcc_3D.*.bin`,
+                   `*.adm_3D.*.bin`, `*.alpha_3D.*.bin`, `*.betax_3D.*.bin`,
+                   `*.betay_3D.*.bin`, `*.betaz_3D.*.bin`.
+    batchtools (bool): whether simpath holds batchtools output-XXXX segments.
+    suffix (str): suffix of the 3D output ids (default: _3D).
+    drop_first_bins (int): how many bins to drop at the start (during inspiral).
+    eos_table (str): path to the .h5 CompOSE table used for the evolution.
+    tracker (str): path to one of the tracker files (merged into one segment
+                   with BatchMerger; currently only supported this way).
+    horizon (str): path to the horizon summary file if existing (merged into
+                   one segment with BatchMerger; currently only supported this way).
+    outdir (str): path to the output directory, where files are written.
+    rho_cut (float): lower density threshold to identify the disk (default: 1e6 g/cm^3).
+                     Sensitivity information about that threshold is also in
+                     the output.
+    rho_keep (float): cells below this threshold are dropped from the start (in g/cm^3).
+                      Default is 1.5 times the simulation's density floor.
+    rho_remnant (float): upper density threshold to identify a possible remnant NS (in g/cm^3).
+                         Default is 1e13 g/cm^3.
+    bound_criterion (str): either use the Bernoulli or geodesic criterion to separate the
+                           ejecta from the disk.
+    r_exclude (float): exclude the region r < this (in code units) around a remnant
+                       BH. Default is the AH radius if given.
+    center (list): center of the compact object. If not given, the tracker file has to
+                   be given.
+    r_disk_max (float): outer cylindrical radius for the disk in code units (without the
+                        bound tidal tail might count as part of the disk).
+    nbins (int): number of cylindrical radius bins for the radial profiles. Default: 64.
+    rmax (float): outer edge of the radial profiles (in code units).
+    parker_dir (str): direction n of the Parker/Newcomb derivatives, either z (away from
+                      the midplane) or r (radially from the BH). Default: z.
+    parker_eps (float): mask the criteria where the gradients along n times dz fall below
+                        this (e.g. the midplane). Default: 1e-3.
+    parker_rmax (float): outer spherical radius of the Parker profiles (in code units).
+                         Default: rmax.
+    parker_smooth (int): box-smoothing width in cells before differencing (1 = none).
+                         Default: 3.
+    vprof_R (list): cylindrical radii of the vertical profiles (in code units).
+    n_workers (int): number of worker processes per snapshot loop.
+
+  Returns:
+  None.
   """
   # Find the files with the signature.
-  files = {tag: find_snapshots(tag, args.simpath, args.batchtools) for tag in VARIABLES}
+  files = {tag: find_snapshots(tag, args.simpath, args.batchtools, args.suffix) for tag in VARIABLES}
 
   # Only keep snapshots that exist for every tag.
   number_sets = [set(files[tag]) for tag in VARIABLES]
@@ -1304,10 +1269,18 @@ def analyze(args):
   init_args = (eos, tracker, horizon)
 
   # Prepare the worker arguments.
-  n_workers = args.n_workers if args.n_workers is not None else min(8, cpu_count())
+  n_workers = args.n_workers or default_workers()
 
-  def _snapshot_files(n):
-    """Path to every tagged file for a given snapshot number."""
+  def _snapshot_files(n: int) -> tuple[str, ...]:
+    """
+    Path to every tagged file for a given snapshot number.
+
+    Parameters:
+    n (int): Snapshot number.
+
+    Returns:
+    The paths, in the order of VARIABLES.
+    """
     return tuple(files[v][n] for v in VARIABLES)
   worker_args = [_snapshot_files(n) +
                  (args.rho_cut, args.rho_keep, args.rho_remnant,
@@ -1329,26 +1302,22 @@ def analyze(args):
   os.makedirs(os.path.join(args.outdir, "parker"), exist_ok=True)
 
   # Parallel snapshot loop.
-  if n_workers > 1:
-    with Pool(n_workers,
-              initializer=_init_disk_worker,
-              initargs=init_args) as pool:
-      for _ in tqdm(
-        pool.imap_unordered(
-          _process_snapshot_disk, worker_args,
-          chunksize=max(1, len(worker_args) // (n_workers * 4))),
-          total=len(worker_args),
-          desc="Progress"):
-        pass
-  else:
-    _init_disk_worker(*init_args)
-    for a in tqdm(worker_args, desc="Progress"):
-      _process_snapshot_disk(a)
+  pool_map(_process_snapshot_disk, worker_args, n_workers,
+           initializer=_init_disk_worker, initargs=init_args, progress=True)
 
 # ----------------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------------
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
+  """
+  Command-line entry point of the disk analysis.
+
+  Parameters:
+  argv (list[str]): Command-line arguments (default: sys.argv).
+
+  Returns:
+  None.
+  """
   ap = argparse.ArgumentParser(
       description="Post-merger disk diagnostics for AthenaK data.",
       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -1358,6 +1327,9 @@ def main(argv=None):
   ap.add_argument("--batchtools", action=argparse.BooleanOptionalAction, default=True,
                   help="search the 3D bin files in <simpath>/output-XXXX[/bin]; "
                        "--no-batchtools searches <simpath>[/bin] only")
+  ap.add_argument("--suffix", default="_3D",
+                  help="suffix of the 3D output ids, i.e. files <job>.<var><suffix>.NNNNN.bin "
+                       "(use '' for unsuffixed ids)")
   ap.add_argument("--drop-first-bins", default=None, type=int,
                   help="Drop that many .bin files at the start (inspiral).")
   ap.add_argument("--eos-table",

@@ -13,12 +13,14 @@ Command line:
 
 import argparse
 import os
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import Colormap, Normalize
 from matplotlib.ticker import MultipleLocator
 
 # Set explicitly rather than inherited, so the figures do not depend on which
@@ -26,27 +28,37 @@ from matplotlib.ticker import MultipleLocator
 # under mathtext, so a LaTeX install is not required.
 matplotlib.rcParams["text.usetex"] = False
 
-# Unit conversions
-G       = 6.67430e-11
-M_SUN   = 1.98892e30
-C       = 2.99792458e8
-MSUN_TO_MS = G * M_SUN / C**3 * 1e3
-
-# CGS constants, used to convert the geometrized (G=c=1) Poynting flux to erg/s.
-G_CGS = 6.67430e-8
-C_CGS = 2.99792458e10
+from ..utils.constants import CODE_POWER_CGS, MSUN_TO_MS
 
 YE_AVG_RATE_FLOOR = 1e-3
 
 
-def cumulative(arr):
+def cumulative(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+  """
+  Cumulative trapezoidal integral of a rate.
+
+  Parameters:
+  arr (np.ndarray): Columns time | rate.
+
+  Returns:
+  (time, integral) at the right edge of each step.
+  """
   t = arr[:, 0]; r = arr[:, 1]; dt = np.diff(t)
   return t[1:], np.cumsum(0.5 * (r[:-1] + r[1:]) * dt)
 
 
-def mask_by_rate(avg, rate, floor=YE_AVG_RATE_FLOOR):
-  """Blank a mass-weighted average where its weight has run out.
-    """
+def mask_by_rate(avg: np.ndarray, rate: np.ndarray, floor: float = YE_AVG_RATE_FLOOR) -> np.ndarray:
+  """
+  Blank a mass-weighted average where its weight has run out.
+
+  Parameters:
+  avg (np.ndarray): Columns time | average.
+  rate (np.ndarray): Columns time | rate, on the same time grid.
+  floor (float): Keep the average where rate >= floor * max(rate).
+
+  Returns:
+  The average, NaN where the rate is too small.
+  """
   if avg.shape[0] != rate.shape[0]:
     raise ValueError(f"average has {avg.shape[0]} samples but the rate has "
                      f"{rate.shape[0]}; they must share a time grid")
@@ -60,21 +72,49 @@ def mask_by_rate(avg, rate, floor=YE_AVG_RATE_FLOOR):
 _POYNTING_WORKER_DATA = None
 
 
-def _init_poynting_worker(flux_ang, sel, x, y, z, r, cmap, norm, cb_ticks, odir, stride):
+def _init_poynting_worker(flux_ang: np.ndarray, sel: np.ndarray, x: np.ndarray, y: np.ndarray,
+                          z: np.ndarray, r: float, cmap: Colormap, norm: Normalize,
+                          cb_ticks: list[float], odir: str, stride: int) -> None:
+  """
+  Store the shared data of the Poynting frame workers.
+
+  Parameters:
+  flux_ang (np.ndarray): dL/dOmega maps, (Nt, Nphi, Ntheta).
+  sel (np.ndarray): Theta indices of the upper half-sphere.
+  x, y, z (np.ndarray): Closed surface grid.
+  r (float): Plot radius.
+  cmap (Colormap): Colormap.
+  norm (Normalize): Colorbar norm.
+  cb_ticks (list[float]): Colorbar ticks.
+  odir (str): Output directory of the frames.
+  stride (int): Frame stride, used to number the frames.
+
+  Returns:
+  None.
+  """
   global _POYNTING_WORKER_DATA
   _POYNTING_WORKER_DATA = dict(flux_ang=flux_ang, sel=sel, x=x, y=y, z=z, r=r,
                                 cmap=cmap, norm=norm, cb_ticks=cb_ticks,
                                 odir=odir, stride=stride)
 
 
-def _render_poynting_frame(task):
+def _render_poynting_frame(task: tuple[int, float]) -> None:
+  """
+  Render one 3D Poynting flux frame.
+
+  Parameters:
+  task (tuple): (snapshot index, t - t_merger [ms]).
+
+  Returns:
+  None.
+  """
   from matplotlib.ticker import FuncFormatter
   from matplotlib import cm
 
   i, t_val = task
   d = _POYNTING_WORKER_DATA
 
-  L = -np.asarray(d['flux_ang'][i])[:, d['sel']] * (C_CGS**5 / G_CGS)
+  L = -np.asarray(d['flux_ang'][i])[:, d['sel']] * CODE_POWER_CGS
   L = np.vstack([L, L[:1]])
 
   fig = plt.figure(figsize=(8, 7))
@@ -90,7 +130,17 @@ def _render_poynting_frame(task):
   ax.set_axis_off()
   ax.set_title(r"$t-t_{\mathrm{merger}} = %.2f$ ms" % t_val)
 
-  def cb_fmt(v, pos):
+  def cb_fmt(v: float, pos: int) -> str:
+    """
+    Colorbar tick label +-10^n.
+
+    Parameters:
+    v (float): Tick value.
+    pos (int): Tick position (unused).
+
+    Returns:
+    The label.
+    """
     if v == 0:
       return '0'
     return r'$%s10^{%d}$' % ('-' if v < 0 else '', round(np.log10(abs(v))))
@@ -108,8 +158,35 @@ def _render_poynting_frame(task):
   print(f"Processed Poynting frame: {i}")
 
 
-def plot_ejecta(adir, t_ms, radius, poynting, ye_evo, ye_theta_evo, nprocs=1):
-  def load(f): return np.loadtxt(os.path.join(adir, f))
+def plot_ejecta(adir: str, t_ms: Callable[[np.ndarray], np.ndarray], radius: float,
+                poynting: bool, ye_evo: bool, ye_theta_evo: bool, nprocs: int = 1) -> None:
+  """
+  Plot the ejecta rates, cumulative mass, mean Y_e and histograms (fig_ejecta.png),
+  and optionally the Poynting and Y_e evolution figures.
+
+  Parameters:
+  adir (str): Analysis directory; the figures go there too.
+  t_ms (callable): Converts the time [M_sun] to the plotted time [ms].
+  radius (float): Extraction radius [M_sun] (for titles).
+  poynting (bool): Also plot the Poynting flux.
+  ye_evo (bool): Also plot the Y_e evolution from the per-iteration output.
+  ye_theta_evo (bool): Also plot the Y_e - theta histograms.
+  nprocs (int): Worker processes for the Poynting frames.
+
+  Returns:
+  None.
+  """
+  def load(f: str) -> np.ndarray:
+    """
+    Load a .txt output of adir.
+
+    Parameters:
+    f (str): File name.
+
+    Returns:
+    The data.
+    """
+    return np.loadtxt(os.path.join(adir, f))
 
   Mej_rate_geo = load('Mej_rate_geo.txt')
   Mej_rate_Ber = load('Mej_rate_Ber.txt')
@@ -209,8 +286,20 @@ def plot_ejecta(adir, t_ms, radius, poynting, ye_evo, ye_theta_evo, nprocs=1):
     plot_ye_theta_evolution(adir, radius, Ye_centers, Thet_centers, t_ms)
 
 
-def plot_poynting(adir, t_ms, radius, nprocs=1):
-  """Plot the Poytning flux averaged and over the upper half-sphere."""
+def plot_poynting(adir: str, t_ms: Callable[[np.ndarray], np.ndarray], radius: float,
+                  nprocs: int = 1) -> None:
+  """
+  Plot the Poynting flux over time and as 3D frames over the upper half-sphere.
+
+  Parameters:
+  adir (str): Analysis directory; the figures go there too.
+  t_ms (callable): Converts the time [M_sun] to the plotted time [ms].
+  radius (float): Extraction radius [M_sun].
+  nprocs (int): Worker processes for the frames.
+
+  Returns:
+  None.
+  """
   from matplotlib.colors import LinearSegmentedColormap, SymLogNorm
   from mpl_toolkits.mplot3d import Axes3D
 
@@ -234,7 +323,7 @@ def plot_poynting(adir, t_ms, radius, nprocs=1):
 
   # ------- AVG. FLUX -------
   mask     = np.where(flux[:,1] < 0)[0]
-  flux_cgs = -flux[mask,1]*(C_CGS**5/G_CGS)
+  flux_cgs = -flux[mask,1]*CODE_POWER_CGS
   t_flux   = t_ms(flux[:,0])
 
   fig, ax = plt.subplots(1,1,figsize=(8,4))
@@ -276,9 +365,17 @@ def plot_poynting(adir, t_ms, radius, nprocs=1):
   y = r * np.sin(THETA) * np.sin(PHI)
   z = r * np.cos(THETA)
 
-  def dLdOmega(i):
-    """Outgoing Poynting flux per solid angle [erg/s/sr] on the closed north grid."""
-    L = -np.asarray(flux_ang[i])[:, sel] * (C_CGS**5 / G_CGS)
+  def dLdOmega(i: int) -> np.ndarray:
+    """
+    Outgoing Poynting flux per solid angle [erg/s/sr] on the closed north grid.
+
+    Parameters:
+    i (int): Snapshot index.
+
+    Returns:
+    The flux map.
+    """
+    L = -np.asarray(flux_ang[i])[:, sel] * CODE_POWER_CGS
     return np.vstack([L, L[:1]])
 
   # Full global range, symmetric about zero
@@ -304,8 +401,22 @@ def plot_poynting(adir, t_ms, radius, nprocs=1):
       list(ex.map(_render_poynting_frame, tasks))
 
 
-def plot_ye_theta_evolution(adir, radius, Ye_centers, Thet_centers, t_ms):
-  """Plot Ye - Theta histogram evolution with the weights being the ejecta mass."""
+def plot_ye_theta_evolution(adir: str, radius: float, Ye_centers: np.ndarray,
+                            Thet_centers: np.ndarray,
+                            t_ms: Callable[[np.ndarray], np.ndarray]) -> None:
+  """
+  Plot the Ye - Theta histogram evolution with the weights being the ejecta mass.
+
+  Parameters:
+  adir (str): Analysis directory; the figures go there too.
+  radius (float): Extraction radius [M_sun].
+  Ye_centers (np.ndarray): Y_e bin centers.
+  Thet_centers (np.ndarray): Theta bin centers.
+  t_ms (callable): Converts the time [M_sun] to the plotted time [ms].
+
+  Returns:
+  None.
+  """
   from matplotlib.colors import LogNorm
 
   # Open the figure
@@ -392,9 +503,22 @@ def plot_ye_theta_evolution(adir, radius, Ye_centers, Thet_centers, t_ms):
     plt.close(fig)
 
 
-def plot_ye_theta(adir, radius, Ye_centers, Thet_centers,
-                  Ye_theta_Ber, Ye_theta_geo):
-  """Plot Ye - Theta histograms with the weights being the ejecta mass."""
+def plot_ye_theta(adir: str, radius: float, Ye_centers: np.ndarray, Thet_centers: np.ndarray,
+                  Ye_theta_Ber: np.ndarray, Ye_theta_geo: np.ndarray) -> None:
+  """
+  Plot the Ye - Theta histograms with the weights being the ejecta mass.
+
+  Parameters:
+  adir (str): Analysis directory; the figure goes there too.
+  radius (float): Extraction radius [M_sun].
+  Ye_centers (np.ndarray): Y_e bin centers.
+  Thet_centers (np.ndarray): Theta bin centers.
+  Ye_theta_Ber (np.ndarray): Bernoulli histogram.
+  Ye_theta_geo (np.ndarray): Geodesic histogram.
+
+  Returns:
+  None.
+  """
   from matplotlib.colors import LogNorm
 
   # Prepare data and plotting utils
@@ -445,8 +569,16 @@ def plot_ye_theta(adir, radius, Ye_centers, Thet_centers,
   fig.savefig(out, dpi=150, bbox_inches='tight')
 
 
-def edges_from_centers(centers):
-  """Cell edges bracketing 1D bin centers (midpoints, extrapolated ends)."""
+def edges_from_centers(centers: np.ndarray) -> np.ndarray:
+  """
+  Cell edges bracketing 1D bin centers (midpoints, extrapolated ends).
+
+  Parameters:
+  centers (np.ndarray): Bin centers.
+
+  Returns:
+  The bin edges.
+  """
   centers = np.asarray(centers, dtype=float)
   mids = 0.5 * (centers[:-1] + centers[1:])
   first = centers[0] - (mids[0] - centers[0])
@@ -454,15 +586,20 @@ def edges_from_centers(centers):
   return np.concatenate([[first], mids, [last]])
 
 
-def plot_ye_evolution(adir, t_ms, radius):
-  """Time-vs-Y_e maps of the per-bin ejected mass, one panel per criterion.
+def plot_ye_evolution(adir: str, t_ms: Callable[[np.ndarray], np.ndarray], radius: float) -> None:
+  """
+  Time-vs-Y_e maps of the per-bin ejected mass, one panel per criterion, from the
+  per-iteration histograms <adir>/iteration/Mej_Ye_<crit>_<time>.txt. Empty cells
+  are left blank.
 
-    Reads the per-iteration histograms written by kplot.sphere.ejecta under
-    ``<adir>/iteration`` (``Mej_Ye_<crit>_<time>.txt``, columns Ye | M[Msun])
-    and renders each criterion as a pcolormesh with time on x, Y_e on y and the
-    per-bin mass on a shared log color scale.  Empty (zero-mass) cells are left
-    blank, as in the reference figure.
-    """
+  Parameters:
+  adir (str): Analysis directory; the figure goes there too.
+  t_ms (callable): Converts the time [M_sun] to the plotted time [ms].
+  radius (float): Extraction radius [M_sun].
+
+  Returns:
+  None.
+  """
   idir = os.path.join(adir, 'iteration', 'Mej_Ye')
 
   # Group the per-iteration files by ejecta criterion, sorted in time.
@@ -537,8 +674,33 @@ def plot_ye_evolution(adir, t_ms, radius):
   print(f'Saved {out}')
 
 
-def plot_neutrino(adir, t_ms, t_merger_ms, nu_xlabel, nu_xlim, radius):
-  def load(f): return np.loadtxt(os.path.join(adir, f))
+def plot_neutrino(adir: str, t_ms: Callable[[np.ndarray], np.ndarray], t_merger_ms: float,
+                  nu_xlabel: str, nu_xlim: dict, radius: float) -> None:
+  """
+  Plot the neutrino luminosities and mean energies (fig_neutrino.png).
+
+  Parameters:
+  adir (str): Analysis directory; the figure goes there too.
+  t_ms (callable): Converts the time [M_sun] to the plotted time [ms].
+  t_merger_ms (float): Merger time on the plotted axis [ms].
+  nu_xlabel (str): x-axis label.
+  nu_xlim (dict): Keyword arguments of set_xlim.
+  radius (float): Extraction radius [M_sun].
+
+  Returns:
+  None.
+  """
+  def load(f: str) -> np.ndarray:
+    """
+    Load a .txt output of adir.
+
+    Parameters:
+    f (str): File name.
+
+    Returns:
+    The data.
+    """
+    return np.loadtxt(os.path.join(adir, f))
 
   SPECIES  = ['nue', 'nua', 'nux', 'anux']
   SP_LABEL = [r'$\nu_e$', r'$\bar\nu_e$', r'$\nu_x$', r'$\bar\nu_x$']
@@ -547,7 +709,7 @@ def plot_neutrino(adir, t_ms, t_merger_ms, nu_xlabel, nu_xlim, radius):
   Ltot = load('Lnu_E_total.txt')
   Eav  = {sp: load(f'Eav_{sp}.txt')   for sp in SPECIES}
 
-  # Two panels: (1) luminosity, log scale 1e51–3e54;  (2) mean energy, 0–60.
+  # Two panels: (1) luminosity, log scale 1e51-3e54;  (2) mean energy, 0-60.
   fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
 
   ax = axes[0]
@@ -581,7 +743,16 @@ def plot_neutrino(adir, t_ms, t_merger_ms, nu_xlabel, nu_xlim, radius):
   print(f'Saved {out}')
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
+  """
+  Command-line entry point of the sphere plots.
+
+  Parameters:
+  argv (list[str]): Command-line arguments (default: sys.argv).
+
+  Returns:
+  None.
+  """
   parser = argparse.ArgumentParser(description=__doc__,
                                    formatter_class=argparse.RawDescriptionHelpFormatter)
   parser.add_argument("--output-dir", required=True,
@@ -605,7 +776,17 @@ def main(argv=None):
   adir = args.output_dir
   t_merger = args.t_merger
 
-  def t_ms_merger(t): return (t - t_merger) * MSUN_TO_MS
+  def t_ms_merger(t: np.ndarray) -> np.ndarray:
+    """
+    Time relative to merger.
+
+    Parameters:
+    t (np.ndarray): Time [M_sun].
+
+    Returns:
+    t - t_merger [ms].
+    """
+    return (t - t_merger) * MSUN_TO_MS
 
   if args.from_merger:
     nu_t_ms = t_ms_merger
@@ -613,7 +794,17 @@ def main(argv=None):
     nu_xlim = {'left': 0}
     t_merger_ms = 0.0
   else:
-    def nu_t_ms(t): return t * MSUN_TO_MS
+    def nu_t_ms(t: np.ndarray) -> np.ndarray:
+      """
+      Absolute time.
+
+      Parameters:
+      t (np.ndarray): Time [M_sun].
+
+      Returns:
+      t [ms].
+      """
+      return t * MSUN_TO_MS
     nu_xlabel = r'$t$ [ms]'
     nu_xlim = {}
     t_merger_ms = t_merger * MSUN_TO_MS

@@ -1,7 +1,4 @@
-#########################################################################
-# File: tracker.py                                                      #
-# Description: Handle AthenaK's tracker files.                          #
-#########################################################################
+"""Utility for handling AthenaK tracker files."""
 
 # Import necessary standard libaries.
 import re
@@ -21,7 +18,7 @@ class Tracker:
   A class to handle AthenaK's tracker files.
   """
 
-  def __init__(self, tracker_path_0, tracker_path_1=None):
+  def __init__(self, tracker_path_0: str, tracker_path_1: str | None = None) -> None:
     """
     Point the class to the tracker files, i.e. <job>.co_0/1.txt.
 
@@ -35,12 +32,12 @@ class Tracker:
     self.load_tracker_data()
 
   # Load the tracker data.
-  def load_tracker_data(self):
+  def load_tracker_data(self) -> None:
     """
-    Load the tracker data from the specified file path.
+    Load the tracker data from the specified file paths into self.tracker_data.
 
     Returns:
-    Dictionary holding the tracker data.
+    None.
     """
     paths = [p for p in (self.tracker_path_0, self.tracker_path_1) if p is not None]
     for path in paths:
@@ -78,17 +75,17 @@ class Tracker:
       raise SystemExit("$ Tracker data not loaded successfully!")
 
   # Find tracker position for tracker 'ico' at time t.
-  def tracker_pos(self, ico, t):
+  def tracker_pos(self, ico: int | str, t: float) -> tuple[float, float, float]:
     """
     Find the tracker position for tracker 'ico' closest to
     target time t.
 
     Parameters:
-    ico (str): Tracker object, either 0 or 1.
+    ico (int): Tracker object, either 0 or 1.
     t (float): Target time t.
 
     Returns:
-    Tracker position at target time.
+    Tracker position (x, y, z) at target time.
     """
     # Tracker data for selected object.
     d = self.tracker_data[int(ico)]
@@ -102,13 +99,16 @@ class Tracker:
     return best[1]
 
   # Plot the tracker data.
-  def plot_tracker(self, output_path=None, save=False):
+  def plot_tracker(self, output_path: str | None = None, save: bool = False) -> None:
     """
-    Simple function to compute the tracker points in time on the xy-plane.
+    Simple function to plot the tracker points in time on the xy-plane.
 
     Parameters:
     output_path (str): Path where to store the plot.
     save (bool): Whether to store the plot or not.
+
+    Returns:
+    None.
     """
     if self.tracker_data is None:
       raise ValueError("Tracker data not loaded. Call load_tracker_data() first.")
@@ -143,8 +143,10 @@ class Tracker:
       plt.show()
 
   # Calculate the eccentricity from tracker data.
-  def calc_eccentricity(self, t_fit_min, t_fit_max, t_min_plot, t_max_plot,
-                        init_guess, bounds, output_path=None, save=False):
+  def calc_eccentricity(self, t_fit_min: float, t_fit_max: float, t_min_plot: float,
+                        t_max_plot: float, init_guess: list, bounds: tuple,
+                        output_path: str | None = None,
+                        save: bool = False) -> tuple[np.ndarray, np.ndarray, float]:
     """
     Compute the residual eccentricity from tracker data.
 
@@ -157,14 +159,25 @@ class Tracker:
     bounds (tuple): Bounds for the fit parameters.
     output_path (str): Path where to store the plot.
     save (bool): Whether to store the plot or not.
+
+    Returns:
+    (fit parameters, covariance, eccentricity).
     """
     if self.tracker_data is None:
       raise ValueError("Tracker data not loaded. Call load_tracker_data() first.")
 
     # Define the fit formula.
-    def tracker_fit(t, S0, A0, A1, B, of, phi):
+    def tracker_fit(t: np.ndarray, S0: float, A0: float, A1: float, B: float, of: float,
+                    phi: float) -> np.ndarray:
       """
       Phenomenological fit function for the tracker data from https://arxiv.org/pdf/1507.07100.
+
+      Parameters:
+      t (np.ndarray): Time.
+      S0, A0, A1, B, of, phi (float): Fit parameters.
+
+      Returns:
+      Coordinate separation at t.
       """
       return S0 + A0*t + 1/2*(A1*t**2) - B/of*np.cos(of*t + phi)
 
@@ -226,7 +239,7 @@ class RefineTracker:
   Small wrapper class taking tracker refinement parameters
   and determining whether a certain block will be refined.
   """
-  def __init__(self, c, r, level):
+  def __init__(self, c: list, r: float, level: int) -> None:
     """
     Initialize RefineTracker class.
 
@@ -238,15 +251,18 @@ class RefineTracker:
     self.c, self.r, self.level = np.asarray(c, float), r, level
 
   # Whether a MeshBlock with bounds will be refined by tracker.
-  def hits(self, lo, hi):
+  def hits(self, lo: np.ndarray, hi: np.ndarray) -> bool:
     """
     Determines whether a block with bounds 'lo' and 'hi'
     will be refined based on the current tracker position and
     tracker radius.
 
     Parameters:
-    lo (float): Lower bound of the block.
-    hi (float): Upper bound of the block.
+    lo (np.ndarray): Lower corner of the block.
+    hi (np.ndarray): Upper corner of the block.
+
+    Returns:
+    True if the block is refined by this tracker.
     """
     p = np.clip(self.c, lo, hi)
     inside = np.all((self.c >= lo) & (self.c <= hi))

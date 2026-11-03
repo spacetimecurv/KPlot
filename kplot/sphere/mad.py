@@ -4,18 +4,18 @@ spherical extraction surfaces centred on the black hole.
 
 Per snapshot and extraction radius R the analysis integrates over the sphere
 
-    Mdot   = - ∮ α √γ ρ u^r r² dΩ           net accretion rate (> 0: inflow)
-    Mdot_in, Mdot_out                        inflowing / outflowing parts alone
-    Phi    = ½ ∮ |√γ B^r| r² dΩ             magnetic flux threading one hemisphere
-    Phi_N, Phi_S = ∮_{N,S} √γ B^r r² dΩ      signed flux through each hemisphere
+    Mdot         = - oint alpha sqrt(gamma) rho u^r r^2 dOmega  net accretion rate (> 0: inflow)
+    Mdot_in, Mdot_out                                        inflowing / outflowing parts alone
+    Phi          = 1/2 oint |sqrt(gamma) B^r| r^2 dOmega     magnetic flux threading one hemisphere
+    Phi_N, Phi_S = oint_{N,S} sqrt(gamma) B^r r^2 dOmega     signed flux through each hemisphere
 
 and the plot step forms, with window averages <.> over --t-avg,
 
-    φ   = <Phi> / sqrt(<Mdot> r_g²)          dimensionless flux, r_g = M_BH
-    η   = <L_ν>(t + R_ν - R) / (<Mdot> c²)  neutrino cooling efficiency
+    phi = <Phi> / sqrt(<Mdot> r_g^2)           dimensionless flux, r_g = M_BH
+    eta = <L_nu>(t + R_nu - R) / (<Mdot> c^2)  neutrino cooling efficiency
 
-L_ν is the total (all species) luminosity of kplot.sphere.neutrinos, extracted at
-R_ν, and is shifted back by the light travel time from R to R_ν.
+L_nu is the total (all species) luminosity of kplot.sphere.neutrinos, extracted at
+R_nu, and is shifted back by the light travel time from R to R_nu.
 
 The sphere is centred on the tracker given by the sph block's ``center_tracker``;
 before that tracker is enabled the sphere sits at the origin, so the plot step
@@ -28,10 +28,10 @@ Required parfile output blocks (one block per variable, any number of radii):
 Outputs (written to --output-dir):
     mad_r{R}.txt          time, Mdot, Mdot_in, Mdot_out, Phi, Phi_N, Phi_S  [code units]
     sphere_center_mad.txt t, center of the extraction surface                 [M_sun]
-    mad_derived_r{R}.txt  (plot step) time, M_BH, <Mdot> [M_sun/s], φ_HL, φ_G,
-                          φ_G from <Mdot_in>, <L_ν> [erg/s], η
-    fig_mad.png           (plot step) <Mdot>, φ and η vs time, one line per radius
-    fig_eta_mdot.png      (plot step) η vs <Mdot>, coloured by time
+    mad_derived_r{R}.txt  (plot step) time, M_BH, <Mdot> [M_sun/s], phi_HL, phi_G,
+                          phi_G from <Mdot_in>, <L_nu> [erg/s], eta
+    fig_mad.png           (plot step) <Mdot>, phi and eta vs time, one line per radius
+    fig_eta_mdot.png      (plot step) eta vs <Mdot>, coloured by time
 
 Command line:
     kplot-sphere-mad --sph-dir DIR [--sph-dir DIR ...] --output-dir DIR \
@@ -40,44 +40,44 @@ Command line:
     kplot-sphere-mad --output-dir DIR --radius 25 --plot-only --horizon-file F ...
 """
 
-import argparse
 import os
-from multiprocessing import Pool, cpu_count
 
 import numpy as np
 
-from ._files import locate
+from ..utils.cli import require_sph, sphere_parser
+from ..utils.constants import CODE_POWER_CGS, MSUN_TO_MS, MSUN_TO_S
+from ..utils.grmhd import fluid, sqrt_det
+from ..utils.plotting import savefig, time_axis
+from ..utils.surface import Surface, run, save_centers
 
 DEFAULT_RADII = (25.0, 50.0, 100.0)
 DEFAULT_JOBNAME = "bns"
 DEFAULT_T_AVG_MS = 5.0
 
-# The sph output variables a surface needs, in the order the worker unpacks them.
-VARIABLES = ('mhd_w_bcc', 'adm', 'z4c_alpha', 'z4c_betax', 'z4c_betay', 'z4c_betaz')
-
-# Gaussian / Heaviside-Lorentz field units: B_G = sqrt(4π) B_HL.
+# Gaussian / Heaviside-Lorentz field units: B_G = sqrt(4pi) B_HL.
 HL_TO_GAUSS = np.sqrt(4.0 * np.pi)
 
 # MAD saturation of the dimensionless flux in Gaussian units (Tchekhovskoy et al.
-# 2011); ≈ 15 in Heaviside-Lorentz units.
+# 2011); ~ 15 in Heaviside-Lorentz units.
 PHI_MAD_GAUSS = 50.0
 
 # NDAF reference efficiency for Mdot ~ 0.01 - 1 M_sun/s.
 ETA_NDAF = 0.06
 NDAF_MDOT_RANGE = (0.01, 1.0)   # [M_sun/s]
 
-# Unit conversions; the same constants as kplot.sphere.plots.
-G     = 6.67430e-11
-M_SUN = 1.98892e30
-C     = 2.99792458e8
-MSUN_TO_S = G * M_SUN / C**3
-# Code power (M_sun per code time, times c²) in erg/s, i.e. c⁵/G.
-CODE_POWER_CGS = M_SUN * 1e3 * (C * 1e2)**2 / MSUN_TO_S
-
 COLUMNS = ('Mdot', 'Mdot_in', 'Mdot_out', 'Phi', 'Phi_N', 'Phi_S')
 
 
-def _tag(radius):
+def _tag(radius: float) -> str:
+  """
+  Radius as used in the output file names.
+
+  Parameters:
+  radius (float): Extraction radius [M_sun].
+
+  Returns:
+  The radius formatted with :g.
+  """
   return f'{radius:g}'
 
 
@@ -85,195 +85,62 @@ def _tag(radius):
 # Main analysis
 # ===================================================================
 
-def _process_snapshot_mad(args):
-  """Per-snapshot worker: fluxes on every requested surface of one snapshot.
-
-    `args` is a list of ``(radius, files)``, `files` being the (path, surface
-    index) of every entry of VARIABLES.  Each dump is parsed once, however many of
-    the surfaces it holds.
-    """
-  import numpy as _np
-
-  import os as _os
-
-  from athplot.load_sph_vtk import SphericalData as _SphericalData
-
-  from ._files import Shell as _Shell, CENTER_TOL as _CENTER_TOL
-  from ._integrate import (calc_ur as _calc_ur,
-                           sqrt_det_metric_adm as _sqrt_det,
-                           get_riemann_weights as _get_riemann_weights)
-
-  parsed = {}
-
-  def shell(entry):
-    path, iradius = entry
-    if path not in parsed:
-      parsed[path] = _SphericalData(path)
-    return _Shell(path, iradius, data=parsed[path])
-
-  out = {}
-  for radius, files in args:
-    mhd, adm, alpha, betax, betay, betaz = shells = [shell(f) for f in files]
-
-    time  = mhd.time
-    r     = mhd.radius
-    theta = mhd.theta
-    phi   = mhd.phi
-
-    centers = _np.array([sh.center for sh in shells])
-    if not _np.allclose(centers, centers[0], rtol=0.0, atol=_CENTER_TOL):
-      detail = '\n'.join(f'  {_os.path.basename(sh.path)}: '
-                         f'({c[0]:.6g}, {c[1]:.6g}, {c[2]:.6g})'
-                         for sh, c in zip(shells, centers))
-      raise RuntimeError(
-        f'Sphere centers disagree at t = {time:g} M_sun:\n{detail}\n'
-        'Every sph output block feeding the MAD analysis must use the '
-        'same center_tracker.')
-
-    z4c_alpha_raw = alpha.shell('z4c_alpha')
-    phi_zero    = (phi == phi.min())
-    theta_north = (theta == theta.min())
-    dup_corr = _np.ones(z4c_alpha_raw.shape)
-    if z4c_alpha_raw[phi_zero & ~theta_north].max() > 1.0:
-      dup_corr[phi_zero] = 0.5
-    if z4c_alpha_raw[theta_north].max() > 1.0:
-      dup_corr[theta_north] = 0.25
-
-    dens = mhd.shell('dens') * dup_corr
-    velx = mhd.shell('velx') * dup_corr
-    vely = mhd.shell('vely') * dup_corr
-    velz = mhd.shell('velz') * dup_corr
-    bcc1 = mhd.shell('bcc1') * dup_corr
-    bcc2 = mhd.shell('bcc2') * dup_corr
-    bcc3 = mhd.shell('bcc3') * dup_corr
-
-    gxx = adm.shell('adm_gxx') * dup_corr
-    gyy = adm.shell('adm_gyy') * dup_corr
-    gzz = adm.shell('adm_gzz') * dup_corr
-    gxy = adm.shell('adm_gxy') * dup_corr
-    gxz = adm.shell('adm_gxz') * dup_corr
-    gyz = adm.shell('adm_gyz') * dup_corr
-    z4c_alpha = z4c_alpha_raw * dup_corr
-    z4c_betax = betax.shell('z4c_betax') * dup_corr
-    z4c_betay = betay.shell('z4c_betay') * dup_corr
-    z4c_betaz = betaz.shell('z4c_betaz') * dup_corr
-
-    W = _np.sqrt(1.0 + gxx*velx**2 + gyy*vely**2 + gzz*velz**2
-                  + 2*gxy*velx*vely + 2*gxz*velx*velz + 2*gyz*vely*velz)
-    ut_contrav = W / z4c_alpha
-    ux_u = velx - z4c_betax * ut_contrav
-    uy_u = vely - z4c_betay * ut_contrav
-    uz_u = velz - z4c_betaz * ut_contrav
-    ur = _calc_ur(ux_u, uy_u, uz_u, theta, phi)
-
-    # Coordinate area element r² sinθ dθ dφ of the extraction sphere.
-    dA = _get_riemann_weights(dens, theta[0, :], phi[:, 0]) * _np.sin(theta) * r**2
-
-    # ------- MASS FLUX ------- sqrt(-g) ρ u^r, outward positive
-    mass_flux = _sqrt_det(gxx, gyy, gzz, gxy, gxz, gyz, z4c_alpha) * dens * ur * dA
-
-    # ------- MAGNETIC FLUX ------- bcc is already √γ B^i
-    flux_B = _calc_ur(bcc1, bcc2, bcc3, theta, phi) * dA
-    north = theta < 0.5 * _np.pi
-
-    out[radius] = {
-      'time':     time,
-      'center':   centers[0],
-      'Mdot':     -mass_flux.sum(),
-      'Mdot_in':  -mass_flux[mass_flux < 0].sum(),
-      'Mdot_out': mass_flux[mass_flux > 0].sum(),
-      'Phi':      0.5 * _np.abs(flux_B).sum(),
-      'Phi_N':    flux_B[north].sum(),
-      'Phi_S':    flux_B[~north].sum(),
-    }
-  return out
-
-
-def analyze(sph_dirs, output_dir, radii=DEFAULT_RADII, jobname=DEFAULT_JOBNAME,
-            n_workers=None):
-  """Run the accretion-rate / magnetic-flux analysis over every snapshot found in
-  `sph_dirs`.
-
-  Parameters
-  ----------
-  sph_dirs : list of str
-    AthenaK ``output-XXXX/sph`` directories to scan (all treated as one run).
-  output_dir : str
-    Directory the .txt outputs are written to.
-  radii : sequence of float
-    SPH extraction radii [M_sun]; each must have mhd_w_bcc/adm/z4c output.  A
-    snapshot is used at every radius it holds, so the radii may cover different
-    time spans.
-  jobname : str
-    AthenaK job name prefixing the VTK files.
-  n_workers : int, optional
-    Worker processes for the snapshot loop.  Default: min(8, cpu_count()).
+def _compute(s: Surface, ctx: None) -> dict:
   """
-  if n_workers is None:
-    n_workers = min(8, cpu_count())
-  radii = sorted(set(float(r) for r in radii))
+  Accretion rates and magnetic fluxes through the surface.
 
-  # ------------------------------------------------------------------
-  # Locate the dumps holding each radius, and the snapshots complete at it.
-  # ------------------------------------------------------------------
-  located = {}
-  complete = {}
-  for radius in radii:
-    located[radius] = {v: locate(sph_dirs, jobname, v, radius) for v in VARIABLES}
-    for v in VARIABLES:
-      print(f"  {located[radius][v].describe()}")
-    index_sets = [set(located[radius][v].paths) for v in VARIABLES]
-    complete[radius] = set.intersection(*index_sets)
-    incomplete = len(set.union(*index_sets)) - len(complete[radius])
-    if incomplete:
-      print(f"  [skip] r = {radius:g}: {incomplete} snapshots missing one of "
-            f"{', '.join(VARIABLES)}")
-    print(f"Found {len(complete[radius])} snapshots at r = {radius:g}.")
+  Parameters:
+  s (Surface): Extraction surface of one snapshot.
+  ctx (None): Unused.
 
-  indices = sorted(set.union(*complete.values()))
-  if not indices:
-    raise RuntimeError(
-      f"No snapshot in {list(sph_dirs)} has all of {', '.join(VARIABLES)} "
-      f"at any of r = {', '.join(f'{r:g}' for r in radii)}.\n"
-      "Check the sph directories, the job name and the extraction radii.")
+  Returns:
+  {'Mdot', 'Mdot_in', 'Mdot_out', 'Phi', 'Phi_N', 'Phi_S'}.
+  """
+  f = fluid(s.metric, s.alpha, s.beta, s.vel)
+  dA = s.dA
+  # sqrt(-g) rho u^r, outward positive; bcc is already sqrt(gamma) B^i.
+  mass_flux = sqrt_det(s.metric) * s.alpha * s['dens'] * s.radial(f['u_up']) * dA
+  flux_B = s.radial(s.bcc) * dA
+  north = s.theta < 0.5 * np.pi
+  return {
+    'Mdot':     -mass_flux.sum(),
+    'Mdot_in':  -mass_flux[mass_flux < 0].sum(),
+    'Mdot_out': mass_flux[mass_flux > 0].sum(),
+    'Phi':      0.5 * np.abs(flux_B).sum(),
+    'Phi_N':    flux_B[north].sum(),
+    'Phi_S':    flux_B[~north].sum(),
+  }
 
-  # ------------------------------------------------------------------
-  # Build worker argument list: one task per snapshot, covering all radii.
-  # ------------------------------------------------------------------
-  worker_args = [
-    [(radius, tuple(located[radius][v].shell(i) for v in VARIABLES))
-     for radius in radii if i in complete[radius]]
-    for i in indices
-  ]
-  print(f"Processing {len(worker_args)} snapshots with n_workers={n_workers}...")
 
-  # ------------------------------------------------------------------
-  # Parallel snapshot loop
-  # ------------------------------------------------------------------
-  if n_workers > 1:
-    with Pool(n_workers) as pool:
-      results = list(pool.imap_unordered(
-          _process_snapshot_mad, worker_args,
-          chunksize=max(1, len(worker_args) // (n_workers * 4))))
-  else:
-    results = [_process_snapshot_mad(a) for a in worker_args]
+def analyze(sph_dirs: list[str], output_dir: str, radii: list[float] = DEFAULT_RADII,
+            jobname: str = DEFAULT_JOBNAME, n_workers: int | None = None) -> None:
+  """
+  Run the accretion-rate / magnetic-flux analysis over every snapshot found in sph_dirs.
 
-  # ------------------------------------------------------------------
-  # Unpack and save results, one file per radius
-  # ------------------------------------------------------------------
+  Parameters:
+  sph_dirs (list[str]): AthenaK output-XXXX/sph directories (all treated as one run).
+  output_dir (str): Directory the outputs are written to.
+  radii (list[float]): SPH extraction radii [M_sun]; each must have mhd_w_bcc/adm/z4c
+                       output. A snapshot is used at every radius it holds, so the
+                       radii may cover different time spans.
+  jobname (str): AthenaK job name prefixing the VTK files.
+  n_workers (int): Worker processes for the snapshot loop (default: min(8, cpu_count())).
+
+  Returns:
+  None.
+  """
+  results = run(sph_dirs, jobname, radii, _compute, n_workers=n_workers)
   os.makedirs(output_dir, exist_ok=True)
 
   # The center is the same for every radius of a snapshot; keep one row each.
-  centers = sorted([next(iter(res.values()))['time'], *next(iter(res.values()))['center']]
-                   for res in results)
-  np.savetxt(os.path.join(output_dir, 'sphere_center_mad.txt'), np.array(centers),
-             header='time(Msun)    xc(Msun)    yc(Msun)    zc(Msun)',
-             fmt='%.6e')
+  centers = {r['time']: r for res in results.values() for r in res}
+  save_centers(os.path.join(output_dir, 'sphere_center_mad.txt'),
+               [centers[t] for t in sorted(centers)])
 
-  for radius in radii:
-    rows = sorted([res[radius]['time']] + [res[radius][k] for k in COLUMNS]
-                  for res in results if radius in res)
-    rows = np.array(rows)
+  for radius, res in results.items():
+    if not res:
+      continue
+    rows = np.array([[r['time']] + [r[k] for k in COLUMNS] for r in res])
     path = os.path.join(output_dir, f'mad_r{_tag(radius)}.txt')
     np.savetxt(path, rows, fmt='%.8e',
                header=f'r = {radius:g} M_sun, code units (G = c = M_sun = 1, '
@@ -291,8 +158,16 @@ def analyze(sph_dirs, output_dir, radii=DEFAULT_RADII, jobname=DEFAULT_JOBNAME,
 # Derived quantities and plots
 # ===================================================================
 
-def load_bh_mass(horizon_file):
-  """(time, M_BH) [M_sun] from an AthenaK horizon summary, valid rows only."""
+def load_bh_mass(horizon_file: str) -> tuple[np.ndarray, np.ndarray]:
+  """
+  Black hole mass history from an AthenaK horizon summary, valid rows only.
+
+  Parameters:
+  horizon_file (str): Path to the horizon summary file.
+
+  Returns:
+  (time, M_BH) [M_sun].
+  """
   data = np.loadtxt(horizon_file, comments='#')
   t, m = data[:, 1], data[:, 2]
   keep = np.isfinite(m) & (m > 0)
@@ -301,11 +176,19 @@ def load_bh_mass(horizon_file):
   return t, m[first]
 
 
-def running_mean(t, y, width):
-  """Centred running mean of y(t) over a window of `width` in t.
+def running_mean(t: np.ndarray, y: np.ndarray, width: float) -> np.ndarray:
+  """
+  Centred running mean of y(t) over a window of width in t. The samples need
+  not be equally spaced; NaNs are ignored.
 
-    The samples need not be equally spaced; NaNs are ignored.
-    """
+  Parameters:
+  t (np.ndarray): Sorted times.
+  y (np.ndarray): Values.
+  width (float): Window width (<= 0 returns y).
+
+  Returns:
+  The running mean.
+  """
   if width <= 0:
     return y.copy()
   lo = np.searchsorted(t, t - 0.5 * width, side='left')
@@ -318,7 +201,17 @@ def running_mean(t, y, width):
     return np.where(n > 0, (csum[hi] - csum[lo]) / n, np.nan)
 
 
-def _load_mad(output_dir, radius):
+def _load_mad(output_dir: str, radius: float) -> dict | None:
+  """
+  Load mad_r{radius}.txt.
+
+  Parameters:
+  output_dir (str): Analysis directory.
+  radius (float): Extraction radius [M_sun].
+
+  Returns:
+  {'time', *COLUMNS}, or None if the file does not exist.
+  """
   path = os.path.join(output_dir, f'mad_r{_tag(radius)}.txt')
   if not os.path.exists(path):
     return None
@@ -328,21 +221,26 @@ def _load_mad(output_dir, radius):
   return {'time': t, **{k: data[:, i + 1] for i, k in enumerate(COLUMNS)}}
 
 
-def derive(mad, radius, t_bh=None, m_bh=None, m_bh_const=None, lnu=None,
-           lnu_radius=None, t_avg=0.0):
-  """φ and η on the snapshot times of `mad` (see the module docstring).
+def derive(mad: dict, radius: float, t_bh: np.ndarray | None = None,
+           m_bh: np.ndarray | None = None, m_bh_const: float | None = None,
+           lnu: tuple[np.ndarray, np.ndarray] | None = None,
+           lnu_radius: float | None = None, t_avg: float = 0.0) -> dict:
+  """
+  phi and eta on the snapshot times of mad (see the module docstring).
 
-    Parameters
-    ----------
-    mad : dict
-        One radius of :func:`analyze`'s output, as loaded by ``_load_mad``.
-    t_bh, m_bh : ndarray, optional
-        Black hole mass history [M_sun]; or `m_bh_const` for a fixed mass.
-    lnu : (ndarray, ndarray), optional
-        Time [M_sun] and total neutrino luminosity [erg/s] at `lnu_radius`.
-    t_avg : float
-        Averaging window [M_sun].
-    """
+  Parameters:
+  mad (dict): One radius of the analyze output, as loaded by _load_mad.
+  radius (float): Extraction radius [M_sun].
+  t_bh (np.ndarray): Times of the black hole mass history [M_sun].
+  m_bh (np.ndarray): Black hole mass history [M_sun].
+  m_bh_const (float): Fixed black hole mass [M_sun], used without t_bh/m_bh.
+  lnu (tuple): Time [M_sun] and total neutrino luminosity [erg/s] at lnu_radius.
+  lnu_radius (float): Extraction radius of lnu [M_sun].
+  t_avg (float): Averaging window [M_sun].
+
+  Returns:
+  The derived time series (running means, phi, eta, ...).
+  """
   t = mad['time']
   if m_bh_const is not None:
     M = np.full_like(t, m_bh_const)
@@ -354,7 +252,7 @@ def derive(mad, radius, t_bh=None, m_bh=None, m_bh_const=None, lnu=None,
   Phi     = running_mean(t, mad['Phi'], t_avg)
 
   with np.errstate(invalid='ignore', divide='ignore'):
-    # φ is undefined where the sphere has net outflow.
+    # phi is undefined where the sphere has net outflow.
     phi_hl = np.where(mdot > 0, Phi / np.sqrt(mdot * M**2), np.nan)
     phi_in = Phi / np.sqrt(mdot_in * M**2) * HL_TO_GAUSS
 
@@ -363,7 +261,7 @@ def derive(mad, radius, t_bh=None, m_bh=None, m_bh_const=None, lnu=None,
   if lnu is not None:
     t_nu, L_nu = lnu
     L_avg = running_mean(t_nu, L_nu, t_avg)
-    # L_ν leaves R at t and reaches R_ν at t + (R_ν - R) (c = 1).
+    # L_nu leaves R at t and reaches R_nu at t + (R_nu - R) (c = 1).
     lnu_ret = np.interp(t + (lnu_radius - radius), t_nu, L_avg,
                         left=np.nan, right=np.nan)
     with np.errstate(invalid='ignore', divide='ignore'):
@@ -381,17 +279,30 @@ def derive(mad, radius, t_bh=None, m_bh=None, m_bh_const=None, lnu=None,
   }
 
 
-def plot_mad(output_dir, radii=DEFAULT_RADII, horizon_file=None, m_bh=None,
-             lnu_file=None, lnu_radius=None, t_merger=None, t_min=None,
-             t_avg_ms=DEFAULT_T_AVG_MS):
-  """Write mad_derived_r{R}.txt and plot <Mdot>, φ and η (fig_mad.png) and η vs
-    <Mdot> (fig_eta_mdot.png).
+def plot_mad(output_dir: str, radii: list[float] = DEFAULT_RADII,
+             horizon_file: str | None = None, m_bh: float | None = None,
+             lnu_file: str | None = None, lnu_radius: float | None = None,
+             t_merger: float | None = None, t_min: float | None = None,
+             t_avg_ms: float = DEFAULT_T_AVG_MS) -> None:
+  """
+  Write mad_derived_r{R}.txt and plot <Mdot>, phi and eta (fig_mad.png) and eta vs
+  <Mdot> (fig_eta_mdot.png).
 
-    The time axis is t - t_merger [ms] if `t_merger` [M_sun] is given, else the
-    absolute time [ms].  Only times >= `t_min` [M_sun] are used, default
-    `t_merger`.
-    """
-  from .plots import MSUN_TO_MS, plt
+  Parameters:
+  output_dir (str): Analysis directory; the outputs go there too.
+  radii (list[float]): Extraction radii [M_sun].
+  horizon_file (str): AthenaK horizon summary for the black hole mass.
+  m_bh (float): Fixed black hole mass [M_sun] if no horizon file is given.
+  lnu_file (str): Total neutrino luminosity file for eta.
+  lnu_radius (float): Extraction radius of lnu_file [M_sun].
+  t_merger (float): Merger time [M_sun]; the time axis is then t - t_merger [ms].
+  t_min (float): Only use times >= t_min [M_sun] (default: t_merger).
+  t_avg_ms (float): Averaging window [ms].
+
+  Returns:
+  None.
+  """
+  from .plots import plt
   from matplotlib.colors import Normalize
 
   if horizon_file is None and m_bh is None:
@@ -410,7 +321,7 @@ def plot_mad(output_dir, radii=DEFAULT_RADII, horizon_file=None, m_bh=None,
       t_nu, first = np.unique(d[:, 0], return_index=True)
       lnu = (t_nu, d[first, 1])
     else:
-      print(f'  No neutrino luminosity at {lnu_file}; skipping η.')
+      print(f'  No neutrino luminosity at {lnu_file}; skipping eta.')
 
   if t_min is None:
     t_min = t_merger
@@ -443,21 +354,16 @@ def plot_mad(output_dir, radii=DEFAULT_RADII, horizon_file=None, m_bh=None,
                       'phi_G(<Mdot_in>)  <L_nu>[erg/s]  eta=L_nu/(Mdot c^2)')
     with np.errstate(invalid='ignore'):
       print(f'  r = {radius:g}: median <Mdot> = {np.nanmedian(d["Mdot_Msun_s"]):.3g} '
-            f'M_sun/s, median φ_G = {np.nanmedian(d["phi_G"]):.3g}, max φ_G = '
+            f'M_sun/s, median phi_G = {np.nanmedian(d["phi_G"]):.3g}, max phi_G = '
             f'{np.nanmax(d["phi_G"]) if np.isfinite(d["phi_G"]).any() else np.nan:.3g}, '
-            f'median η = {np.nanmedian(d["eta"]) if np.isfinite(d["eta"]).any() else np.nan:.3g}'
+            f'median eta = {np.nanmedian(d["eta"]) if np.isfinite(d["eta"]).any() else np.nan:.3g}'
             f' -> {path}')
 
   if not derived:
     print('  Nothing to plot.')
     return
 
-  if t_merger is None:
-    def t_ms(t): return t * MSUN_TO_MS
-    xlabel = r'$t$ [ms]'
-  else:
-    def t_ms(t): return (t - t_merger) * MSUN_TO_MS
-    xlabel = r'$t - t_\mathrm{merger}$ [ms]'
+  t_ms, xlabel = time_axis(t_merger)
 
   # Fixed colour per radius, by its position in the sorted radius list.
   colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
@@ -498,11 +404,7 @@ def plot_mad(output_dir, radii=DEFAULT_RADII, horizon_file=None, m_bh=None,
   axes[-1].set_xlabel(xlabel)
   axes[0].set_title(rf'window average {t_avg_ms:g} ms; dotted: $\phi$ from inflow only',
                     fontsize=9)
-  fig.tight_layout()
-  out = os.path.join(output_dir, 'fig_mad.png')
-  fig.savefig(out, dpi=150, bbox_inches='tight')
-  plt.close(fig)
-  print(f'Saved {out}')
+  savefig(fig, os.path.join(output_dir, 'fig_mad.png'))
 
   # ------- EFFICIENCY VS ACCRETION RATE -------
   if not has_eta:
@@ -526,58 +428,40 @@ def plot_mad(output_dir, radii=DEFAULT_RADII, horizon_file=None, m_bh=None,
   axes[0].set_ylabel(r'$\eta = L_\nu / \langle\dot M\rangle c^2$')
   cbar = fig.colorbar(sc, ax=list(axes), pad=0.02)
   cbar.set_label(xlabel)
-  out = os.path.join(output_dir, 'fig_eta_mdot.png')
-  fig.savefig(out, dpi=150, bbox_inches='tight')
-  plt.close(fig)
-  print(f'Saved {out}')
+  savefig(fig, os.path.join(output_dir, 'fig_eta_mdot.png'), tight=False)
 
 
-def main(argv=None):
-  p = argparse.ArgumentParser(description=__doc__,
-                              formatter_class=argparse.RawDescriptionHelpFormatter)
-  p.add_argument("--sph-dir", action="append", default=[], dest="sph_dirs",
-                  metavar="DIR",
-                  help="AthenaK output-XXXX/sph directory (repeat for each segment); "
-                       "required unless --plot-only.")
-  p.add_argument("--output-dir", required=True,
-                  help="Directory for the .txt outputs and figures.")
-  p.add_argument("--radius", type=float, action="append", default=[], dest="radii",
-                  help="SPH extraction radius [M_sun] (repeat for several). "
-                       f"Default: {', '.join(f'{r:g}' for r in DEFAULT_RADII)}.")
-  p.add_argument("--jobname", default=DEFAULT_JOBNAME,
-                  help=f"AthenaK job name prefixing the VTK files. "
-                      f"Default: {DEFAULT_JOBNAME}.")
-  p.add_argument("--n-workers", type=int, default=None,
-                  help="Worker processes for the snapshot loop. "
-                      "Default: min(8, cpu_count()).")
-  p.add_argument("--plot", action="store_true",
-                  help="Derive φ, η and plot them after the analysis.")
-  p.add_argument("--plot-only", action="store_true",
-                  help="Skip the analysis and plot the existing outputs in --output-dir.")
+def main(argv: list[str] | None = None) -> None:
+  """
+  Command-line entry point of the MAD analysis.
+
+  Parameters:
+  argv (list[str]): Command-line arguments (default: sys.argv).
+
+  Returns:
+  None.
+  """
+  p = sphere_parser(__doc__, radii=DEFAULT_RADII, plot=True)
   p.add_argument("--horizon-file", default=None,
                   help="AthenaK horizon summary (<job>.horizon_summary_0.txt) giving "
                        "M_BH(t) for r_g.")
   p.add_argument("--m-bh", type=float, default=None,
                   help="Fixed black hole mass [M_sun] instead of --horizon-file.")
   p.add_argument("--lnu-file", default=None,
-                  help="Lnu_E_total.txt of kplot-sphere-neutrinos; without it η is "
+                  help="Lnu_E_total.txt of kplot-sphere-neutrinos; without it eta is "
                        "skipped.")
   p.add_argument("--lnu-radius", type=float, default=None,
                   help="Extraction radius [M_sun] of --lnu-file.")
-  p.add_argument("--t-merger", type=float, default=None,
-                  help="Merger time [M_sun]; the plot then uses t - t_merger. "
-                       "Default: absolute time.")
   p.add_argument("--t-min", type=float, default=None,
                   help="First time [M_sun] used in the plot step. Default: --t-merger.")
   p.add_argument("--t-avg", type=float, default=DEFAULT_T_AVG_MS,
                   help=f"Averaging window [ms] for Mdot, Phi and L_nu. "
                        f"Default: {DEFAULT_T_AVG_MS:g}.")
   args = p.parse_args(argv)
+  require_sph(p, args)
   radii = args.radii or list(DEFAULT_RADII)
 
   if not args.plot_only:
-    if not args.sph_dirs:
-      p.error("--sph-dir is required unless --plot-only is given")
     analyze(args.sph_dirs, args.output_dir, radii=radii,
             jobname=args.jobname, n_workers=args.n_workers)
   if args.plot or args.plot_only:
