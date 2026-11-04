@@ -176,6 +176,9 @@ _LINEAR_VARS = {'temperature', 's_00', 'nu_energy', 'alpha'}
 MSUN_TO_KM = au.unit_len_cgs / 1.0e5
 MSUN_TO_MS = (au.unit_len_cgs / au.cgs.c) * 1.0e3
 
+# Default density contours.
+_DEFAULT_DENS_CONT = (1e9, 1e10, 1e11, 1e12, 1e13)
+
 # Choose spatial coordinates for the plot.
 def spatial_units(units: str) -> tuple[float, str]:
   """
@@ -577,6 +580,97 @@ def draw_horizons(ax: plt.Axes, horizons: list | None, trackers: list | None, ti
                              edgecolor=edgecolor, facecolor=facecolor,
                              fill=True, zorder=9)
     ax.add_patch(circle)
+
+# ---------------------------------------------------------------------------
+# Contour helpers.
+# ---------------------------------------------------------------------------
+# Resample AMR block data onto a uniform grid.
+def _resample_uniform(data: BinaryData, var: str, extent: tuple,
+                      n: int = 512) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+  """
+  Resample a 2-D slice onto a uniform n x n grid; finer levels overwrite coarser ones.
+
+  Parameters:
+  data (BinaryData): Loaded 2-D slice.
+  var (str): Variable to resample.
+  extent (tuple): (x0, x1, y0, y1) of the grid in code units.
+  n (int): Number of cells per direction.
+
+  Returns:
+  (x cell centers, y cell centers, grid[y, x]); NaN where no block covers the grid.
+  """
+  x0, x1, y0, y1 = extent
+  xc = x0 + (np.arange(n) + 0.5) * (x1 - x0) / n
+  yc = y0 + (np.arange(n) + 0.5) * (y1 - y0) / n
+  grid = np.full((n, n), np.nan)
+  for block, arr in sorted(data.get_block_data(var), key=lambda b: b[0].level):
+    bx0, bx1, by0, by1 = block.get_extent()
+    ny, nx = arr.shape                
+    mi = (xc >= bx0) & (xc < bx1); mj = (yc >= by0) & (yc < by1)
+    if not (mi.any() and mj.any()): continue
+    fi = np.clip((xc[mi] - bx0) / (bx1 - bx0) * nx - 0.5, 0, nx - 1)
+    fj = np.clip((yc[mj] - by0) / (by1 - by0) * ny - 0.5, 0, ny - 1)
+    i0 = np.minimum(fi.astype(int), nx - 2); wi = fi - i0
+    j0 = np.minimum(fj.astype(int), ny - 2); wj = (fj - j0)[:, None]
+    lo = arr[j0][:, i0] * (1 - wi) + arr[j0][:, i0 + 1] * wi
+    hi = arr[j0 + 1][:, i0] * (1 - wi) + arr[j0 + 1][:, i0 + 1] * wi
+    grid[np.ix_(mj, mi)] = lo * (1 - wj) + hi * wj
+  return xc, yc, grid
+
+# Draw density contours.
+def draw_density_contours(ax: plt.Axes, fpath: str | None, levels: tuple | None,
+                          extent: tuple | None, coord_scale: float = 1.0,
+                          color: str = "w", linewidth: float = 0.6) -> None:
+  """
+  Overlay density contours from a primitive-variable slice.
+
+  Parameters:
+  ax (plt.Axes): Axes to draw on.
+  fpath (str): Slice file holding 'dens'; nothing is drawn if None.
+  levels (tuple): Contour levels in code units; nothing is drawn if None.
+  extent (tuple): (x0, x1, y0, y1) of the contoured region in code units
+                  (default: the full slice).
+  coord_scale (float): Factor converting code lengths to the axis units.
+  color (str): Line color.
+  linewidth (float): Line width.
+
+  Returns:
+  None.
+  """
+  if fpath is None or not levels:
+    return
+  try:
+    data = BinaryData(fpath)
+  except FileNotFoundError:
+    return
+  if 'dens' not in data.variable_names:
+    return
+  if extent is None:
+    exts = np.array([b.get_extent()[:4] for b in data.blocks])
+    extent = (exts[:, 0].min(), exts[:, 1].max(), exts[:, 2].min(), exts[:, 3].max())
+
+  xc, yc, rho = _resample_uniform(data, 'dens', extent)
+  with np.errstate(divide='ignore', invalid='ignore'):
+    log_rho = np.ma.masked_invalid(np.log10(rho))
+  log_levels = np.log10(sorted(levels))
+  cs = ax.contour(xc * coord_scale, yc * coord_scale, log_rho, levels=log_levels,
+                  colors=color, linewidths=linewidth, linestyles="solid", zorder=4)
+
+  def fmt(v: float) -> str:
+    """
+    Contour label in g/cm^3.
+
+    Parameters:
+    v (float): log10 of the level in code units.
+
+    Returns:
+    LaTeX label.
+    """
+    mant, exp = f"{10**v * au.CODE2CGS_DENS:.1e}".split("e")
+    mant, exp = float(mant), int(exp)
+    return rf"$10^{{{exp}}}$" if mant == 1.0 else rf"${mant:g}\times10^{{{exp}}}$"
+
+  ax.clabel(cs, fmt=fmt, fontsize=5, inline=True)
 
 # ---------------------------------------------------------------------------
 # Data segment helpers.
@@ -1167,7 +1261,14 @@ def _render_frame_worker_all(kw: dict) -> None:
   time_scale      = kw.get('time_scale', 1.0)
   time_tex        = kw.get('time_tex', r"\mathrm{M}_\odot")
   time_axis       = kw.get('time_axis', "Msun")
+  contour_levels  = kw.get('contour_levels', None)
+  dens_xy_fpath   = kw.get('dens_xy_fpath', None)
+  dens_xz_fpath   = kw.get('dens_xz_fpath', None)
   hlab, vlab      = plane_axis_labels(plane)
+
+  # Contour regions in code units, before the limits are rescaled.
+  ext_xy = (*xlim, *ylim) if xlim is not None and ylim is not None else None
+  ext_xz = (*xlim, *zlim) if xlim is not None and zlim is not None else None
 
   # Convert the (M_sun) plot limits to the displayed spatial units.
   if xlim is not None: xlim = tuple(v * coord_scale for v in xlim)
@@ -1221,6 +1322,10 @@ def _render_frame_worker_all(kw: dict) -> None:
     if xlim is not None: ax_xz.set_xlim(*xlim); ax_xy.set_xlim(*xlim)
     if zlim is not None: ax_xz.set_ylim(*zlim)
     if ylim is not None: ax_xy.set_ylim(*ylim)
+    # After the limits, so the inline labels are placed in the final view.
+    if contour_levels is not None:
+      draw_density_contours(ax_xy, dens_xy_fpath, contour_levels, ext_xy, coord_scale)
+      draw_density_contours(ax_xz, dens_xz_fpath, contour_levels, ext_xz, coord_scale)
     plt.setp(ax_xz.get_xticklabels(), visible=False)
     ax_xz.set_xlabel(""); ax_xz.set_ylabel(rf"$z~[{coord_label}]$")
     top_h, _ = plane_axis_labels(companion)
@@ -1252,6 +1357,8 @@ def _render_frame_worker_all(kw: dict) -> None:
 
     if xlim is not None: ax.set_xlim(*xlim)
     if ylim is not None: ax.set_ylim(*ylim)
+    if contour_levels is not None:
+      draw_density_contours(ax, dens_xy_fpath, contour_levels, ext_xy, coord_scale)
     ax.set_xlabel(rf"${hlab}~[{coord_label}]$")
     ax.set_ylabel(rf"${vlab}~[{coord_label}]$")
     ax.set_title(rf"$t = {base_xy.time * time_scale:.2f}~{time_tex}$")
@@ -1275,7 +1382,8 @@ def render_frames_all(output_dirs: list[str], figpath: str, file_prefix: str | l
                       companion: str = "xz", subdir: str | None = None,
                       coord_scale: float = 1.0, coord_label: str = r"\mathrm{M}_\odot",
                       time_scale: float = 1.0, time_tex: str = r"\mathrm{M}_\odot",
-                      time_axis: str = "Msun") -> None:
+                      time_axis: str = "Msun", contour_levels: tuple | None = None,
+                      dens_prefix: str | None = None) -> None:
   """
   Render one PNG per frame across all segments, in parallel.
 
@@ -1310,6 +1418,9 @@ def render_frames_all(output_dirs: list[str], figpath: str, file_prefix: str | l
   time_scale (float): Factor converting the time to the displayed units.
   time_tex (str): LaTeX label of the time unit.
   time_axis (str): Displayed time unit.
+  contour_levels (tuple): Density contour levels in g/cm^3 (None: no contours).
+  dens_prefix (str): Prefix of the slice files holding 'dens' for the contours
+                     (default: file_prefix).
 
   Returns:
   None.
@@ -1338,6 +1449,21 @@ def render_frames_all(output_dirs: list[str], figpath: str, file_prefix: str | l
       return
     print(f"  Skipping existing, rendering {len(frames)} new frame(s)")
 
+  # Match every frame to the density slices at the same time.
+  dens_fpaths = {}
+  if contour_levels is not None:
+    contour_levels = tuple(np.asarray(contour_levels) / au.CODE2CGS_DENS)
+    dens_prefix = dens_prefix or prefixes[0]
+    frame_time = {p: t for t, p in _collect_frames_by_time(output_dirs, prefixes[0]).items()}
+    dens_xy = _collect_frames_by_time(output_dirs, dens_prefix)
+    dens_comp = {}
+    if comp_prefix is not None and "_xy" in dens_prefix:
+      dens_comp = _collect_frames_by_time(output_dirs,
+                                          dens_prefix.replace("_xy", f"_{companion}"))
+    for gi, xy, _ in frames:
+      t = frame_time.get(xy[0])
+      dens_fpaths[gi] = (dens_xy.get(t), dens_comp.get(t))
+
   zlim = (0, ylim[1]) if ylim is not None else None
   if derived is not None:
     fn, args = derived
@@ -1359,7 +1485,10 @@ def render_frames_all(output_dirs: list[str], figpath: str, file_prefix: str | l
          show_horizon=show_horizon, horizons=horizons,
          derived=derived, plane=plane, companion=companion,
          coord_scale=coord_scale, coord_label=coord_label,
-         time_scale=time_scale, time_tex=time_tex, time_axis=time_axis)
+         time_scale=time_scale, time_tex=time_tex, time_axis=time_axis,
+         contour_levels=contour_levels,
+         dens_xy_fpath=dens_fpaths.get(global_idx, (None, None))[0],
+         dens_xz_fpath=dens_fpaths.get(global_idx, (None, None))[1])
     for global_idx, xy_fpaths, xz_fpaths in frames
   ]
 
@@ -1477,6 +1606,7 @@ class SystemPlotter:
                prim_prefix: str = "mhd_w_bcc", rad_prefix: str = "rad_m1",
                batchtools: bool = True, units: str = 'cgs', time_units: str = "Msun",
                plane: str = "xy", companion: str = "xz", domain: tuple = (-60, 60),
+               plot_contours: bool = False, dens_contours: tuple = _DEFAULT_DENS_CONT,
                show_grid: bool = True, show_trackers: bool = True,
                show_horizon: bool = False, skip_existing: bool = False) -> None:
     """
@@ -1496,6 +1626,8 @@ class SystemPlotter:
     plane (str): Slice plane to render, one of 'xy', 'xz', 'yz'.
     companion (str): Top-panel to render, one of 'xz', 'yz'.
     domain (tuple): Size of the plotting domain in code units.
+    plot_contours (bool): Whether to plot density contours or not.
+    dens_contours (tuple): Density contour levels in g/cm^3 (only used with plot_contours).
     show_grid (bool): Overlay the AMR grid.
     show_trackers (bool): Overlay compact-object tracker markers on 2-D slices.
     show_horizon (bool): Overlay black-hole apparent-horizon circles on 2-D slices.
@@ -1524,6 +1656,8 @@ class SystemPlotter:
     self.show_grid     = show_grid
     self.show_trackers = show_trackers
     self.show_horizon  = show_horizon
+    self.plot_contours = plot_contours
+    self.dens_contours = dens_contours
 
     # Set the spatial/temporal units/scales
     self.coord_scale, self.coord_label             = spatial_units(units)
@@ -1641,7 +1775,9 @@ class SystemPlotter:
                       plane=self.plane, companion=self.companion,
                       coord_scale=self.coord_scale, coord_label=self.coord_label,
                       time_scale=self.time_scale, time_tex=self.time_tex,
-                      time_axis=self.time_axis)
+                      time_axis=self.time_axis,
+                      contour_levels=self.dens_contours if self.plot_contours else None,
+                      dens_prefix=f"{self.jobname}.{self.prim_prefix}_{self.plane}")
 
   # Section renderer.
   def history(self) -> None:
@@ -1986,6 +2122,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
   parser.add_argument("--domain", dest="domain", default=(-60,60),
                       type=lambda s: tuple(float(x) for x in s.strip("()[] ").split(",")),
                       help="Tuple holding the size of the plotting domain in code units.")
+  parser.add_argument("--plot-contours", dest="plot_contours", action="store_true",
+                      help="Plot contours of either density or fraction of disk mass.")
+  parser.add_argument("--dens-contours", dest="dens_contours", nargs="+", type=float, 
+                      default=list(_DEFAULT_DENS_CONT), 
+                      help="Density contour levels in g/cm^3 (used with --plot-contours).")
   parser.add_argument("--skip-existing", dest="skip_existing", action="store_true",
                       help="Skip frames whose output PNG already exists in figpath")
   parser.add_argument("--batchtools", action=argparse.BooleanOptionalAction, default=True,
@@ -2030,6 +2171,8 @@ def main(argv: list[str] | None = None) -> None:
     time_units=args.time_units,
     plane=args.plane,
     companion=args.companion,
+    plot_contours=args.plot_contours,
+    dens_contours=args.dens_contours,
     domain=args.domain,
     show_grid=args.show_grid,
     show_trackers=not args.no_trackers,

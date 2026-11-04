@@ -75,6 +75,8 @@ DOMAIN="$(_cfg_get domain)"
 UNITS="$(_cfg_get units)"
 TIME_UNITS="$(_cfg_get time_units)"
 DELETE_FRAMES="$(_cfg_get delete_frames)"
+PLOT_CONTOURS="$(_cfg_get plot_contours)"
+DENS_CONTOURS="$(_cfg_get dens_contours)"
 
 #module load python py-matplotlib py-numpy py-scipy
 #module load ffmpeg          # provides ffmpeg for make_movies.sh
@@ -96,6 +98,12 @@ ARGS=(--simpath "${SIMPATH}")
 [[ "${SHOW_HORIZON}"  == "true"  ]] && ARGS+=(--show-horizon)
 [[ "${SKIP_EXISTING}" == "true"  ]] && ARGS+=(--skip-existing)
 [[ -n "${DOMAIN:-}" ]] && ARGS+=(--domain "${DOMAIN}")
+[[ "${PLOT_CONTOURS}" == "true"  ]] && ARGS+=(--plot-contours)
+# Levels may be written as "1e10, 1e11" or "(1e10,1e11)"; passed as separate args.
+if [[ -n "${DENS_CONTOURS:-}" ]]; then
+    read -r -a _levels <<< "$(tr -d '()[]' <<< "${DENS_CONTOURS}" | tr ',' ' ')"
+    ARGS+=(--dens-contours "${_levels[@]}")
+fi
 
 # Sections, colorbar limits and colormaps are read from [sections].
 ARGS+=(--config "${CONFIG_FILE}")
