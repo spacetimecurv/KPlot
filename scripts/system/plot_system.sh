@@ -69,6 +69,9 @@ PLANE="$(_cfg_get plane)"
 COMPANION="$(_cfg_get companion)"
 SHOW_GRID="$(_cfg_get show_grid)"
 SHOW_TRACKERS="$(_cfg_get show_trackers)"
+SHOW_PATH="$(_cfg_get show_path)"
+PATH_LENGTH="$(_cfg_get path_length)"
+PATH_FADE="$(_cfg_get path_fade)"
 SHOW_HORIZON="$(_cfg_get show_horizon)"
 SKIP_EXISTING="$(_cfg_get skip_existing)"
 DOMAIN="$(_cfg_get domain)"
@@ -95,6 +98,9 @@ ARGS=(--simpath "${SIMPATH}")
 [[ "${BATCHTOOLS}"    == "false" ]] && ARGS+=(--no-batchtools)
 [[ "${SHOW_GRID}" == "true" ]] && ARGS+=(--show-grid)
 [[ "${SHOW_TRACKERS}" == "false" ]] && ARGS+=(--no-trackers)
+[[ "${SHOW_PATH}"     == "true"  ]] && ARGS+=(--show-path)
+[[ -n "${PATH_LENGTH:-}" ]] && ARGS+=(--path-length "${PATH_LENGTH}")
+[[ "${PATH_FADE}"     == "false" ]] && ARGS+=(--no-path-fade)
 [[ "${SHOW_HORIZON}"  == "true"  ]] && ARGS+=(--show-horizon)
 [[ "${SKIP_EXISTING}" == "true"  ]] && ARGS+=(--skip-existing)
 [[ -n "${DOMAIN:-}" ]] && ARGS+=(--domain "${DOMAIN}")

@@ -35,8 +35,9 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
-from matplotlib.colors import LogNorm, Normalize
+from matplotlib.colors import LogNorm, Normalize, to_rgba
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.collections import LineCollection
 
 # Import athplot utilities from plot-tools.
 from athplot.load_ath_bin import BinaryData
@@ -164,6 +165,15 @@ _LABELS = {
   ('con_H',     'code'): r"$|\mathcal{H}|$",
   ('con_H',     'ngs' ): r"$|\mathcal{H}|$",
   ('con_H',     'cgs' ): r"$|\mathcal{H}|$",
+  ('con_M',     'code'): r"$|\mathcal{M}|$",
+  ('con_M',     'ngs' ): r"$|\mathcal{M}|$",
+  ('con_M',     'cgs' ): r"$|\mathcal{M}|$",
+  ('con_C',     'code'): r"$|\mathcal{C}|$",
+  ('con_C',     'ngs' ): r"$|\mathcal{C}|$",
+  ('con_C',     'cgs' ): r"$|\mathcal{C}|$",
+  ('con_Z',     'code'): r"$|\mathcal{Z}|$",
+  ('con_Z',     'ngs' ): r"$|\mathcal{Z}|$",
+  ('con_Z',     'cgs' ): r"$|\mathcal{Z}|$",
   ('alpha',     'code'): r"$\alpha$",
   ('alpha',     'ngs' ): r"$\alpha$",
   ('alpha',     'cgs' ): r"$\alpha$",
@@ -311,8 +321,9 @@ SECTIONS = [
   "history", "rho_max", "trackers", "run_speed",
   "density", "temperature", "s00",
   "rad_E", "rad_N", "rad_N2", "rad_abs", "rad_abs0",
-  "rad_eta0", "rad_eta1", "conH", "alpha",
+  "rad_eta0", "rad_eta1", "alpha",
   "s00_avg", "avg_energy",
+  "conH", "conM", "conC", "conZ",
   "nu_energy", "nu_energy1", "nu_energy2",
 ]
 
@@ -519,8 +530,11 @@ def load_horizons_all(output_dirs: list[str],
 
 # Overlay the tracker positions.
 def draw_trackers(ax: plt.Axes, trackers: list, time: float, plane: str = "xy",
-                  colors: tuple = ("cyan", "orange"), marker: str = "x",
-                  markersize: float = 80, coord_scale: float = 1.0) -> None:
+                  colors: tuple = ("white", "white"), marker: str = "x",
+                  markersize: float = 20, coord_scale: float = 1.0,
+                  show_path: bool = False, path_length: float | None = None,
+                  path_fade: bool = True, path_lw: float = 2.0,
+                  path_alpha: float = 0.9, path_nseg: int = 50) -> None:
   """
   Overlay compact-object positions on ax at the given simulation time.
 
@@ -533,6 +547,12 @@ def draw_trackers(ax: plt.Axes, trackers: list, time: float, plane: str = "xy",
   marker (str): Marker style.
   markersize (float): Marker size.
   coord_scale (float): Factor converting code lengths to the axis units.
+  show_path (bool): Also draw the trajectory ip to the current time.
+  path_length(float): Length of the drawn trail in code time (None = full history).
+  path_fade (bool): Fade the trail from transparent (oldest) to opaque (current).
+  path_lw (float): Trail line width.
+  path_alpha (float): Trail opacity at the current position.
+  path_nseg (int): Maximum number of segments of the faded trail.
 
   Returns:
   None.
@@ -543,6 +563,27 @@ def draw_trackers(ax: plt.Axes, trackers: list, time: float, plane: str = "xy",
       continue
     idx = np.argmin(np.abs(tracker.time - time))
     h, v = _tracker_plane_coords(tracker, plane)
+    if show_path:
+      t_start = tracker.time[0] if path_length is None else time - path_length
+      lo = 0 if path_length is None else np.searchsorted(tracker.time, time - path_length)
+      if idx - lo >= 1:
+        pts = np.column_stack([h[lo:idx + 1], v[lo:idx + 1]]) * coord_scale
+        if path_fade:
+          sel = np.unique(np.linspace(0, idx - lo, min(path_nseg, idx - lo) + 1).round().astype(int))
+          pts = pts[sel]
+          t_pts = tracker.time[lo:idx + 1][sel]
+          segs = np.stack([pts[:-1], pts[1:]], axis=1)
+          t_seg = 0.5 * (t_pts[:-1] + t_pts[1:])
+          t0, t1 = t_pts[0], t_pts[-1]
+          frac = (t_seg - t0) / (t1 - t0) if t1 > t0 else np.ones_like(t_seg)
+          rgba = np.tile(to_rgba(color), (len(segs), 1))
+          rgba[:, 3] = path_alpha * np.clip(frac, 0.0, 1.0)
+          ax.add_collection(LineCollection(segs, colors=rgba, linewidths=path_lw,
+                                           capstyle="butt", zorder=9.5))
+        else:
+          ax.plot(pts[:, 0], pts[:, 1], color=color, lw=path_lw,
+                  alpha=path_alpha, zorder=9.5)
+          
     ax.scatter(h[idx] * coord_scale, v[idx] * coord_scale,
                marker=marker, c=color, s=markersize,
                linewidths=1.5, zorder=10, label=label)
@@ -1251,6 +1292,9 @@ def _render_frame_worker_all(kw: dict) -> None:
   show_refinement = kw['show_refinement']
   show_trackers   = kw['show_trackers']
   trackers        = kw['trackers']
+  show_path       = kw.get('show_path', False)
+  path_length     = kw.get('path_length', None)
+  path_fade       = kw.get('path_fade', True)
   show_horizon    = kw.get('show_horizon', False)
   horizons        = kw.get('horizons', None)
   derived         = kw.get('derived', None)
@@ -1313,8 +1357,10 @@ def _render_frame_worker_all(kw: dict) -> None:
       draw_refinement_grid(ax_xz, _frame_base(data_xz), coord_scale=coord_scale)
       draw_refinement_grid(ax_xy, base_xy, coord_scale=coord_scale)
     if show_trackers and trackers is not None:
-      draw_trackers(ax_xy, trackers, base_xy.time, plane="xy", coord_scale=coord_scale)
-      draw_trackers(ax_xz, trackers, base_xy.time, plane=companion, coord_scale=coord_scale)
+      draw_trackers(ax_xy, trackers, base_xy.time, plane="xy", coord_scale=coord_scale,
+                    show_path=show_path, path_length=path_length, path_fade=path_fade)
+      draw_trackers(ax_xz, trackers, base_xy.time, plane=companion, coord_scale=coord_scale,
+                    show_path=show_path, path_length=path_length, path_fade=path_fade)
     if show_horizon:
       draw_horizons(ax_xy, horizons, trackers, base_xy.time, plane="xy", coord_scale=coord_scale)
       draw_horizons(ax_xz, horizons, trackers, base_xy.time, plane=companion, coord_scale=coord_scale)
@@ -1351,7 +1397,8 @@ def _render_frame_worker_all(kw: dict) -> None:
     if show_refinement:
       draw_refinement_grid(ax, base_xy, coord_scale=coord_scale)
     if show_trackers and trackers is not None:
-      draw_trackers(ax, trackers, base_xy.time, plane=plane, coord_scale=coord_scale)
+      draw_trackers(ax, trackers, base_xy.time, plane=plane, coord_scale=coord_scale,
+                    show_path=show_path, path_length=path_length, path_fade=path_fade)
     if show_horizon:
       draw_horizons(ax, horizons, trackers, base_xy.time, plane=plane, coord_scale=coord_scale)
 
@@ -1383,7 +1430,9 @@ def render_frames_all(output_dirs: list[str], figpath: str, file_prefix: str | l
                       coord_scale: float = 1.0, coord_label: str = r"\mathrm{M}_\odot",
                       time_scale: float = 1.0, time_tex: str = r"\mathrm{M}_\odot",
                       time_axis: str = "Msun", contour_levels: tuple | None = None,
-                      dens_prefix: str | None = None) -> None:
+                      dens_prefix: str | None = None,
+                      show_path: bool = False, path_length: float | None = None,
+                      path_fade: bool = True) -> None:
   """
   Render one PNG per frame across all segments, in parallel.
 
@@ -1421,6 +1470,9 @@ def render_frames_all(output_dirs: list[str], figpath: str, file_prefix: str | l
   contour_levels (tuple): Density contour levels in g/cm^3 (None: no contours).
   dens_prefix (str): Prefix of the slice files holding 'dens' for the contours
                      (default: file_prefix).
+  show_path (bool): Also draw the trajectory ip to the current time.
+  path_length(float): Length of the drawn trail in code time (None = full history).
+  path_fade (bool): Fade the trail from transparent (oldest) to opaque (current).
 
   Returns:
   None.
@@ -1488,7 +1540,8 @@ def render_frames_all(output_dirs: list[str], figpath: str, file_prefix: str | l
          time_scale=time_scale, time_tex=time_tex, time_axis=time_axis,
          contour_levels=contour_levels,
          dens_xy_fpath=dens_fpaths.get(global_idx, (None, None))[0],
-         dens_xz_fpath=dens_fpaths.get(global_idx, (None, None))[1])
+         dens_xz_fpath=dens_fpaths.get(global_idx, (None, None))[1],
+         show_path=show_path, path_length=path_length, path_fade=path_fade)
     for global_idx, xy_fpaths, xz_fpaths in frames
   ]
 
@@ -1608,7 +1661,9 @@ class SystemPlotter:
                plane: str = "xy", companion: str = "xz", domain: tuple = (-60, 60),
                plot_contours: bool = False, dens_contours: tuple = _DEFAULT_DENS_CONT,
                show_grid: bool = True, show_trackers: bool = True,
-               show_horizon: bool = False, skip_existing: bool = False) -> None:
+               show_horizon: bool = False, skip_existing: bool = False,
+               show_path: bool = False, path_length: float | None = None,
+               path_fade: bool = True) -> None:
     """
     Initialize the SystemPlotter.
 
@@ -1632,6 +1687,9 @@ class SystemPlotter:
     show_trackers (bool): Overlay compact-object tracker markers on 2-D slices.
     show_horizon (bool): Overlay black-hole apparent-horizon circles on 2-D slices.
     skip_existing (bool): Skip frames whose output PNG already exists.
+    show_path (bool): Also draw the trajectory ip to the current time.
+    path_length(float): Length of the drawn trail in code time (None = full history).
+    path_fade (bool): Fade the trail from transparent (oldest) to opaque (current).
     """
     # Check if plane and time units fit the supported formats.
     if plane not in PLANES:
@@ -1669,6 +1727,9 @@ class SystemPlotter:
     self._horizons     = None
     self.overrides     = {}
     self.section       = None
+    self.show_path     = show_path
+    self.path_length   = path_length
+    self.path_fade     = path_fade
 
   # Frame output name.
   def frame_out(self, name: str) -> str:
@@ -1777,7 +1838,9 @@ class SystemPlotter:
                       time_scale=self.time_scale, time_tex=self.time_tex,
                       time_axis=self.time_axis,
                       contour_levels=self.dens_contours if self.plot_contours else None,
-                      dens_prefix=f"{self.jobname}.{self.prim_prefix}_{self.plane}")
+                      dens_prefix=f"{self.jobname}.{self.prim_prefix}_{self.plane}",
+                      show_path=self.show_path, path_length=self.path_length,
+                      path_fade=self.path_fade)
 
   # Section renderer.
   def history(self) -> None:
@@ -1939,6 +2002,39 @@ class SystemPlotter:
     self.render_field(f"{self.jobname}.con_{self.plane}", "derived:abs_con_H",
                        "con_H", var_key="con_H", derived=(np.abs, ["con_H"]))
 
+  def conM(self) -> None:
+    """
+    Render the momentum constraint |con_M| frames.
+
+    Returns:
+    None.
+    """
+    print("[z4c] Rendering con_M (momentum constraint) frames...")
+    self.render_field(f"{self.jobname}.con_{self.plane}", "derived:abs_con_M",
+                        "con_M", var_key="con_M", derived=(np.abs, ["con_M"]))
+
+  def conC(self) -> None:
+    """
+    Render the constraint |con_C| frames.
+
+    Returns:
+    None.
+    """
+    print("[z4c] Rendering con_C (constraint) frames...")
+    self.render_field(f"{self.jobname}.con_{self.plane}", "derived:abs_con_C",
+                        "con_C", var_key="con_C", derived=(np.abs, ["con_C"]))
+
+  def conZ(self) -> None:
+    """
+    Render the constraint |con_Z| frames.
+
+    Returns:
+    None.
+    """
+    print("[z4c] Rendering con_Z (constraint) frames...")
+    self.render_field(f"{self.jobname}.con_{self.plane}", "derived:abs_con_Z",
+                        "con_Z", var_key="con_Z", derived=(np.abs, ["con_Z"]))
+
   def alpha(self) -> None:
     """
     Render the lapse frames.
@@ -2015,6 +2111,9 @@ class SystemPlotter:
       "rad_eta0":    self.rad_eta0,
       "rad_eta1":    self.rad_eta1,
       "conH":        self.conH,
+      "conM":        self.conM,
+      "conC":        self.conC,
+      "conZ":        self.conZ,
       "alpha":       self.alpha,
       "s00_avg":     self.s00_avg,
       "avg_energy":  self.avg_energy,
@@ -2062,6 +2161,7 @@ class SystemPlotter:
       print(f"  {d}")
     print(f"Sections : {', '.join(sorted(sections))}")
     print(f"Trackers : {'on' if self.show_trackers else 'off'}")
+    print(f"Path     : {'off' if not self.show_path else (self.path_length or 'full')}")
     print(f"Horizon  : {'on' if self.show_horizon else 'off'}")
     print(f"Domain   : {self.domain}")
     print(f"Units    : {self.units}  (spatial axes in "
@@ -2115,6 +2215,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                       help="Time display units for titles/axes: Msun [default] or ms")
   parser.add_argument("--no-trackers", dest="no_trackers", action="store_true",
                       help="Disable tracker overlays on all 2-D slice plots")
+  parser.add_argument("--show-path", dest="show_path", action="store_true",
+                      help="Draw the compact-object trajectories up to the current time")
+  parser.add_argument("--path-length", dest="path_length", type=float, default=None,
+                      help="Trail length in code time (default: full history)")
+  parser.add_argument("--no-path-fade", dest="no_path_fade", action="store_true",
+                      help="Draw the trajectory with constant opacity instead of fading")
   parser.add_argument("--show-grid", dest="show_grid", action="store_true",
                       help="Overlay AMR grid")
   parser.add_argument("--show-horizon", dest="show_horizon", action="store_true",
@@ -2178,6 +2284,9 @@ def main(argv: list[str] | None = None) -> None:
     show_trackers=not args.no_trackers,
     show_horizon=args.show_horizon,
     skip_existing=args.skip_existing,
+    show_path=args.show_path,
+    path_length=args.path_length,
+    path_fade=not args.no_path_fade
   )
   sections = args.sections or load_sections(args.config) or ["all"]
   plotter.run(sections)
