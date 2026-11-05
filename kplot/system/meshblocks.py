@@ -140,7 +140,7 @@ class MeshBlock:
       if n:
         print(f"    level {L:2d} ({dx_m/2**L:7.0f} m): {n}")
 
-    if ("nodes", "gpus-per-node") in kwargs:
+    if all(k in kwargs for k in ("nodes", "gpus-per-node")):
       nr = kwargs["nodes"] * kwargs["gpus-per-node"]
       lim = pf.get('mesh_refinement', 'max_nmb_per_rank', 0, int)
       print(f"\n{nr} ranks -> {len(leaves)/nr:.1f} blocks/rank"
