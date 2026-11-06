@@ -24,12 +24,20 @@ def read_checkpoint(rst_path: str) -> tuple[float, float, int]:
   Returns:
   (time, dt, cycle) of the checkpoint.
   """
+  # Scan in chunks until '<par_end>'.
+  chunk, max_head = 1 << 20, 64 << 20
   with open(rst_path, "rb") as f:
-    head = f.read(65536)
-    loc = head.find(b"<par_end>")
-    if loc < 0:
-      raise ValueError("no '<par_end>' marker found")
-    f.seek(head.find(b"\n", loc) + 1 + TIME_OFFSET)
+    head = b""
+    while True:
+      loc = head.find(b"<par_end>")
+      eol = head.find(b"\n", loc) if loc >= 0 else -1
+      if eol >= 0:
+        break
+      data = f.read(chunk)
+      if not data or len(head) >= max_head:
+        raise ValueError("no '<par_end>' marker found")
+      head += data
+    f.seek(eol + 1 + TIME_OFFSET)
     time, dt, cycle = struct.unpack("<ddi", f.read(20))
   return time, dt, cycle
 
