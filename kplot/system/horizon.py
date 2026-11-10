@@ -109,6 +109,32 @@ class HorizonFinder:
       f.seek(self._shape_locs[1][i])
       return np.array(f.readline().split(), dtype=float)
 
+  def draw_horizon(self, ax: plt.Axes, plane: str, time: float, scale: float = 1.0) -> None:
+    """
+    Draw the horizon shape on an axis object.
+
+    Parameters:
+    ax (plt.Axes): axis to draw on.
+    plane   (str): which plane to draw.
+    time  (float): time of the slice.
+    scale (float): scale of the horizon.
+
+    Returns: None.
+    """
+    # Angle around BH and unit vectors (identity matrix and 
+    # the row comes from the first/second letter of the specified 
+    # plane). 
+    psi = np.linspace(0.0, 2.0 * np.pi, 361)
+    e1, e2 = np.eye(3)['xyz'.index(plane[0])], np.eye(3)['xyz'.index(plane[1])]
+    
+    # 3D unit direction and the radius along each direction.
+    d = np.outer(np.cos(psi), e1) + np.outer(np.sin(psi), e2)
+    r = HorizonFinder.shape_radius(self.shape_coeffs(time), np.arccos(d[:,2]),
+                                  np.arctan2(d[:,1], d[:,0]))
+
+    # Draw.
+    ax.fill(scale * r * np.cos(psi), scale * r * np.sin(psi), color="black")
+
   @staticmethod
   def shape_radius(coeffs: np.ndarray, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
     """
