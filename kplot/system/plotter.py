@@ -510,12 +510,16 @@ def load_horizons_all(output_dirs: list[str],
       fpath = os.path.join(d, f"{jobname}.horizon_summary_{k}.txt")
       if os.path.exists(fpath):
         try:
+          with open(fpath) as f:
+            headers = re.findall(r"\d+:(\S+)", f.readline())
+          t_col = headers.index("time") if "time" in headers else 1
+          r_col = headers.index("meanradius") if "meanradius" in headers else -1
           arr = np.loadtxt(fpath, comments="#")
           if arr.ndim == 1:
             arr = arr.reshape(1, -1)
           if arr.size > 0:
-            times_list.append(arr[:, 1])
-            r_list.append(arr[:, -1])
+            times_list.append(arr[:, t_col])
+            r_list.append(arr[:, r_col])
         except Exception as e:
           print(f"  Warning: could not load {fpath}: {e}")
 

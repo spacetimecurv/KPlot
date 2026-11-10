@@ -165,6 +165,26 @@ def slice_cells(geom: np.ndarray, nx: tuple[int, int, int], sel: np.ndarray,
   return np.where((out >= 0) & (sel[pos] == out), pos, -1)
 
 
+def bin_time(path: str) -> float:
+  """
+  Time of a 3D dump, read from the header.
+
+  Parameters:
+  path (str): path to the .bin file.
+
+  Returns:
+  Simulation time of the dump.
+  """
+  with open(path, "rb") as fp:
+    fp.readline()
+    n = int(fp.readline().split(b"=")[-1])
+    for _ in range(n - 1):
+      key, val = fp.readline().decode("utf-8").split("=")
+      if key.strip() == "time":
+        return float(val)
+  raise ValueError(f"No time in the header of {path}!")
+
+
 # ======================================================================
 # Helper functions for tracker/horizon files.
 # ======================================================================

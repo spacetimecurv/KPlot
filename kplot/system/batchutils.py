@@ -112,7 +112,7 @@ class BatchMerger:
 
 
   def merge_auto(self, history: bool = True, horizon: bool = True, tracker: bool = True,
-                 waveforms: bool = True, strip_header: bool = True, output_dir: str = ".",
+                 waveforms: bool = True, shape: bool = True, output_dir: str = ".",
                  input_dir: str = ".") -> None:
     """
     Automatic merger function that detects history files etc. and
@@ -123,7 +123,7 @@ class BatchMerger:
     horizon       (bool): Whether to merge .horizon_summary_* files.
     tracker       (bool): Whether to merge .co_*.txt tracker files.
     waveforms     (bool): Whether to merge waveform files.
-    strip_header  (bool): Whether to keep only first header.
+    shape         (bool): Whether to merge horizon shape files.
     output_dir     (str): Where to write merged output.
     input_dir      (str): Where to read input files.
 
@@ -135,21 +135,21 @@ class BatchMerger:
     folders = sorted(input_dir.glob(self.base_pattern)) if self.batchtools else [input_dir]
 
     # Patterns (CHANGE these if the code changes convention).
-    history_pattern  = "*.hst"
-    horizon_pattern  = "*.horizon_summary*"
-    tracker_pattern  = "*.co_*.txt"
-    waveform_pattern = "waveforms/rpsi4_*_*.txt"
-    patterns = [p for p, use in zip((history_pattern, horizon_pattern, tracker_pattern, waveform_pattern),
-                                    (history, horizon, tracker, waveforms)) if use]
+    # (Pattern, use, strip_header).
+    patterns = [("*.hst",                   history,   True),
+                ("*.horizon_summary*",      horizon,   True),
+                ("*.co_*.txt",              tracker,   True),
+                ("waveforms/rpsi4_*_*.txt", waveforms, True),
+                ("*.horizon_shape_*.txt",   shape,     False)]
 
     # Collect the unique file paths (relative to each segment) over all segments.
-    names = sorted({f.relative_to(folder).as_posix() for folder in folders
-                                                     for p in patterns
-                                                     for f in folder.glob(p) if f.is_file()})
+    names = {f.relative_to(folder).as_posix(): strip  for folder in folders
+                                                      for p, use, strip in patterns if use
+                                                      for f in folder.glob(p) if f.is_file()}
 
     # Merge each file across all segments.
-    for name in names:
-      self.merge(file_glob=name, output_file=name, strip_header=strip_header,
+    for name, strip in sorted(names.items()):
+      self.merge(file_glob=name, output_file=name, strip_header=strip,
                  output_dir=output_dir, input_dir=input_dir)
 
 
@@ -170,10 +170,12 @@ class BatchOverlap:
   snapshot_regex = re.compile(r"^(?P<stem>.+)\.(?P<index>\d+)\.(?P<ext>bin|vtk)$")
   # Header patterns of the time column, "[1]=time" (hst) or "2:time" (txt).
   time_regex = re.compile(r"\[?(\d+)\]?[=:]time\b")
+  # Entry time in comment lines, "# iter = 3, Time = 1600" (horizon shape).
+  entry_time_regex = re.compile(r"Time\s*=\s*([-+0-9.eE]+)")
 
   def __init__(self, simpath: str = ".", base_pattern: str = "output-*",
                overlap_dir: str = "overlap", snapshot_dirs: tuple = ("bin", "sph"),
-               text_patterns: tuple = ("*.hst", "*.txt"), tol: float = 1e-8) -> None:
+               text_patterns: tuple = ("*.hst", "*.txt", "waveforms/*.txt"), tol: float = 1e-8) -> None:
     """
     Initialize the BatchOverlap with the path to the simulation.
 
@@ -182,7 +184,7 @@ class BatchOverlap:
     base_pattern    (str): The pattern to match the batch folders.
     overlap_dir     (str): Folder (relative to simpath) receiving stale data.
     snapshot_dirs (tuple): Snapshot subfolders compared by index.
-    text_patterns (tuple): Text files compared by time.
+    text_patterns (tuple): Text files compared by time (globs relative to each segment).
     tol           (float): Tolerance of the time comparison.
     """
     self.simpath = Path(simpath)
@@ -222,6 +224,33 @@ class BatchOverlap:
     return stale
 
 
+  def line_times(self, lines: list[str], col: int | None) -> list[float | None]:
+    """
+    Time of every line: from the time column, or, without one, from the
+    preceding "Time =" comment.
+
+    Parameters:
+    lines (list[str]): Lines of a text file.
+    col  (int | None): Index of the time column.
+
+    Returns:
+    List of times (None for lines without a time).
+    """
+    times, entry = [], None
+    for line in lines:
+      if col is None:
+        m = self.entry_time_regex.search(line) if line.startswith("#") else None
+        entry = float(m.group(1)) if m else entry
+        times.append(entry)
+        continue
+      try:
+        times.append(float(line.split()[col]))
+      except (IndexError, ValueError):
+        times.append(None)
+
+    return times
+
+
   def time_column(self, header: list[str]) -> int | None:
     """
     Find the time column given in the header.
@@ -247,7 +276,7 @@ class BatchOverlap:
     Returns:
     {(segment, name): (kept lines, stale lines)} for every affected text file.
     """
-    names = sorted({f.name for segment in self.segments
+    names = sorted({f.relative_to(segment).as_posix() for segment in self.segments
                            for p in self.text_patterns
                            for f in segment.glob(p) if f.is_file()})
     stale = {}
@@ -259,14 +288,13 @@ class BatchOverlap:
           continue
         lines = path.read_text().splitlines(keepends=True)
         col = self.time_column(split_header(lines)[0])
-        if col is None:
+        times = self.line_times(lines, col)
+        if all(t is None for t in times):
           continue
 
         kept, removed, first = [], [], None
-        for line in lines:
-          try:
-            t = float(line.split()[col])
-          except (IndexError, ValueError):
+        for line, t in zip(lines, times):
+          if t is None:
             kept.append(line)
             continue
           first = t if first is None else min(first, t)
