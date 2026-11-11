@@ -88,6 +88,8 @@ The written scalars are:
   BR2_Bphi2, Bpol2_Btor2, Bz2_BR2 - volume-averaged field energy ratios (HGK 2011: BR2_Bphi2 ~ 0.2
                                     for well-resolved MRI turbulence)
   alpha_mag - Maxwell stress over magnetic pressure, -2 <B_R B_phi> / <B^2> (HGK 2011: ~ 0.3-0.4)
+  alpha_<ij>, alphaM_<ij> - <|(rho h uh_i uh_j - b_i b_j)/P|>_M and <|b_i b_j/P|>_M for ij = Rphi,
+                            xy, xz, yz and rho >= 1e7 g/cm^3 (Hayashi et al. 2023, Eqs. 13-14)
   B_rms_G - RMS magnetic field strength (in Gauss)
   B_max_G - max magnetic field strength (in Gauss)
   B_max_tor_G, B_max_pol_G - max toroidal (B_phi) and poloidal (B_R, B_z) field strength (in Gauss)
@@ -115,6 +117,7 @@ from kplot.utils.bin3d import (block_cell_geometry, find_snapshots, load_horizon
                                par, parse_par_dump, slice_cells, snapshot_tag, tracker_center)
 from kplot.utils.constants import LENGTH_CM, MSUN_TO_S
 from kplot.utils.eos import EOSTable
+from kplot.utils.memory import peak_rss_gb, reset_peak_rss
 from kplot.utils.parallel import default_workers, pool_map
 
 # The disk analysis script needs the following 3D output.
@@ -162,9 +165,10 @@ def _process_snapshot_disk(args: tuple) -> None:
   (mhd_file, adm_file, alpha_file, betax_file, betay_file, betaz_file,
   rho_cut, rho_keep, rho_remnant, bound_criterion, r_exclude, center,
   r_disk_max, nbins, rmax, slice_extent, slice_npts,
-  parker_dir, parker_eps, parker_rmax, parker_smooth, vprof_R, outdir) = args
+  parker_dir, parker_eps, parker_rmax, parker_smooth, vprof_R, outdir, print_memory) = args
 
   snapshot = snapshot_tag(mhd_file)
+  if print_memory: reset_peak_rss()
 
   # ======================================================================
   # MHD
@@ -307,6 +311,7 @@ def _process_snapshot_disk(args: tuple) -> None:
   # Spatial components of u_\mu.
   ux_d = gxx * velx + gxy * vely + gxz * velz
   uy_d = gxy * velx + gyy * vely + gyz * velz
+  uz_d = gxz * velx + gyz * vely + gzz * velz
 
   # u^i.
   ut_u = W / alpha
@@ -445,7 +450,7 @@ def _process_snapshot_disk(args: tuple) -> None:
   with np.errstate(divide="ignore", invalid="ignore"):
     omega = ((xg * vcy - yg * vcx) / Rsafe**2).astype(np.float32)
     v_rad = ((xg * vcx + yg * vcy) / Rsafe).astype(np.float32)
-  del vcy, ux_d, uy_d, bx_d, by_d, u_phi, Rsafe # Free up memory.
+  del vcy, u_phi, Rsafe # Free up memory.
 
   # ======================================================================
   # MASKS
@@ -467,6 +472,54 @@ def _process_snapshot_disk(args: tuple) -> None:
   disk = dense & not_remnant & outside_bh & ~unbound
   if r_disk_max is not None:
     disk &= Rcyl < r_disk_max
+
+  # ======================================================================
+  # ANISOTROPIC STRESS
+  # ======================================================================
+  # Hayashi et al. (2023, arXiv:2211.07158), Eqs. (13)-(14), with uh_i = u_i minus its
+  # azimuthal mean in (R, z/R) bins instead of the local time average.
+  with np.errstate(divide="ignore", invalid="ignore"):
+    Rinv = 1.0 / np.maximum(Rcyl, 1e-30)
+    uR_d = (xg * ux_d + yg * uy_d) * Rinv
+    uP_d = (-yg * ux_d + xg * uy_d) * Rinv
+    bR_d = (xg * bx_d + yg * by_d) * Rinv
+    bP_d = (-yg * bx_d + xg * by_d) * Rinv
+
+  a_edges = np.geomspace(max(r_exclude, 1.0), rmax, nbins + 1)
+  a_iR    = np.clip(np.digitize(Rcyl, a_edges) - 1, 0, nbins - 1)
+  a_iz    = np.clip(((zg * Rinv + 1.0) * 0.5 * ANISO_NZ).astype(np.int64), 0, ANISO_NZ - 1)
+  a_bin   = a_iR * ANISO_NZ + a_iz
+  a_w     = np.where(disk, dM, 0.0)
+  def phi_mean(q: np.ndarray) -> np.ndarray:
+    """
+    Mass-weighted azimuthal mean of q in its (R, z/R) bin, on the kept cells.
+
+    Parameters:
+    q (np.ndarray): Field on the kept cells.
+
+    Returns:
+    The bin mean at each cell (0 for empty bins).
+    """
+    return np.nan_to_num(binned_wmean(a_bin, q, a_w, nbins * ANISO_NZ))[a_bin]
+
+  duR = uR_d - phi_mean(uR_d)
+  duP = uP_d - phi_mean(uP_d)
+  duz = uz_d - phi_mean(uz_d)
+  dux = (xg * duR - yg * duP) * Rinv
+  duy = (yg * duR + xg * duP) * Rinv
+  del a_edges, a_iR, a_iz, a_bin, a_w, uR_d, uP_d, ux_d, uy_d, uz_d, Rinv # Free up memory.
+
+  rhoh  = rho * h
+  Pinv  = 1.0 / np.maximum(press, 1e-30)
+  comps = {"Rphi": (duR, duP, bR_d, bP_d), "xy": (dux, duy, bx_d, by_d),
+           "xz": (dux, duz, bx_d, bz_d), "yz": (duy, duz, by_d, bz_d)}
+  aniso = {}
+  for c, (ui, uj, bi, bj) in comps.items():
+    aniso[f"alpha_{c}"]  = np.abs((rhoh * ui * uj - bi * bj) * Pinv).astype(np.float32)
+    aniso[f"alphaM_{c}"] = np.abs(bi * bj * Pinv).astype(np.float32)
+  aniso_ok = rho >= ANISO_RHO_MIN / RHO_UNIT
+  del comps, ui, uj, bi, bj, rhoh, Pinv, duR, duP, duz, dux, duy, \
+      bR_d, bP_d, bx_d, by_d # Free up memory.
 
   # ======================================================================
   # PARKER INSTABILITY
@@ -769,6 +822,9 @@ def _process_snapshot_disk(args: tuple) -> None:
         "dz_min_m"    : dz_min * L_UNIT * 1.0e-2,
         "f_M_finest"  : float(w[dz[mask] <= 1.01 * dz_min].sum()) / M,
       })
+
+      a_mk = mask & aniso_ok
+      out.update({k: wmean(v[a_mk], dM[a_mk]) for k, v in aniso.items()})
     return out
 
   res_disk        = integrate(disk)
@@ -949,6 +1005,11 @@ def _process_snapshot_disk(args: tuple) -> None:
     B_prof["P_orb_ms"]  = 2.0 * np.pi / np.abs(wprof(omega)) * T_UNIT * 1.0e3
   del wBm_p, dz_p50 # Free up memory.
 
+  a_sel  = aniso_ok[disk][valid]
+  A_prof = {k: binned_wmean(idx[a_sel], v[disk][valid][a_sel], wd[a_sel], nbins)
+            for k, v in aniso.items()}
+  del a_sel, aniso, aniso_ok # Free up memory.
+
   prof.update({
     "n_cells": counts,
     "M_shell_MSUN_CGS": mass,
@@ -974,6 +1035,7 @@ def _process_snapshot_disk(args: tuple) -> None:
     **Q_prof,
     "M_mri_MSUN_CGS"  : q_mass,
     **B_prof,
+    **A_prof,
   })
 
   # ======================================================================
@@ -1029,6 +1091,10 @@ def _process_snapshot_disk(args: tuple) -> None:
     json.dump(scalars, fp, indent=2)
   os.replace(path + ".tmp", path)
 
+  if print_memory:
+    print(f"$ [pid {os.getpid()}] {snapshot}: {ncells_total // ncell_block} blocks, "
+          f"{len(rho)}/{ncells_total} cells kept, peak RSS {peak_rss_gb():.2f} GB", flush=True)
+
 
 def scalars_path(outdir: str, snapshot: str) -> str:
   """
@@ -1070,6 +1136,9 @@ VPROF_DR   = 0.1 # relative half-width of the annuli
 
 BAVG_RHO_DISK  = 1.0e8  # g/cm^3, disk density cut of Izquierdo et al. (2025)
 BAVG_BULK_FRAC = 0.75   # bulk = densest cells holding this fraction of the disk mass
+
+ANISO_RHO_MIN = 1.0e7 # g/cm^3, density cut of alpha_ij (Hayashi et al. 2023)
+ANISO_NZ      = 40    # z/R bins in [-1, 1] of the azimuthal mean velocity
 
 MEV_PER_FM3_TO_CGS = MEV * 1.0e39 # erg/cm^3 per MeV/fm^3
 
@@ -1221,6 +1290,7 @@ def analyze(args: argparse.Namespace) -> None:
                          Default: 3.
     vprof_R (list): cylindrical radii of the vertical profiles (in code units).
     n_workers (int): number of worker processes per snapshot loop.
+    print_memory (bool): print peak memory usage by workers.
 
   Returns:
   None.
@@ -1289,7 +1359,7 @@ def analyze(args: argparse.Namespace) -> None:
                   args.slice_extent, args.slice_npts,
                   args.parker_dir, args.parker_eps,
                   args.parker_rmax if args.parker_rmax is not None else args.rmax,
-                  args.parker_smooth, args.vprof_R, args.outdir)
+                  args.parker_smooth, args.vprof_R, args.outdir, args.print_memory)
                  for n in numbers]
   print(f"$ Processing {len(worker_args)} snapshots with n_worker={n_workers}...")
 
@@ -1389,6 +1459,7 @@ def main(argv: list[str] | None = None) -> None:
   ap.add_argument("--overwrite", action="store_true",
                   help="Reprocess snapshots whose results already exist in --outdir. "
                        "By default they are skipped.")
+  ap.add_argument("--print-memory", action="store_true", help="print peak memory usage by workers")
   args = ap.parse_args()
 
   analyze(args)

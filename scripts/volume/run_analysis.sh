@@ -116,6 +116,7 @@ WIN_RAD="$(_cfg_get window_radius)"
 TAR_DX="$(_cfg_get target_dx)"
 N_WORKERS="$(_cfg_get n_workers)"
 OVERWRITE="$(_cfg_get overwrite)"
+PRINT_MEMORY="$(_cfg_get print_memory)"
 MOV_FPS="$(_cfg_get movie_fps)"
 MOV_STR="$(_cfg_get movie_stride)"
 
@@ -167,6 +168,9 @@ case "${SUFFIX,,}" in
 esac
 case "${OVERWRITE,,}" in
     true|1|yes|on) DISK_ARGS+=(--overwrite) ;;
+esac
+case "${PRINT_MEMORY,,}" in
+    true|1|yes|on) DISK_ARGS+=(--print-memory) ;;
 esac
 [[ -n "${DROP_FIRST_BINS}" ]] && DISK_ARGS+=(--drop-first-bins "${DROP_FIRST_BINS}")
 [[ -n "${TRACKER}"         ]] && DISK_ARGS+=(--tracker         "${TRACKER}")
