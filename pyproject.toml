@@ -33,6 +33,7 @@ kplot-sphere-penrose = "kplot.sphere.penrose:main"
 kplot-volume-disk = "kplot.volume.disk:main"
 kplot-volume-spectra = "kplot.volume.spectra:main"
 kplot-volume-plot = "kplot.volume.plots:main"
+kplot-volume-slice3D = "kplot.volume.slice3D:main"
 
 [tool.setuptools]
 packages = ["kplot", "kplot.system", "kplot.sphere", "kplot.volume", "kplot.utils"]

@@ -11,7 +11,7 @@ An automated script lives in ``scripts/volume/run_analysis.sh``.
 import importlib
 from types import ModuleType
 
-__all__ = ["disk", "plots", "spectra"]
+__all__ = ["disk", "plots", "spectra", "slice3D"]
 
 
 def __getattr__(name: str) -> ModuleType:
