@@ -534,9 +534,8 @@ def _slice_worker(task: tuple) -> None:
   None.
   """
   from matplotlib.colors import SymLogNorm
-  from kplot.system.bin_convert import read_binary
+  from kplot.utils.bin3d import slice_cells, read_binary
   from kplot.system.horizon import HorizonFinder
-  from ..utils.bin3d import slice_cells
   from ..utils.constants import MSUN_TO_MS
   from .plots import plt
 

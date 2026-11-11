@@ -19,9 +19,8 @@ from scipy.interpolate import RegularGridInterpolator
 
 # KPlot utility.
 from kplot.utils.bin3d import (block_cell_geometry, find_snapshots, load_tracker, snapshot_tag,
-                               tracker_center)
+                               tracker_center, read_binary)
 from kplot.utils.parallel import default_workers, pool_map
-from kplot.system.bin_convert import read_binary
 
 # Per-worker state.
 _W_TRACKER = None

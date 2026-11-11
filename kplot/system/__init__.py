@@ -7,7 +7,6 @@ A automated pipeline lives in ``scripts/system/plot_system.sh``.
 """
 
 from . import batchutils
-from . import bin_convert
 from . import checkpoints
 from . import history
 from . import horizon
@@ -21,7 +20,6 @@ from . import waveforms
 
 __all__ = [
   "batchutils",
-  "bin_convert",
   "checkpoints",
   "history",
   "horizon",

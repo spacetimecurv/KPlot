@@ -111,10 +111,10 @@ import numpy as np
 from scipy.ndimage import uniform_filter
 
 # AthenaK utility.
-from kplot.system.bin_convert import read_binary
 from kplot.system.units import CGS
 from kplot.utils.bin3d import (block_cell_geometry, find_snapshots, load_horizon, load_tracker,
-                               par, parse_par_dump, slice_cells, snapshot_tag, tracker_center)
+                               par, parse_par_dump, slice_cells, snapshot_tag, tracker_center,
+                               read_binary)
 from kplot.utils.constants import LENGTH_CM, MSUN_TO_S
 from kplot.utils.eos import EOSTable
 from kplot.utils.memory import peak_rss_gb, reset_peak_rss

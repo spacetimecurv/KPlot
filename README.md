@@ -57,7 +57,7 @@ kplot/              the installed Python package
   system/           whole-run diagnostics
                       plotter.py (SystemPlotter), history.py, horizon.py,
                       waveforms.py, seriesplot.py, batchutils.py, tracker.py,
-                      units.py, bin_convert.py, checkpoints.py, rhine.py,
+                      units.py, checkpoints.py, rhine.py,
                       meshblocks.py, parfile.py
   sphere/           spherical-surface (sph) extraction analysis
                       ejecta.py, neutrinos.py, mergertime.py, poynting.py,

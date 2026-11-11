@@ -12,9 +12,8 @@ import os
 import numpy as np
 
 # KPlot utility.
-from kplot.system.bin_convert import read_binary
 from kplot.utils.bin3d import (find_snapshots, load_tracker, bin_time, tracker_center,
-                               slice_cells)
+                               slice_cells, read_binary)
 from kplot.utils.memory import peak_rss_gb, reset_peak_rss
 from kplot.utils.parallel import default_workers, pool_map
 

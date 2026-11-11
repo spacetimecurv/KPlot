@@ -21,7 +21,7 @@ from kplot.system.units import CGS, GEOMETRIC_SOLAR
 from kplot.system.horizon import HorizonFinder
 from kplot.system.tracker import Tracker
 from kplot.system.checkpoints import find_segments
-import kplot.system.bin_convert as bc
+import kplot.utils.bin3d as bc
 
 # Animation keys.
 PANELS = [
