@@ -18,3 +18,4 @@ refargs = {
 
 mb = MeshBlock(parfile_path="/home/no96soq/athenak/runs/PhysicsComparisonBHNS/MHD_M1_120_MRI/parfile.par")
 mb.predict_meshblocks(mode="disk", **refargs)
+mb.plot_mesh()
