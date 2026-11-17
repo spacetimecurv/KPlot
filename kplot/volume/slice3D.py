@@ -2,8 +2,8 @@
 Slice 3D bin dumps on the xy and xz planes through a (tracked) center.
 
 Every 3D output block is sliced on its own and tagged by its id (without a trailing
-'_3D'), e.g. 'mhd_w_bcc' or 'z4c_gauge'; --fields restricts the slices to the blocks
-and fields given.
+'_3D'), e.g. 'mhd_w_bcc' or 'z4c_gauge'; --fields restricts the slices to the fields
+given, where a block id selects all fields of that block.
 """
 
 # Built-in libraries.
@@ -148,7 +148,7 @@ def slice_all(simpath: str, batchtools: bool, fields: list = None, jobname: str 
   Parameters:
   simpath       (str): Path to the 3D dumps.
   batchtools   (bool): Whether the dumps are in output-XXXX segments.
-  fields       (list): Fields to slice (default: every field of every 3D block).
+  fields       (list): Fields or block ids to slice (default: every 3D block).
   jobname       (str): Only use dumps named <jobname>.* (default: all).
   tracker       (str): Path to the tracker file.
   outdir        (str): Path to the output directory of stored results.
@@ -166,10 +166,11 @@ def slice_all(simpath: str, batchtools: bool, fields: list = None, jobname: str 
   # Group the 3D dumps by output block over all segments (later segments win).
   blocks = {}
   for st in scan(dump_dirs(simpath, "bin", batchtools), "bin", jobname):
-    names = [f for f in st.fields if fields is None or f in fields]
+    tag = st.name[:-3] if st.name.endswith("_3D") else st.name
+    whole = fields is None or tag in fields or st.name in fields
+    names = [f for f in st.fields if whole or f in fields]
     if st.plane is not None or not names:
       continue
-    tag = st.name[:-3] if st.name.endswith("_3D") else st.name
     entry = blocks.setdefault(tag, {"fields": names, "files": {}, "streams": []})
     entry["files"].update(st.files)
     entry["streams"].append(st)
@@ -224,8 +225,8 @@ def main(argv: list[str] | None = None) -> None:
                   help="search the 3D bin files in <simpath>/output-XXXX[/bin]; "
                        "--no-batchtools searches <simpath>[/bin] only")
   ap.add_argument("--fields", nargs="+", default=None,
-                  help="fields to slice, e.g. dens z4c_alpha (default: all fields of all "
-                       "3D output blocks)")
+                  help="fields or whole blocks to slice, e.g. dens z4c_alpha or mhd_w_bcc "
+                       "(default: all 3D output blocks)")
   ap.add_argument("--jobname", default=None,
                   help="only use dumps named <jobname>.* (default: all)")
   ap.add_argument("--snaps", type=int, nargs="+", default=None,
