@@ -63,8 +63,6 @@ FIGPATH="${SIMPATH}/Figs"    # default: <SIMPATH>/Figs
 
 # Job-specifc input parameters parsed from config.ini
 JOBNAME="$(_cfg_get jobname)"
-PRIM_PREFIX="$(_cfg_get prim_prefix)"
-RAD_PREFIX="$(_cfg_get rad_prefix)"
 PLANE="$(_cfg_get plane)"
 COMPANION="$(_cfg_get companion)"
 SHOW_GRID="$(_cfg_get show_grid)"
@@ -89,8 +87,6 @@ DENS_CONTOURS="$(_cfg_get dens_contours)"
 ARGS=(--simpath "${SIMPATH}")
 [[ -n "${FIGPATH:-}"    ]] && ARGS+=(--figpath    "${FIGPATH}")
 [[ -n "${JOBNAME:-}"    ]] && ARGS+=(--jobname    "${JOBNAME}")
-[[ -n "${PRIM_PREFIX:-}" ]] && ARGS+=(--prim-prefix "${PRIM_PREFIX}")
-[[ -n "${RAD_PREFIX:-}"  ]] && ARGS+=(--rad-prefix  "${RAD_PREFIX}")
 [[ -n "${PLANE:-}"      ]] && ARGS+=(--plane      "${PLANE}")
 [[ -n "${COMPANION:-}"      ]] && ARGS+=(--companion      "${COMPANION}")
 [[ -n "${TIME_UNITS:-}" ]] && ARGS+=(--time-units "${TIME_UNITS}")

@@ -1,68 +1,14 @@
 """AthenaK 3D binary dumps: lookup, meshblock geometry and tracker/horizon files."""
 
 # Built-in libraries.
-import glob
-import os
-import re
 from collections.abc import Callable
 
 # Third-party libraries.
 import numpy as np
 
-# KPlot utility.
-from kplot.system.checkpoints import find_segments
-
 # ======================================================================
 # Helper functions for the 3D data.
 # ======================================================================
-def find_snapshots(tag: str, simpath: str, batchtools: bool = True, suffix: str = "_3D") -> dict:
-  """
-  Locates the 3D snapshots `<job>.<tag><suffix>.NNNNN.bin` as {snapshot number: path}.
-
-  With batchtools, search every output-XXXX segment under simpath (in bin/
-  if present). Take latest snapshot if multiple with same number are found.
-  Without batchtools seach simpath directly.
-
-  Parameters:
-  tag         (str): variable tag, such as 'mhd_w_bcc'.
-  simpath     (str): path to the data.
-  batchtools (bool): flag whether output data is in output-XXXX segments.
-  suffix      (str): suffix of the file name, i.e. <job>.<tag><suffix>.bin.
-
-  Returns:
-  dict with the snapshot number and its path.
-  """
-  pat = f"*.{tag}{suffix}.*.bin"
-  name = re.compile(rf".+\.{re.escape(tag + suffix)}\.(\d+)\.bin")
-  hits = {}
-  for segment in find_segments(simpath, batchtools):
-    for sub in ("bin", ""):
-      files = glob.glob(os.path.join(segment, sub, pat))
-      if files:
-        break
-    for f in sorted(files):
-      m = name.fullmatch(os.path.basename(f))
-      if m:
-        hits[int(m.group(1))] = f
-  if not hits:
-    raise SystemExit(f"No file matching {pat} under {simpath}!")
-
-  return hits
-
-
-def snapshot_tag(path: str) -> float:
-  """
-  Snapshot number as it appears in the file name, e.g. '00010'.
-
-  Parameters:
-  path (str): path to the snapshot file.
-
-  Returns:
-  Snapshot number.
-  """
-  return path.split("/")[-1].split(".")[-2].strip()
-
-
 def parse_par_dump(header: list) -> dict:
   """
   Turn the <block>/key = value par dump carried in the bin header into a dict.
@@ -166,33 +112,41 @@ def slice_cells(geom: np.ndarray, nx: tuple[int, int, int], sel: np.ndarray,
   return np.where((out >= 0) & (sel[pos] == out), pos, -1)
 
 
-def bin_time(path: str) -> float:
+def read_bin_header(path: str) -> dict:
   """
-  Time of a 3D dump, read from the header.
+  Time, cycle, variable names and slice plane of a bin dump, without reading the data.
 
   Parameters:
   path (str): path to the .bin file.
 
   Returns:
-  Simulation time of the dump.
+  dict with 'time', 'cycle', 'fields' and 'plane' (None for 3D, else 'xy', 'xz', 'yz').
   """
   with open(path, "rb") as fp:
     fp.readline()
-    n = int(fp.readline().split(b"=")[-1])
-    for _ in range(n - 1):
+    pre = {}
+    for _ in range(int(fp.readline().split(b"=")[-1]) - 1):
       key, val = fp.readline().decode("utf-8").split("=")
-      if key.strip() == "time":
-        return float(val)
-  raise ValueError(f"No time in the header of {path}!")
+      pre[key.strip()] = val.strip()
+    fp.readline()
+    fields = tuple(v.decode("utf-8") for v in fp.readline().split()[1:])
+    fp.seek(int(fp.readline().split(b"=")[-1]), 1)
+    idx = np.frombuffer(fp.read(24), dtype=np.int32)
+  flat = [axis for axis in range(3) if idx[2 * axis] == idx[2 * axis + 1]]
+  plane = {(): None, (2,): "xy", (1,): "xz", (0,): "yz"}.get(tuple(flat))
+  return {"time": float(pre["time"]), "cycle": int(pre["cycle"]), "fields": fields,
+          "plane": plane}
 
 
-def read_binary(filename: str, keep: Callable[[tuple], bool] | None = None) -> dict:
+def read_binary(filename: str, keep: Callable[[tuple], bool] | None = None,
+                variables: list[str] | None = None) -> dict:
   """
   Reads a bin file from filename to dictionary (AthenaK vis/python mirror).
 
   Parameters:
   filename (str): filename of bin file to read
   keep (callable): keep(mb_geometry) -> bool; meshblocks it rejects are skipped unread
+  variables (list): variables to keep (default: all)
 
   Returns:
   dict of the file data.
@@ -299,9 +253,8 @@ def read_binary(filename: str, keep: Callable[[tuple], bool] | None = None) -> d
   mb_logical = []
   mb_geometry = []
 
-  mb_data = {}
-  for var in var_list:
-    mb_data[var] = []
+  wanted = [(i, v) for i, v in enumerate(var_list) if variables is None or v in variables]
+  mb_data = {var: [] for _, var in wanted}
   while fp.tell() < filesize:
     mb_index.append(
         np.frombuffer(fp.read(24), dtype=np.int32).astype(np.int64) - nghost
@@ -327,8 +280,8 @@ def read_binary(filename: str, keep: Callable[[tuple], bool] | None = None) -> d
         count=nx1_out * nx2_out * nx3_out * n_vars,
     )
     data = data.reshape(nvars, nx3_out, nx2_out, nx1_out)
-    for vari, var in enumerate(var_list):
-      mb_data[var].append(data[vari])
+    for vari, var in wanted:
+      mb_data[var].append(data[vari] if len(wanted) == nvars else data[vari].copy())
     mb_count += 1
 
   fp.close()
@@ -336,7 +289,7 @@ def read_binary(filename: str, keep: Callable[[tuple], bool] | None = None) -> d
   filedata["header"] = header
   filedata["time"] = time
   filedata["cycle"] = cycle
-  filedata["var_names"] = var_list
+  filedata["var_names"] = [var for _, var in wanted]
 
   filedata["Nx1"] = Nx1
   filedata["Nx2"] = Nx2

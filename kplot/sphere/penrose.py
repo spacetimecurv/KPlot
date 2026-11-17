@@ -8,35 +8,12 @@ energy-momentum tensor, then quantify the Lasota criteria
 for rotational energy extraction. Note: neglect radiation
 contribution to the energy-momentum tensor.
 
-Required output:
+Required fields: FIELDS below, from any sph blocks (e.g. mhd_w_bcc, adm and
+z4c_gauge) with center_tracker = 0, e.g.
 
   <outputXX>
   file_type      = sph
-  variable       = mhd_w_bcc
-  dt             = 20.0
-  radii          = 5.0, 10.0, 15.0
-  ntheta         = 256
-  center_tracker = 0
-
-  <outputXX+1>
-  file_type      = sph
-  variable       = adm
-  dt             = 20.0
-  radii          = 5.0, 10.0, 15.0
-  ntheta         = 256
-  center_tracker = 0
-
-  <outputXX+2>
-  file_type      = sph
-  variable       = z4c_alpha
-  dt             = 20.0
-  radii          = 5.0, 10.0, 15.0
-  ntheta         = 256
-  center_tracker = 0
-
-  <outputXX+3-5>
-  file_type      = sph
-  variable       = z4c_beta<x,y,z>
+  variable       = z4c_gauge
   dt             = 20.0
   radii          = 5.0, 10.0, 15.0
   ntheta         = 256
@@ -52,11 +29,13 @@ from ..utils.eos import enthalpy, load_eos
 from ..utils.grmhd import fluid, sqrt_det
 from ..utils.parallel import default_workers, pool_map
 from ..utils.plotting import savefig, time_axis
-from ..utils.surface import Surface, run
+from ..utils.surface import MHD_FIELDS, Surface, run
 
 # Defaults.
 DEFAULT_RADII   = (5.0, 10.0)
 DEFAULT_JOBNAME = "bns"
+
+FIELDS = MHD_FIELDS + ('press', 's_00', 'temperature')
 
 # Integrated fluxes (penrose_r{R}.txt) and phi-averaged theta profiles (penrose_profiles_r{R}.npz).
 COLUMNS  = ('Mdot', 'Edot_EM', 'Edot_MA', 'Jdot_EM', 'Jdot_MA', 'f_ergo', 'f_neg_e', 'f_P2')
@@ -225,7 +204,7 @@ def analyze(sph_dirs: list[str], eos_table: str, output_dir: str,
   None.
   """
   results = run(sph_dirs, jobname, radii, _compute, ctx=load_eos(eos_table),
-                n_workers=n_workers)
+                fields=FIELDS, n_workers=n_workers)
   os.makedirs(output_dir, exist_ok=True)
 
   for radius, res in results.items():
@@ -503,24 +482,22 @@ def _plot_noether(output_dir: str, data: dict, t_merger: float | None) -> None:
 
 # Per-worker state of plot_noether_slice.
 _W_EOS   = None
-_W_FILES = None
 _W_SLICE = None
 
 
-def _init_slice_worker(eos: dict, files: dict, settings: tuple) -> None:
+def _init_slice_worker(eos: dict, settings: tuple) -> None:
   """
-  Pool initializer: store the EOS, the 3D dump paths and the slice settings.
+  Pool initializer: store the EOS and the slice settings.
 
   Parameters:
   eos (dict): EOS from load_eos.
-  files (dict): {tag: {snapshot: path}} from find_snapshots.
   settings (tuple): (output_dir, half_width, npts).
 
   Returns:
   None.
   """
-  global _W_EOS, _W_FILES, _W_SLICE
-  _W_EOS, _W_FILES, _W_SLICE = eos, files, settings
+  global _W_EOS, _W_SLICE
+  _W_EOS, _W_SLICE = eos, settings
 
 
 def _slice_worker(task: tuple) -> None:
@@ -528,18 +505,20 @@ def _slice_worker(task: tuple) -> None:
   Plot P^2 on the x-z plane through the black hole for one 3D snapshot.
 
   Parameters:
-  task (tuple): (snapshot, time, BH center, horizon Y_lm coefficients).
+  task (tuple): (Snapshot, BH center, horizon Y_lm coefficients).
 
   Returns:
   None.
   """
   from matplotlib.colors import SymLogNorm
-  from kplot.utils.bin3d import slice_cells, read_binary
+  from kplot.utils.bin3d import slice_cells
+  from kplot.volume.cells import read_blocks
   from kplot.system.horizon import HorizonFinder
   from ..utils.constants import MSUN_TO_MS
   from .plots import plt
 
-  snap, time, c, coeffs = task
+  snapshot, c, coeffs = task
+  snap, time = int(snapshot.tag), snapshot.time
   output_dir, half_width, npts = _W_SLICE
   u = np.linspace(-half_width, half_width, npts)
   X, Z = np.meshgrid(u, u)
@@ -557,43 +536,29 @@ def _slice_worker(task: tuple) -> None:
     return (g[2] <= c[1] < g[3] and g[0] < c[0] + half_width and g[1] > c[0] - half_width
             and g[4] < c[2] + half_width and g[5] > c[2] - half_width)
 
-  d = {tag: read_binary(paths[snap], keep) for tag, paths in _W_FILES.items()}
-  fd = d['mhd_w_bcc']
+  fd = read_blocks(snapshot, keep)
   nx = (fd['nx1_out_mb'], fd['nx2_out_mb'], fd['nx3_out_mb'])
   pos = slice_cells(fd['mb_geometry'], nx, np.arange(fd['n_mbs'] * np.prod(nx)),
                     (0, 2, 1), c[1], c[0] + u, c[2] + u)
 
-  def get(tag: str, var: str) -> np.ndarray:
-    """
-    Sample a variable of one dump on the slice grid.
-
-    Parameters:
-    tag (str): Dump, e.g. 'adm'.
-    var (str): Variable name.
-
-    Returns:
-    The values, NaN outside the read blocks.
-    """
-    v = np.asarray(d[tag]['mb_data'][var]).reshape(-1)[np.maximum(pos, 0)]
-    return np.where(pos >= 0, v, np.nan)
-
   def mhd(var: str) -> np.ndarray:
     """
-    Sample a variable of the mhd_w_bcc dump on the slice grid.
+    Sample a field on the slice grid.
 
     Parameters:
-    var (str): Variable name.
+    var (str): Field name.
 
     Returns:
     The values, NaN outside the read blocks.
     """
-    return get('mhd_w_bcc', var)
+    v = np.asarray(fd['mb_data'][var]).reshape(-1)[np.maximum(pos, 0)]
+    return np.where(pos >= 0, v, np.nan)
 
   s = _state(_W_EOS, np.maximum(mhd('dens'), 0.0), np.maximum(mhd('press'), 0.0), mhd('s_00'),
              mhd('temperature'), [mhd(f'vel{k}') for k in 'xyz'],
              [mhd(f'bcc{k}') for k in '123'],
-             [get('adm', f'adm_g{k}') for k in ('xx', 'xy', 'xz', 'yy', 'yz', 'zz')],
-             get('alpha', 'z4c_alpha'), [get(f'beta{k}', f'z4c_beta{k}') for k in 'xyz'],
+             [mhd(f'adm_g{k}') for k in ('xx', 'xy', 'xz', 'yy', 'yz', 'zz')],
+             mhd('z4c_alpha'), [mhd(f'z4c_beta{k}') for k in 'xyz'],
              (X, np.zeros_like(X), Z))
   # The x-z plane is phi = 0 (x > 0) and phi = pi (x < 0) about the BH.
   theta, phi = np.arctan2(np.abs(X), Z), np.where(X >= 0, 0.0, np.pi)
@@ -649,10 +614,9 @@ def plot_noether_slice(simpath: str, eos_table: str, output_dir: str,
   """
   from glob import glob
   from kplot.system.horizon import HorizonFinder
-  from ..utils.bin3d import find_snapshots
+  from ..utils.catalog import dump_dirs, find, scan
 
-  tags = ('mhd_w_bcc', 'adm', 'alpha', 'betax', 'betay', 'betaz')
-  files = {tag: find_snapshots(tag, simpath) for tag in tags}
+  snaps = find(scan(dump_dirs(simpath, 'bin'), 'bin', jobname), FIELDS)
   tracker = np.concatenate([np.loadtxt(f, comments='#', ndmin=2) for f in
                             glob(os.path.join(simpath, 'output-*', f'{jobname}.co_0.txt'))])
   horizon = HorizonFinder(shape_paths=sorted(glob(os.path.join(
@@ -660,20 +624,19 @@ def plot_noether_slice(simpath: str, eos_table: str, output_dir: str,
 
   # Time, BH center and horizon shape of each snapshot.
   tasks = []
-  if snapshots is None:
-    snapshots = sorted(set.intersection(*(set(f) for f in files.values())))
-  for snap in snapshots:
-    with open(files['alpha'][snap], 'rb') as f:
-      time = float([f.readline() for _ in range(3)][2].split(b'=')[1])
+  if snapshots is not None:
+    snaps = [s for s in snaps if int(s.tag) in snapshots]
+  for snap in snaps:
+    time = snap.time
     i = np.argmin(np.abs(tracker[:, 1] - time))
     if abs(tracker[i, 1] - time) > 1.0:
       raise RuntimeError(f'No BH tracker entry near t = {time:g} in {simpath}/output-*.')
-    tasks.append((snap, time, tracker[i, 2:5], horizon.shape_coeffs(time)))
+    tasks.append((snap, tracker[i, 2:5], horizon.shape_coeffs(time)))
 
   os.makedirs(output_dir, exist_ok=True)
   pool_map(_slice_worker, tasks, min(n_workers or default_workers(), len(tasks)),
            initializer=_init_slice_worker,
-           initargs=(load_eos(eos_table), files, (output_dir, half_width, npts)))
+           initargs=(load_eos(eos_table), (output_dir, half_width, npts)))
 
 
 def main(argv: list[str] | None = None) -> None:

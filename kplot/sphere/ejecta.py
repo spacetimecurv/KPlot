@@ -2,11 +2,8 @@
 Ejecta analysis on an AthenaK spherical extraction surface: Mej_rate + 2D
 ejecta histogram (vinf x theta).
 
-Per snapshot, loads 6 VTK files:
-  <job>.r=R.mhd_w_bcc.NNNNN.vtk - primitives dens, s_00, T (primitive variables)
-  <job>.r=R.adm.NNNNN.vtk       - adm_gxx..gyz             (ADM 3-metric)
-  <job>.r=R.z4c_alpha.NNNNN.vtk - z4c_alpha                (lapse)
-  <job>.r=R.z4c_beta*.NNNNN.vtk - z4c_beta*                (shift)
+Per snapshot, needs the fields FIELDS (from any sph output blocks, e.g. mhd_w_bcc,
+adm and z4c_gauge; see kplot.utils.catalog).
 
 The 2D histogram dMej[i_v, i_theta] unifies the former separate vinf histogram
 and rhoej_theta outputs: its marginals reproduce both.
@@ -38,13 +35,15 @@ from ..utils.constants import MSUN_TO_S
 from ..utils.eos import enthalpy, load_eos
 from ..utils.grmhd import fluid, sqrt_det
 from ..utils.quadrature import sum_over_time
-from ..utils.surface import Surface, run, save_centers, stack
+from ..utils.surface import FLUID, GEOMETRY, Surface, run, save_centers, stack
 
 DEFAULT_RADIUS = 300.0
 DEFAULT_DFLOOR = 3e-15
 DEFAULT_JOBNAME = "bns"
 DEFAULT_DV = 0.01
 DEFAULT_DYE = 0.01
+
+FIELDS = FLUID + ('s_00', 'temperature') + GEOMETRY
 
 
 def velocity_bins(dv: float = DEFAULT_DV) -> np.ndarray:
@@ -196,7 +195,7 @@ def analyze(sph_dirs: list[str], eos_table: str, output_dir: str,
 
   ctx = dict(eos=load_eos(eos_table), v_bins=v_bins, ye_bins=ye_bins_,
              dfloor=dfloor, t_stop=t_stop)
-  results = run(sph_dirs, jobname, radius, _compute, ctx=ctx,
+  results = run(sph_dirs, jobname, radius, _compute, ctx=ctx, fields=FIELDS,
                 n_workers=n_workers)[float(radius)]
   theta_centers = np.sort(results[0]['theta'])
   theta_edges = np.concatenate([[0.0], 0.5 * (theta_centers[:-1] + theta_centers[1:]),

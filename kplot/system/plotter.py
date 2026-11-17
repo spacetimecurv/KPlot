@@ -47,6 +47,7 @@ from athplot.tracker import Tracker
 # Import AthenaK unit conversions / render parameters.
 from kplot.system.units import AthenaK_Units
 from kplot.system.history import History
+from kplot.utils.catalog import scan
 
 # ---------------------------------------------------------------------------
 # Global plot style.
@@ -1435,6 +1436,8 @@ def render_frames_all(output_dirs: list[str], figpath: str, file_prefix: str | l
                       time_scale: float = 1.0, time_tex: str = r"\mathrm{M}_\odot",
                       time_axis: str = "Msun", contour_levels: tuple | None = None,
                       dens_prefix: str | None = None,
+                      comp_prefix: list[str] | None = None,
+                      dens_comp_prefix: str | None = None,
                       show_path: bool = False, path_length: float | None = None,
                       path_fade: bool = True) -> None:
   """
@@ -1474,6 +1477,9 @@ def render_frames_all(output_dirs: list[str], figpath: str, file_prefix: str | l
   contour_levels (tuple): Density contour levels in g/cm^3 (None: no contours).
   dens_prefix (str): Prefix of the slice files holding 'dens' for the contours
                      (default: file_prefix).
+  comp_prefix (list[str]): Prefixes of the companion-plane files (default: file_prefix
+                           with '_xy' replaced by '_<companion>').
+  dens_comp_prefix (str): Prefix of the companion-plane 'dens' files.
   show_path (bool): Also draw the trajectory ip to the current time.
   path_length(float): Length of the drawn trail in code time (None = full history).
   path_fade (bool): Fade the trail from transparent (oldest) to opaque (current).
@@ -1482,9 +1488,10 @@ def render_frames_all(output_dirs: list[str], figpath: str, file_prefix: str | l
   None.
   """
   prefixes = [file_prefix] if isinstance(file_prefix, str) else list(file_prefix)
-  comp_prefix = None
-  if companion != "none" and all("_xy" in pre for pre in prefixes):
+  if comp_prefix is None and companion != "none" and all("_xy" in pre for pre in prefixes):
     comp_prefix = [pre.replace("_xy", f"_{companion}") for pre in prefixes]
+  if companion == "none":
+    comp_prefix = None
   frames = collect_combined_frames(output_dirs, prefixes, comp_prefix, step)
 
   if not frames:
@@ -1513,9 +1520,10 @@ def render_frames_all(output_dirs: list[str], figpath: str, file_prefix: str | l
     frame_time = {p: t for t, p in _collect_frames_by_time(output_dirs, prefixes[0]).items()}
     dens_xy = _collect_frames_by_time(output_dirs, dens_prefix)
     dens_comp = {}
-    if comp_prefix is not None and "_xy" in dens_prefix:
-      dens_comp = _collect_frames_by_time(output_dirs,
-                                          dens_prefix.replace("_xy", f"_{companion}"))
+    if dens_comp_prefix is None and comp_prefix is not None and "_xy" in dens_prefix:
+      dens_comp_prefix = dens_prefix.replace("_xy", f"_{companion}")
+    if comp_prefix is not None and dens_comp_prefix is not None:
+      dens_comp = _collect_frames_by_time(output_dirs, dens_comp_prefix)
     for gi, xy, _ in frames:
       t = frame_time.get(xy[0])
       dens_fpaths[gi] = (dens_xy.get(t), dens_comp.get(t))
@@ -1660,7 +1668,6 @@ class SystemPlotter:
     - choose between Msun/ms time units and code units/km spatial units
   """
   def __init__(self, simpath: str, figpath: str | None = None, jobname: str = "bhns",
-               prim_prefix: str = "mhd_w_bcc", rad_prefix: str = "rad_m1",
                batchtools: bool = True, units: str = 'cgs', time_units: str = "Msun",
                plane: str = "xy", companion: str = "xz", domain: tuple = (-60, 60),
                plot_contours: bool = False, dens_contours: tuple = _DEFAULT_DENS_CONT,
@@ -1675,10 +1682,6 @@ class SystemPlotter:
     simpath (str): Parent directory containing the output-XXXX subdirectories.
     figpath (str): Output figure directory (default: <simpath>/Figs).
     jobname (str): AthenaK job name prefixing all input/output files.
-    prim_prefix (str): Primitive-variable file prefix (before "_{plane}") for
-                       density/temperature/s00, e.g. "mhd_w_bcc" or "prim".
-    rad_prefix (str): M1 radiation file prefix (before "_<var>_{plane}") for
-                      E/N/abs/eta, e.g. "rad_m1".
     batchtools (bool): Whether to assume a output-XXXX segment structure.
     units (str): Unit system for physical quantities ('code', 'cgs', 'ngs').
     time_units (str): Time display units for titles/axes, 'Msun' or 'ms'.
@@ -1705,8 +1708,6 @@ class SystemPlotter:
     self.simpath       = simpath
     self.figpath       = figpath or os.path.join(simpath, "Figs")
     self.jobname       = jobname
-    self.prim_prefix   = prim_prefix
-    self.rad_prefix    = rad_prefix
     self.batchtools    = batchtools
 
     # Plotting-specific choices.
@@ -1729,6 +1730,7 @@ class SystemPlotter:
     self.skip_existing = skip_existing
     self._trackers     = None
     self._horizons     = None
+    self._slices       = None
     self.overrides     = {}
     self.section       = None
     self.show_path     = show_path
@@ -1787,27 +1789,45 @@ class SystemPlotter:
       self._horizons = load_horizons_all(self.output_dirs, self.jobname)
     return self._horizons
 
-  def rad_file(self, var: str) -> str:
+  def slice_prefixes(self, fields: list[str], plane: str | None = None) -> list[str]:
     """
-    File prefix of an M1 radiation variable.
+    File prefixes of the 2D slices holding `fields` on `plane`, whatever their output
+    block names (e.g. 'E:0' from rad_m1_E or rad_m1_moments slices).
 
     Parameters:
-    var (str): Radiation variable, e.g. 'E'.
+    fields (list[str]): Field names.
+    plane (str): Slice plane (default: self.plane).
 
     Returns:
-    '<job>.<rad_prefix>_<var>_<plane>'.
+    Prefixes, one per distinct output block.
+
+    Raises:
+    LookupError if a field has no slice on the plane.
     """
-    return f"{self.jobname}.{self.rad_prefix}_{var}_{self.plane}"
+    plane = plane or self.plane
+    if self._slices is None:
+      dirs = [os.path.join(d, "bin") if os.path.isdir(os.path.join(d, "bin")) else d
+              for d in self.output_dirs]
+      self._slices = [st for st in scan(dirs, "bin", self.jobname) if st.plane is not None]
+    out = []
+    for f in fields:
+      stems = {}
+      for st in self._slices:
+        if st.plane == plane and f in st.fields:
+          stems[st.stem] = stems.get(st.stem, 0) + len(st.files)
+      if not stems:
+        raise LookupError(f"no {plane} slices hold '{f}'")
+      out.append(max(stems, key=stems.get))
+    return list(dict.fromkeys(out))
 
   # Shared render function.
-  def render_field(self, file_prefix: str | list[str], var_name: str, name: str,
+  def render_field(self, var_name: str, name: str,
                    cmap: str = "inferno", var_key: str | None = None,
                    print_minmax: bool = True, derived: tuple | None = None) -> None:
     """
-    Render a scalar-field frame series.
+    Render a scalar-field frame series; the slice files are found by the fields.
 
     Parameters:
-    file_prefix (str or list[str]): Prefix(es) of the slice files.
     var_name (str): Variable to plot, or 'derived:<name>' with derived.
     name (str): Series name for the output files.
     cmap (str): Default colormap.
@@ -1819,6 +1839,25 @@ class SystemPlotter:
     None.
     """
     var_key = var_key or var_name
+    fields = derived[1] if derived is not None else [var_name]
+    try:
+      file_prefix = self.slice_prefixes(fields)
+    except LookupError as err:
+      print(f"  Skipping {name}: {err}")
+      return
+    comp_prefix, dens_prefix, dens_comp_prefix = None, None, None
+    if self.companion != "none":
+      try:
+        comp_prefix = self.slice_prefixes(fields, self.companion)
+      except LookupError as err:
+        print(f"  No companion panel: {err}")
+    if self.plot_contours:
+      try:
+        dens_prefix = self.slice_prefixes(["dens"])[0]
+        if comp_prefix is not None:
+          dens_comp_prefix = self.slice_prefixes(["dens"], self.companion)[0]
+      except LookupError as err:
+        print(f"  No density contours: {err}")
     scale, label, use_log, lo, hi = plot_params(var_key, self.units)
     u_lo, u_hi, u_cmap = self.overrides.get(self.section, (None, None, None))
     cmap = u_cmap or cmap
@@ -1837,12 +1876,14 @@ class SystemPlotter:
                       horizons=self.horizons if self.show_horizon else None,
                       scale_factor=scale,
                       skip_existing=self.skip_existing, derived=derived,
-                      plane=self.plane, companion=self.companion,
+                      plane=self.plane,
+                      companion=self.companion if comp_prefix is not None else "none",
                       coord_scale=self.coord_scale, coord_label=self.coord_label,
                       time_scale=self.time_scale, time_tex=self.time_tex,
                       time_axis=self.time_axis,
                       contour_levels=self.dens_contours if self.plot_contours else None,
-                      dens_prefix=f"{self.jobname}.{self.prim_prefix}_{self.plane}",
+                      dens_prefix=dens_prefix, comp_prefix=comp_prefix,
+                      dens_comp_prefix=dens_comp_prefix,
                       show_path=self.show_path, path_length=self.path_length,
                       path_fade=self.path_fade)
 
@@ -1900,7 +1941,7 @@ class SystemPlotter:
     None.
     """
     print("[density] Rendering density frames...")
-    self.render_field(f"{self.jobname}.{self.prim_prefix}_{self.plane}", "dens",
+    self.render_field("dens",
                        "dens")
 
   def temperature(self) -> None:
@@ -1911,7 +1952,7 @@ class SystemPlotter:
     None.
     """
     print("[temperature] Rendering temperature frames...")
-    self.render_field(f"{self.jobname}.{self.prim_prefix}_{self.plane}", "temperature",
+    self.render_field("temperature",
                        "temperature")
 
   def s00(self) -> None:
@@ -1922,7 +1963,7 @@ class SystemPlotter:
     None.
     """
     print("[s00] Rendering s_00 (Ye proxy) frames...")
-    self.render_field(f"{self.jobname}.{self.prim_prefix}_{self.plane}", "s_00",
+    self.render_field("s_00",
                        "s00")
 
   def rad_E(self) -> None:
@@ -1933,7 +1974,7 @@ class SystemPlotter:
     None.
     """
     print("[rad_E] Rendering radiation energy E:0 frames...")
-    self.render_field(self.rad_file("E"), "E:0", "rad_E0")
+    self.render_field("E:0", "rad_E0")
 
   def rad_N(self) -> None:
     """
@@ -1943,7 +1984,7 @@ class SystemPlotter:
     None.
     """
     print("[rad_N] Rendering radiation number density N:0 frames...")
-    self.render_field(self.rad_file("N"), "N:0", "rad_N0")
+    self.render_field("N:0", "rad_N0")
 
   def rad_N2(self) -> None:
     """
@@ -1953,7 +1994,7 @@ class SystemPlotter:
     None.
     """
     print("[rad_N2] Rendering radiation number density N:2 (heavy lepton) frames...")
-    self.render_field(self.rad_file("N"), "N:2", "rad_N2")
+    self.render_field("N:2", "rad_N2")
 
   def rad_abs(self) -> None:
     """
@@ -1963,7 +2004,7 @@ class SystemPlotter:
     None.
     """
     print("[rad_abs] Rendering absorption opacity abs_1:0 frames...")
-    self.render_field(self.rad_file("abs_1"), "abs_1:0", "abs1_0")
+    self.render_field("abs_1:0", "abs1_0")
 
   def rad_abs0(self) -> None:
     """
@@ -1973,7 +2014,7 @@ class SystemPlotter:
     None.
     """
     print("[rad_abs0] Rendering absorption opacity abs_0:0 frames...")
-    self.render_field(self.rad_file("abs_0"), "abs_0:0", "abs0_0")
+    self.render_field("abs_0:0", "abs0_0")
 
   def rad_eta0(self) -> None:
     """
@@ -1983,7 +2024,7 @@ class SystemPlotter:
     None.
     """
     print("[rad_eta0] Rendering emissivity eta_0:0 frames...")
-    self.render_field(self.rad_file("eta_0"), "eta_0:0", "eta0_0")
+    self.render_field("eta_0:0", "eta0_0")
 
   def rad_eta1(self) -> None:
     """
@@ -1993,7 +2034,7 @@ class SystemPlotter:
     None.
     """
     print("[rad_eta1] Rendering emissivity eta_1:0 frames...")
-    self.render_field(self.rad_file("eta_1"), "eta_1:0", "eta1_0")
+    self.render_field("eta_1:0", "eta1_0")
 
   def conH(self) -> None:
     """
@@ -2003,7 +2044,7 @@ class SystemPlotter:
     None.
     """
     print("[z4c] Rendering con_H (Hamiltonian constraint) frames...")
-    self.render_field(f"{self.jobname}.con_{self.plane}", "derived:abs_con_H",
+    self.render_field("derived:abs_con_H",
                        "con_H", var_key="con_H", derived=(np.abs, ["con_H"]))
 
   def conM(self) -> None:
@@ -2014,7 +2055,7 @@ class SystemPlotter:
     None.
     """
     print("[z4c] Rendering con_M (momentum constraint) frames...")
-    self.render_field(f"{self.jobname}.con_{self.plane}", "derived:abs_con_M",
+    self.render_field("derived:abs_con_M",
                         "con_M", var_key="con_M", derived=(np.abs, ["con_M"]))
 
   def conC(self) -> None:
@@ -2025,7 +2066,7 @@ class SystemPlotter:
     None.
     """
     print("[z4c] Rendering con_C (constraint) frames...")
-    self.render_field(f"{self.jobname}.con_{self.plane}", "derived:abs_con_C",
+    self.render_field("derived:abs_con_C",
                         "con_C", var_key="con_C", derived=(np.abs, ["con_C"]))
 
   def conZ(self) -> None:
@@ -2036,7 +2077,7 @@ class SystemPlotter:
     None.
     """
     print("[z4c] Rendering con_Z (constraint) frames...")
-    self.render_field(f"{self.jobname}.con_{self.plane}", "derived:abs_con_Z",
+    self.render_field("derived:abs_con_Z",
                         "con_Z", var_key="con_Z", derived=(np.abs, ["con_Z"]))
 
   def alpha(self) -> None:
@@ -2047,7 +2088,7 @@ class SystemPlotter:
     None.
     """
     print("[z4c] Rendering z4c_alpha (lapse) frames...")
-    self.render_field(f"{self.jobname}.z4c_{self.plane}", "z4c_alpha", "alpha",
+    self.render_field("z4c_alpha", "alpha",
                       var_key="alpha")
 
   def s00_avg(self) -> None:
@@ -2058,8 +2099,13 @@ class SystemPlotter:
     None.
     """
     print("[s00_avg] Computing average Y_e (s_00) time series...")
+    try:
+      prefix = self.slice_prefixes(["s_00"])[0]
+    except LookupError as err:
+      print(f"  Skipping s00_avg: {err}")
+      return
     plot_s00_timeseries_all(self.output_dirs, self.figpath, self.jobname,
-                            file_prefix=f"{self.jobname}.{self.prim_prefix}_{self.plane}",
+                            file_prefix=prefix,
                             time_scale=self.time_scale, time_axis=self.time_axis)
 
   def avg_energy(self) -> None:
@@ -2070,7 +2116,7 @@ class SystemPlotter:
     None.
     """
     print("[avg_energy] Rendering average neutrino energy frames...")
-    self.render_field([self.rad_file("N"), self.rad_file("E")], "derived:avg_energy",
+    self.render_field("derived:avg_energy",
                       "avg_energy", cmap="viridis", var_key="avg_energy",
                       derived=(_calc_average_energy, ["E:0", "N:0"]))
 
@@ -2087,7 +2133,7 @@ class SystemPlotter:
     None.
     """
     print(f"[{section}] Rendering neutrino energy E/{label} (species {species}) frames...")
-    self.render_field([self.rad_file("N"), self.rad_file("E")], "derived:avg_energy",
+    self.render_field("derived:avg_energy",
                       section, cmap="viridis", var_key="nu_energy",
                       derived=(_calc_average_energy, [f"E:{species}", f"N:{species}"]))
 
@@ -2204,12 +2250,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                       help="Output figure directory (default: <simpath>/Figs)")
   parser.add_argument("--jobname", default="bhns",
                       help="AthenaK job name prefixing input/output files (default: bhns)")
-  parser.add_argument("--prim-prefix", dest="prim_prefix", default="mhd_w_bcc",
-                      help="Primitive-variable file prefix (before '_<plane>') for "
-                           "density/temperature/s00, e.g. 'mhd_w_bcc' [default] or 'prim'")
-  parser.add_argument("--rad-prefix", dest="rad_prefix", default="rad_m1",
-                      help="M1 radiation file prefix (before '_<var>_<plane>') for "
-                           "E/N/abs/eta, e.g. 'rad_m1' [default]")
   parser.add_argument("--plane", default="xy", choices=list(PLANES),
                       help="Slice plane to render: xy [default], xz, or yz")
   parser.add_argument("--companion", default="xz", choices=["xz", "yz", "none"],
@@ -2274,8 +2314,6 @@ def main(argv: list[str] | None = None) -> None:
     simpath=args.simpath,
     figpath=args.figpath,
     jobname=args.jobname,
-    prim_prefix=args.prim_prefix,
-    rad_prefix=args.rad_prefix,
     batchtools=args.batchtools,
     units=args.units,
     time_units=args.time_units,

@@ -56,7 +56,8 @@ case "${BATCHTOOLS,,}" in
     false|0|no|off) BATCHTOOLS=false ;;
     *)              BATCHTOOLS=true  ;;
 esac
-SUFFIX="$(_cfg_get suffix)"
+SOURCE="$(_cfg_get source)"
+JOBNAME="$(_cfg_get jobname)"
 EOS_TABLE="$(_cfg_get eos_table)"
 PYTHONPATH_EXTRA="$(_cfg_get pythonpath_extra)"   # optional (e.g. a vtk install)
 
@@ -138,8 +139,8 @@ fi
 #if command -v module &>/dev/null; then
 #    module load python py-numpy py-scipy py-matplotlib py-h5py
 #fi
-# The module Python may have no pip/user-site; provide extra packages (e.g. vtk
-# needed by athplot.load_sph_vtk) via pythonpath_extra in config.ini.
+# The module Python may have no pip/user-site; provide extra packages via
+# pythonpath_extra in config.ini.
 #if [[ -n "${PYTHONPATH_EXTRA}" ]]; then
 #    export PYTHONPATH="${PYTHONPATH_EXTRA}:${PYTHONPATH:-}"
 #fi
@@ -161,11 +162,8 @@ mkdir -p "${OUTPUT_DIR}"
 # analysis module applies its own default rather than receiving an empty string.
 DISK_ARGS=()
 [[ "${BATCHTOOLS}" == "false" ]] && DISK_ARGS+=(--no-batchtools)
-case "${SUFFIX,,}" in
-    "")   ;;
-    none) DISK_ARGS+=(--suffix "") ;;
-    *)    DISK_ARGS+=(--suffix "${SUFFIX}") ;;
-esac
+[[ -n "${SOURCE}"  ]] && DISK_ARGS+=(--source  "${SOURCE}")
+[[ -n "${JOBNAME}" ]] && DISK_ARGS+=(--jobname "${JOBNAME}")
 case "${OVERWRITE,,}" in
     true|1|yes|on) DISK_ARGS+=(--overwrite) ;;
 esac
@@ -198,11 +196,7 @@ fi
 
 SPECTRA_ARGS=()
 [[ "${BATCHTOOLS}" == "false" ]] && SPECTRA_ARGS+=(--no-batchtools)
-case "${SUFFIX,,}" in
-    "")   ;;
-    none) SPECTRA_ARGS+=(--suffix "") ;;
-    *)    SPECTRA_ARGS+=(--suffix "${SUFFIX}") ;;
-esac
+[[ -n "${JOBNAME}" ]] && SPECTRA_ARGS+=(--jobname "${JOBNAME}")
 case "${OVERWRITE,,}" in
     true|1|yes|on) SPECTRA_ARGS+=(--overwrite) ;;
 esac

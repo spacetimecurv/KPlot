@@ -129,8 +129,8 @@ done
 #if command -v module &>/dev/null; then
 #    module load python py-numpy py-scipy py-matplotlib py-h5py
 #fi
-# The module Python may have no pip/user-site; provide extra packages (e.g. vtk
-# needed by athplot.load_sph_vtk) via pythonpath_extra in config.ini.
+# The module Python may have no pip/user-site; provide extra packages via
+# pythonpath_extra in config.ini.
 #if [[ -n "${PYTHONPATH_EXTRA}" ]]; then
 #    export PYTHONPATH="${PYTHONPATH_EXTRA}:${PYTHONPATH:-}"
 #fi

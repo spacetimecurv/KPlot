@@ -2,18 +2,11 @@
 Neutrino luminosity analysis from rad_m1_F / rad_m1_E / rad_m1_N spherical-surface
 VTK outputs of AthenaK BNS simulations.
 
-Per snapshot, loads 8 VTK files:
-  <job>.r=R.rad_m1_F.NNNNN.vtk  - Fx:s, Fy:s, Fz:s  (Eulerian energy-flux per species)
-  <job>.r=R.rad_m1_E.NNNNN.vtk  - E:s                (Eulerian energy density per species)
-  <job>.r=R.rad_m1_N.NNNNN.vtk  - N:s                (number density per species)
-  <job>.r=R.adm.NNNNN.vtk       - adm_gxx..gyz       (ADM 3-metric)
-  <job>.r=R.z4c_alpha.NNNNN.vtk - z4c_alpha           (lapse)
-  <job>.r=R.z4c_beta*.NNNNN.vtk - z4c_beta*           (shift)
-
-An output block writing several radii at once bundles them into one dump named
-``<job>.r=RMIN-RMAX.<var>.NNNNN.vtk`` instead; --radius then picks the surface to
-analyse out of the bundle (see :mod:`kplot.utils.sph`).  Each variable is looked
-up on its own, so the radii may be bundled differently from one variable to the next.
+Per snapshot, needs the fields (from any sph output blocks, see kplot.utils.catalog):
+  Fx:s, Fy:s, Fz:s   Eulerian energy flux per species    (rad_m1_F or rad_m1_moments)
+  E:s, N:s           energy and number density           (rad_m1_E/N or rad_m1_moments)
+  adm_gxx..adm_gzz   ADM 3-metric                        (adm)
+  z4c_alpha, z4c_beta*  lapse and shift                  (z4c_alpha/beta* or z4c_gauge)
 
 Physics
 -------
@@ -27,8 +20,7 @@ spatial block of the inverse 4-metric.
 E_s and F_i,s are already densitized M1 evolved variables, so no extra sqrt(gamma)
 factor is applied in the surface integral.
 This matches the THC/AthenaK M1 calc_E_flux expression.
-The angular area integral uses AthenaK's native SPH `weights` field:
-    weights = r^2 dOmega  (Gauss-Legendre in mu = cos theta, uniform in phi)
+The angular area integral uses the cell areas r^2 dOmega of Surface.cell_area.
 
 Flux-weighted mean energy per species:
     <eps_s>(t) = int F^r_E,s * r^2 dOmega / int F^r_N,s * r^2 dOmega  -> MeV
@@ -48,27 +40,12 @@ Species ordering (M1_TOTAL_NUM_SPECIES = 4):
 Note: in bns_nurates, species 2 and 3 are symmetric (nux = anux).  The code
 stores each separately; both are output here.
 
-Required parfile output blocks (``radius = R`` for one surface, or ``radii = R1, R2,
-...`` / ``nradii`` + ``r_min`` + ``r_max`` for several surfaces in one dump):
+Example parfile output block:
     <outputXX>
     file_type  = sph
-    variable   = rad_m1_F
+    variable   = rad_m1_moments
     dt         = 5.0
-    radius     = 400.0
-    ntheta     = 256
-
-    <outputXX+1>
-    file_type  = sph
-    variable   = rad_m1_E
-    dt         = 5.0
-    radius     = 400.0
-    ntheta     = 256
-
-    <outputXX+2>
-    file_type  = sph
-    variable   = rad_m1_N
-    dt         = 5.0
-    radius     = 400.0
+    radii      = 300.0, 400.0
     ntheta     = 256
 
 Output files (written to --output-dir):
@@ -93,23 +70,18 @@ from ..utils.cli import sphere_parser
 from ..utils.constants import LENGTH_CM
 from ..utils.grmhd import inverse
 from ..utils.quadrature import sum_over_time
-from ..utils.surface import Surface, run, save_centers, stack
+from ..utils.surface import GEOMETRY, Surface, run, save_centers, stack
 
 DEFAULT_RADIUS = 300.0
 DEFAULT_JOBNAME = "bns"
 
-# The M1 dumps carrying the neutrino fields, and the geometry dumps they are
-# combined with.  Geometry may use a different snapshot counter (a different restart
-# offset), so it is matched by time; the M1 variables share one counter.
-M1_VARIABLES   = ('rad_m1_F', 'rad_m1_E', 'rad_m1_N')
-GEOM_VARIABLES = ('adm', 'z4c_alpha', 'z4c_betax', 'z4c_betay', 'z4c_betaz')
-
-_M1_HINT = ("\nAdd 'variable = rad_m1_F / rad_m1_E / rad_m1_N' sph output blocks "
-            "to the parfile.")
-
 # Species labels matching AthenaK's M1 ordering
 SPECIES  = ['nue', 'nua', 'nux', 'anux']
 NSPECIES = len(SPECIES)
+
+M1_FIELDS = tuple(f'{q}:{sp}' for sp in range(NSPECIES) for q in ('E', 'N', 'Fx', 'Fy', 'Fz'))
+
+_M1_HINT = "\nAdd an sph output block with 'variable = rad_m1_moments' to the parfile."
 
 # AthenaK stores N:s (neutrino number density) in EOS units (fm^-3) while
 # E:s is in code energy-density units (M_sun^-2).  To form a consistent ratio,
@@ -163,7 +135,7 @@ def _compute(s: Surface, ctx: None) -> dict:
   gu = inverse(s.metric)
   guxx, guxy, guxz, guyy, guyz, guzz = gu
   alpha, beta, pos = s.alpha, s.beta, s.pos
-  weights = s.raw('weights')
+  weights = s.cell_area
   theta_edges = s.theta_edges
   beta_r = _radial_projection(beta, gu, alpha, beta, pos)
 
@@ -204,15 +176,15 @@ def analyze(sph_dirs: list[str], output_dir: str, radius: float = DEFAULT_RADIUS
   Parameters:
   sph_dirs (list[str]): AthenaK output-XXXX/sph directories (all treated as one run).
   output_dir (str): Directory the outputs are written to.
-  radius (float): SPH extraction radius [M_sun]; must have rad_m1_E/F/N and adm/z4c output.
+  radius (float): SPH extraction radius [M_sun]; needs the M1 moments, metric and gauge.
   jobname (str): AthenaK job name prefixing the VTK files.
   n_workers (int): Worker processes for the snapshot loop (default: min(8, cpu_count())).
 
   Returns:
   None.
   """
-  results = run(sph_dirs, jobname, radius, _compute, variables=M1_VARIABLES,
-                by_time=GEOM_VARIABLES, n_workers=n_workers, hint=_M1_HINT)[float(radius)]
+  results = run(sph_dirs, jobname, radius, _compute, fields=M1_FIELDS, nearest=GEOMETRY,
+                n_workers=n_workers, hint=_M1_HINT)[float(radius)]
   os.makedirs(output_dir, exist_ok=True)
   save_centers(os.path.join(output_dir, 'sphere_center_neutrino.txt'), results)
 

@@ -21,8 +21,8 @@ The sphere is centred on the tracker given by the sph block's ``center_tracker``
 before that tracker is enabled the sphere sits at the origin, so the plot step
 only uses times from --t-min on (default: the merger).
 
-Required parfile output blocks (one block per variable, any number of radii):
-    variable = mhd_w_bcc, adm, z4c_alpha, z4c_betax, z4c_betay, z4c_betaz
+Required fields (kplot.utils.surface.MHD_FIELDS, e.g. from the sph output blocks
+mhd_w_bcc, adm and z4c_gauge, any number of radii) with
     center_tracker = <index of the black hole tracker>
 
 Outputs (written to --output-dir):

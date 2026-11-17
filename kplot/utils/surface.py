@@ -9,7 +9,10 @@ back the results per radius, sorted by time:
     f = fluid(s.metric, s.alpha, s.beta, s.vel)
     return {'Mdot': -(sqrt_det(s.metric) * s.alpha * s['dens'] * s.radial(f['u_up']) * s.dA).sum()}
 
-  res = run(sph_dirs, 'bns', [50, 100], compute)
+  res = run(sph_dirs, 'bns', [50, 100], compute, fields=MHD_FIELDS)
+
+Dumps are found by the fields they hold (see kplot.utils.catalog), so the lapse may
+come from a `z4c_alpha` or a `z4c_gauge` output block alike.
 """
 
 # Built-in libraries.
@@ -19,16 +22,15 @@ from typing import Any, Callable
 # Third-party libraries.
 import numpy as np
 
-# Plot-tools utility.
-from athplot.load_sph_vtk import SphericalData
-
 # KPlot utility.
+from .catalog import GAUGE, MAGNETIC, METRIC, find, scan
 from .parallel import pool_map
 from .quadrature import calc_ur, calc_uphi, get_riemann_weights
-from .sph import CENTER_TOL, Shell, locate, read_time
+from .sph import CENTER_TOL, Shell, SphDump, dup_correction
 
-# The mhd variables needed for the most general computations.
-MHD_VARIABLES = ('mhd_w_bcc', 'adm', 'z4c_alpha', 'z4c_betax', 'z4c_betay', 'z4c_betaz')
+GEOMETRY   = METRIC + GAUGE
+FLUID      = ('dens', 'velx', 'vely', 'velz')
+MHD_FIELDS = FLUID + MAGNETIC + GEOMETRY
 
 
 # ======================================================================
@@ -56,7 +58,7 @@ class Surface:
       for name in sh.field_names:
         self._shell.setdefault(name, sh)
     self._cache = {}
-    self.dup = _dup_correction(self.raw('z4c_alpha'), self.theta, self.phi) \
+    self.dup = dup_correction(self.raw('z4c_alpha'), self.theta, self.phi) \
       if 'z4c_alpha' in self._shell else 1.0
 
 
@@ -202,6 +204,22 @@ class Surface:
             * np.sin(self.theta) * self.radius**2)
 
 
+  @property
+  def cell_area(self) -> np.ndarray:
+    """
+    Area r^2 dphi (cos theta_- - cos theta_+) of the cell around each point, as in
+    AthenaK's sph `weights` output.
+
+    Returns:
+    array of the cell areas on the surface.
+    """
+    t = self.theta_edges
+    dmu = np.cos(t[:-1]) - np.cos(t[1:])
+    order = np.argsort(np.argsort(self.theta_1d))
+    return np.broadcast_to(dmu[order] * (2.0 * np.pi / len(self.phi_1d)) * self.radius**2,
+                           self.theta.shape)
+
+
   def radial(self, v: list) -> np.ndarray:
     """
     Radial component of a Cartesian vector.
@@ -251,29 +269,6 @@ def _check_centers(shells: list) -> np.ndarray:
   return centers[0]
 
 
-def _dup_correction(alpha: np.ndarray, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
-  """
-  Correction factor for the points AthenaK duplicates on the phi = 0 seam and north pole.
-
-  Parameters:
-  alpha (np.ndarray): lapse on the surface.
-  theta (np.ndarray): polar angle on the surface.
-  phi   (np.ndarray): azimuthal angle on the surface.
-
-  Returns:
-  array of the correction factor (1, 0.5 on the seam, 0.25 on the pole).
-  """
-  # Duplicated points are stored summed; the lapse (< 1) shows where.
-  phi_zero = (phi == phi.min())
-  theta_north = (theta == theta.min())
-  dup = np.ones(alpha.shape)
-  if alpha[phi_zero & ~theta_north].max() > 1.0:
-    dup[phi_zero] = 0.5
-  if alpha[theta_north].max() > 1.0:
-    dup[theta_north] = 0.25
-  return dup
-
-
 # ======================================================================
 # Helper functions for the driver function.
 # ======================================================================
@@ -303,18 +298,13 @@ def _worker(task: list) -> dict:
   Returns:
   dict {radius: result dict} with also the 'time' and 'center' of the surface.
   """
-  parsed = {}
+  dumps = {}
 
   def shell(entry: tuple) -> Shell:
     path, iradius = entry
-    if path not in parsed:
-      # Read the dump in large chunks first: the VTK reader's small reads are slow
-      # on GPFS, but fast once the file sits in the page cache.
-      with open(path, 'rb') as f:
-        while f.read(64 << 20):
-          pass
-      parsed[path] = SphericalData(path)
-    return Shell(path, iradius, data=parsed[path])
+    if path not in dumps:
+      dumps[path] = SphDump(path)
+    return Shell(path, iradius, data=dumps[path])
 
   out = {}
   for radius, entries in task:
@@ -323,38 +313,21 @@ def _worker(task: list) -> dict:
   return out
 
 
-def _nearest(times: np.ndarray, entries: list, t: float, tol: float = 4.0) -> tuple:
+def run(sph_dirs: list, jobname: str | None, radii: float | list, compute: Callable,
+        ctx: Any = None, fields: tuple = MHD_FIELDS, nearest: tuple = (),
+        n_workers: int = None, hint: str = '') -> dict:
   """
-  Entry closest in time to `t`.
-
-  Parameters:
-  times (np.ndarray): times of the entries [M_sun].
-  entries     (list): list of the (path, surface index) entries.
-  t          (float): target time [M_sun].
-  tol        (float): maximum time difference [M_sun].
-
-  Returns:
-  tuple (path, surface index) of the closest entry, else None if further than tol.
-  """
-  i = int(np.argmin(np.abs(times - t)))
-  return entries[i] if abs(times[i] - t) <= tol else None
-
-
-def run(sph_dirs: list, jobname: str, radii: float | list, compute: Callable, ctx: Any = None,
-        variables: tuple = MHD_VARIABLES, by_time: tuple = (), n_workers: int = None,
-        hint: str = '') -> dict:
-  """
-  Run compute(surface, ctx) on every snapshot holding all `variables` at each radius.
+  Run compute(surface, ctx) on every snapshot holding all `fields` at each radius.
 
   Parameters:
   sph_dirs        (list): list of the AthenaK output-XXXX/sph directories.
-  jobname          (str): job name the dumps are named after.
+  jobname          (str): only use dumps named <jobname>.*; None for all.
   radii   (float | list): extraction radius or list of radii [M_sun].
   compute     (Callable): module-level analysis function compute(surface, ctx) -> dict.
   ctx              (Any): context passed to compute, such as the EOS.
-  variables      (tuple): sph output variables needed on the same snapshot counter.
-  by_time        (tuple): variables that may use another snapshot counter and are
-                          matched to the nearest time instead.
+  fields         (tuple): fields needed on the same cycle.
+  nearest        (tuple): fields that may come from another output time and are matched
+                          to the nearest time instead.
   n_workers        (int): number of parallel workers.
   hint             (str): appended to the error message when nothing matches.
 
@@ -362,44 +335,25 @@ def run(sph_dirs: list, jobname: str, radii: float | list, compute: Callable, ct
   dict {radius: [result dicts, sorted by time]}; each dict also holds 'time' and 'center'.
   """
   radii = sorted(set(float(r) for r in np.atleast_1d(radii)))
-  variables, by_time = tuple(variables), tuple(by_time)
+  streams = scan(sph_dirs, 'sph', jobname)
   tasks = {}
   for radius in radii:
-    located = {v: locate(sph_dirs, jobname, v, radius, hint=hint) for v in variables + by_time}
-    for s in located.values():
-      print(f"  {s.describe()}")
-    index_sets = [set(located[v].paths) for v in variables]
-    complete = sorted(set.intersection(*index_sets))
-    skipped = len(set.union(*index_sets)) - len(complete)
-    timed = {}
-    for v in by_time:
-      entries = list(located[v].entries.values())
-      timed[v] = (np.array([read_time(p) for p, _ in entries]), entries)
-    found = 0
-    for i in complete:
-      entries = [located[v].shell(i) for v in variables]
-      if by_time:
-        t = read_time(entries[0][0])
-        extra = [_nearest(*timed[v], t) for v in by_time]
-        if any(e is None for e in extra):
-          skipped += 1
-          continue
-        entries += extra
-      tasks.setdefault(i, []).append((radius, entries))
-      found += 1
-    if skipped:
-      print(f"  [skip] r = {radius:g}: {skipped} snapshots missing one of "
-            f"{', '.join(variables + by_time)}")
-    print(f"Found {found} snapshots at r = {radius:g}.")
+    print(f"r = {radius:g}:")
+    try:
+      snaps = find(streams, tuple(fields) + tuple(nearest), radius=radius, nearest=nearest)
+    except LookupError as err:
+      raise RuntimeError(f"{err}{hint}") from None
+    for snap in snaps:
+      entries = list(dict.fromkeys(snap.sources.values()))
+      tasks.setdefault(snap.cycle, []).append((radius, entries))
 
   if not tasks:
     raise RuntimeError(
-      f"No snapshot in {list(sph_dirs)} has all of {', '.join(variables + by_time)} "
-      f"at any of r = {', '.join(f'{r:g}' for r in radii)}.\n"
-      f"Check the sph directories, the job name and the extraction radii.{hint}")
+      f"No snapshot in {list(sph_dirs)} has all of {', '.join(fields)} "
+      f"at any of r = {', '.join(f'{r:g}' for r in radii)}.{hint}")
 
   print(f"Processing {len(tasks)} snapshots...")
-  results = pool_map(_worker, [tasks[i] for i in sorted(tasks)], n_workers,
+  results = pool_map(_worker, [tasks[c] for c in sorted(tasks)], n_workers,
                      initializer=_init, initargs=(compute, ctx))
   return {radius: sorted((r[radius] for r in results if radius in r), key=lambda d: d['time'])
           for radius in radii}

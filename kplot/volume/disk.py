@@ -1,42 +1,12 @@
 """
 Global properties of the post-merger disk from an AthenaK BHNS 3D snapshot.
 
-The following data is required for this:
-<output1>
-file_type = bin
-variable  = mhd_w_bcc
-dt        = 500.0
-id        = mhd_w_bcc_3D
-
-<output2>
-file_type = bin
-variable  = adm
-dt        = 500.0
-id        = adm_3D
-
-<output3>
-file_type = bin
-variable  = z4c_alpha
-dt        = 500.0
-id        = alpha_3D
-
-<output4>
-file_type = bin
-variable  = z4c_betax
-dt        = 500.0
-id        = betax_3D
-
-<output5>
-file_type = bin
-variable  = z4c_betay
-dt        = 500.0
-id        = betay_3D
-
-<output6>
-file_type = bin
-variable  = z4c_betaz
-dt        = 500.0
-id        = betaz_3D
+The analysis needs the fields in FIELDS (primitives, cell-centered field, ADM metric,
+lapse and shift). They are found by name in any output block (see kplot.utils.catalog),
+either in 3D bin dumps (--source bin, e.g. mhd_w_bcc, adm and z4c_gauge) or in an sph
+volume around the black hole (--source sph, e.g. r_spacing = log, center_tracker = 0).
+On an sph volume the native grid spacing is unknown, so the MRI quality factors and the
+dz diagnostics are NaN.
 
 Using the .h5 version of the evolution table used for the simulations,
 a bunch of diagnostics involving the post-merger disk are calculated and
@@ -108,20 +78,18 @@ import os
 
 # Third-party libraries.
 import numpy as np
-from scipy.ndimage import uniform_filter
 
 # AthenaK utility.
 from kplot.system.units import CGS
-from kplot.utils.bin3d import (block_cell_geometry, find_snapshots, load_horizon, load_tracker,
-                               par, parse_par_dump, slice_cells, snapshot_tag, tracker_center,
-                               read_binary)
+from kplot.utils.bin3d import load_horizon, load_tracker, tracker_center
+from kplot.utils.catalog import GAUGE, HYDRO, MAGNETIC, METRIC, dump_dirs, find, scan
 from kplot.utils.constants import LENGTH_CM, MSUN_TO_S
 from kplot.utils.eos import EOSTable
 from kplot.utils.memory import peak_rss_gb, reset_peak_rss
 from kplot.utils.parallel import default_workers, pool_map
+from kplot.volume.cells import read_cells
 
-# The disk analysis script needs the following 3D output.
-VARIABLES = ("mhd_w_bcc", "adm", "alpha", "betax", "betay", "betaz")
+FIELDS = HYDRO + MAGNETIC + METRIC + GAUGE
 
 # ======================================================================
 # MULTIPROCESS WORKER
@@ -162,106 +130,35 @@ def _process_snapshot_disk(args: tuple) -> None:
   None.
   """
   # Unpack.
-  (mhd_file, adm_file, alpha_file, betax_file, betay_file, betaz_file,
-  rho_cut, rho_keep, rho_remnant, bound_criterion, r_exclude, center,
+  (snap, rho_cut, rho_keep, rho_remnant, bound_criterion, r_exclude, center,
   r_disk_max, nbins, rmax, slice_extent, slice_npts,
   parker_dir, parker_eps, parker_rmax, parker_smooth, vprof_R, outdir, print_memory) = args
 
-  snapshot = snapshot_tag(mhd_file)
+  snapshot = snap.tag
   if print_memory: reset_peak_rss()
 
   # ======================================================================
-  # MHD
+  # CELLS
   # ======================================================================
-  # Read the header and data of the MHD files first.
-  fd            = read_binary(mhd_file)
-  pars          = parse_par_dump(fd["header"]) # Parfile parameters.
-  time          = fd["time"]                   # Time of the snapshot.
-  nx1, nx2, nx3 = fd["nx1_out_mb"], fd["nx2_out_mb"], fd["nx3_out_mb"]
-  ncell_block   = nx1 * nx2 * nx3              # Points per meshblock.
+  cells = read_cells(snap, None if rho_keep is None else rho_keep / RHO_UNIT)
+  time, grid, origin = cells.time, cells.grid, cells.origin
+  x, y, z, dV, dz, h_cell = cells.x, cells.y, cells.z, cells.dV, cells.dz, cells.h
+  dz_min, ncells_total = cells.dz_min, cells.ncells_total
+  d = cells.data
+  del cells
 
-  dfloor = par(pars, "mhd", "dfloor", float, 1.0e-14)   # Density floor from parfile.
-  xv, yv, zv, dvol, dxv, dyv, dzv = block_cell_geometry(fd) # CC-coordinates and volume for each MB.
-
-  # Discard cells at (or barely above) the atmosphere floor.
-  if rho_keep is None:
-    rho_keep = 1.5 * dfloor * RHO_UNIT
-  rho_keep = rho_keep / RHO_UNIT
-  if rho_keep <= dfloor:
-    raise SystemExit(f"--rho-keep must exceed dfloor = {dfloor * RHO_UNIT:.4g} g/cm^3")
-  rho_full     = np.asarray(fd["mb_data"]["dens"]).reshape(-1)
-  sel          = np.flatnonzero(rho_full > rho_keep)
-  ncells_total = rho_full.size
-  del rho_full # Free up memory.
-
-  # Write fields in single precision based on the selection.
-  def take(fdict: dict, var: str) -> np.ndarray:
-    """
-    Selected cells of a variable.
-
-    Parameters:
-    fdict (dict): Data from read_binary.
-    var (str): Variable name.
-
-    Returns:
-    The flattened values of the kept cells.
-    """
-    return np.asarray(fdict["mb_data"][var]).reshape(-1)[sel]
-
-  rho         = take(fd, "dens")
-  press       = take(fd, "press")
-  velx        = take(fd, "velx")
-  vely        = take(fd, "vely")
-  velz        = take(fd, "velz")
-  ye          = take(fd, "s_00")
-  Bx          = take(fd, "bcc1")
-  By          = take(fd, "bcc2")
-  Bz          = take(fd, "bcc3")
-  temp        = take(fd, "temperature")
-  mb_geom_ref = fd["mb_geometry"]
-  del fd # Free up memory.
-
-  # Cell coordinates and volumes for the retained cells.
-  i   = sel % nx1
-  j   = (sel // nx1) % nx2
-  k   = (sel // (nx1 * nx2)) % nx3
-  m   = sel // ncell_block
-  x   = xv[m, i]
-  y   = yv[m, j]
-  z   = zv[m, k]
-  dV  = dvol[m].astype(np.float32)
-  dz  = dzv[m].astype(np.float32)
-  del i, j, k, m # Free up memory.
-
-  # ======================================================================
-  # GAUGE
-  # ======================================================================
-  def read_scalar_field(file: str, var: str) -> np.ndarray:
-    """
-    Read a variable of another 3D file on the kept cells.
-
-    Parameters:
-    file (str): Path to the .bin file (same mesh as the MHD file).
-    var (str): Variable name.
-
-    Returns:
-    The flattened values of the kept cells.
-    """
-    f = read_binary(file)
-    if not np.array_equal(f["mb_geometry"], mb_geom_ref):
-      raise SystemExit(f"{file} has a different mesh than the MHD file!")
-    full = np.asarray(f["mb_data"][var]).reshape(-1)
-    out = full[sel]
-    del f, full # Free up memory.
-    return out
-
-  # Fetch the lapse and shift.
-  alpha = read_scalar_field(alpha_file, "z4c_alpha")
-  betax = read_scalar_field(betax_file, "z4c_betax")
-  betay = read_scalar_field(betay_file, "z4c_betay")
-  betaz = read_scalar_field(betaz_file, "z4c_betaz")
+  rho, press, ye, temp = d.pop("dens"), d.pop("press"), d.pop("s_00"), d.pop("temperature")
+  velx, vely, velz = d.pop("velx"), d.pop("vely"), d.pop("velz")
+  Bx, By, Bz = d.pop("bcc1"), d.pop("bcc2"), d.pop("bcc3")
+  alpha = d.pop("z4c_alpha")
+  betax, betay, betaz = d.pop("z4c_betax"), d.pop("z4c_betay"), d.pop("z4c_betaz")
+  gxx, gxy, gxz = d.pop("adm_gxx"), d.pop("adm_gxy"), d.pop("adm_gxz")
+  gyy, gyz, gzz = d.pop("adm_gyy"), d.pop("adm_gyz"), d.pop("adm_gzz")
+  del d
 
   # Get the center of the remnant and the radius of the black hole.
+  if _W_TRACKER is None and center is None and origin is not None:
+    center = list(origin)
   center = tracker_center(_W_TRACKER, time, center)
 
   r_ah = np.nan
@@ -276,17 +173,6 @@ def _process_snapshot_disk(args: tuple) -> None:
   # ======================================================================
   # METRIC
   # ======================================================================
-  fadm = read_binary(adm_file)
-  if not np.array_equal(fadm["mb_geometry"], mb_geom_ref):
-    raise SystemExit("ADM file has a different mesh than the MHD file!")
-  gxx = take(fadm, "adm_gxx")
-  gxy = take(fadm, "adm_gxy")
-  gxz = take(fadm, "adm_gxz")
-  gyy = take(fadm, "adm_gyy")
-  gyz = take(fadm, "adm_gyz")
-  gzz = take(fadm, "adm_gzz")
-  del fadm # Free up memory.
-
   # Compute the volume factor.
   sqrtg = np.sqrt(gxx * gyy * gzz +
               2 * gxy * gxz * gyz -
@@ -487,7 +373,8 @@ def _process_snapshot_disk(args: tuple) -> None:
 
   a_edges = np.geomspace(max(r_exclude, 1.0), rmax, nbins + 1)
   a_iR    = np.clip(np.digitize(Rcyl, a_edges) - 1, 0, nbins - 1)
-  a_iz    = np.clip(((zg * Rinv + 1.0) * 0.5 * ANISO_NZ).astype(np.int64), 0, ANISO_NZ - 1)
+  a_iz    = np.clip(((np.clip(zg * Rinv, -1.0, 1.0) + 1.0) * 0.5 * ANISO_NZ).astype(np.int64),
+                    0, ANISO_NZ - 1)
   a_bin   = a_iR * ANISO_NZ + a_iz
   a_w     = np.where(disk, dM, 0.0)
   def phi_mean(q: np.ndarray) -> np.ndarray:
@@ -531,18 +418,19 @@ def _process_snapshot_disk(args: tuple) -> None:
   #     P   = dln p/dln rho - 1 - b (1 + 2b) / (2 + 3b)
   #   Newcomb (1961) undular, with rho g = -dn (p + b^2/2) (magnetohydrostatics):
   #     A   = -dn ln rho,  G = -dn (p + b^2/2) / (Gamma_1 p),  N_u = (A - G) / (|A| + |G|)
-  # ln rho, ln p and p + b^2/2 are box-smoothed over parker_smooth^3 cells inside
-  # each meshblock before differencing to suppress cell-scale turbulence.
+  # ln rho, ln p and p + b^2/2 are box-smoothed over parker_smooth^3 cells (inside each
+  # meshblock on the AMR grid) before differencing to suppress cell-scale turbulence.
   if parker_dir == "z":
-    n_comp = ((1, dzv, np.sign(zg).astype(np.float32)),)
+    n_comp = (("z", np.sign(zg).astype(np.float32)),)
   else:
     rinv   = 1.0 / np.maximum(rsph, 1e-30)
-    n_comp = ((3, dxv, xg * rinv), (2, dyv, yg * rinv), (1, dzv, zg * rinv))
+    n_comp = (("x", xg * rinv), ("y", yg * rinv), ("z", zg * rinv))
     del rinv
+  n_axes = "".join(a for a, _ in n_comp)
 
   def d_dn(q: np.ndarray) -> np.ndarray:
     """
-    n . grad q on the native mesh (smoothed; one-sided at MB edges).
+    n . grad q on the grid (smoothed over parker_smooth cells).
 
     Parameters:
     q (np.ndarray): Field on the kept cells.
@@ -550,21 +438,10 @@ def _process_snapshot_disk(args: tuple) -> None:
     Returns:
     The directional derivative on the kept cells.
     """
-    full = np.full(ncells_total, np.nan, dtype=np.float32)
-    full[sel] = q
-    full = full.reshape(-1, nx3, nx2, nx1)
-    if parker_smooth > 1:
-      good = np.isfinite(full).astype(np.float32)
-      size = (1, parker_smooth, parker_smooth, parker_smooth)
-      wsum = uniform_filter(good, size=size, mode="nearest")
-      with np.errstate(divide="ignore", invalid="ignore"):
-        full = np.where(good > 0,
-                        uniform_filter(np.nan_to_num(full), size=size, mode="nearest") / wsum,
-                        np.nan).astype(np.float32)
-      del good, wsum
-    out = np.zeros(sel.size, dtype=np.float32)
-    for axis, dax, nc in n_comp:
-      out += (np.gradient(full, axis=axis) / dax[:, None, None, None]).reshape(-1)[sel] * nc
+    g = grid.gradient(q, n_axes, parker_smooth)
+    out = np.zeros(q.size, dtype=np.float32)
+    for a, nc in n_comp:
+      out += g[a] * nc
     return out
 
   with np.errstate(divide="ignore", invalid="ignore"):
@@ -580,13 +457,13 @@ def _process_snapshot_disk(args: tuple) -> None:
     parker = (gbg - 1.0 -
               betainv * (1.0 + 2.0 * betainv) / (2.0 + 3.0 * betainv)).astype(np.float32)
     # Drop cells where rho is flat along n (e.g. the midplane for n = z).
-    parker_ok = buoy_ok & np.isfinite(parker) & (np.abs(dlnrho) * dz > parker_eps)
+    parker_ok = buoy_ok & np.isfinite(parker) & (np.abs(dlnrho) * h_cell > parker_eps)
 
     A_strat  = -dlnrho
     G_buoy   = -dptot / (gamma1 * press)
     A_plus_G = np.abs(A_strat) + np.abs(G_buoy)
     newcomb  = ((A_strat - G_buoy) / A_plus_G).astype(np.float32)
-    newcomb_ok = buoy_ok & np.isfinite(newcomb) & (A_plus_G * dz > parker_eps)
+    newcomb_ok = buoy_ok & np.isfinite(newcomb) & (A_plus_G * h_cell > parker_eps)
   parker[~parker_ok]   = np.nan
   gbg[~parker_ok]      = np.nan
   newcomb[~newcomb_ok] = np.nan
@@ -665,12 +542,9 @@ def _process_snapshot_disk(args: tuple) -> None:
   del lambda_z, lambda_phi, lambda_tot, h, bz_d, b_phih # Free up memory.
   Q_ok = disk & np.isfinite(Q_z) & np.isfinite(Q_phi) & np.isfinite(Q_tot)
 
-  om_full = np.full(ncells_total, np.nan, dtype=np.float32)
-  om_full[sel] = omega
-  om_full = om_full.reshape(-1, nx3, nx2, nx1)
-  dOdx = (np.gradient(om_full, axis=3) / dxv[:, None, None, None]).reshape(-1)[sel]
-  dOdy = (np.gradient(om_full, axis=2) / dyv[:, None, None, None]).reshape(-1)[sel]
-  del om_full
+  dO = grid.gradient(omega, "xy")
+  dOdx, dOdy = dO["x"], dO["y"]
+  del dO
   with np.errstate(invalid="ignore"):
     dOmega_dR = ((xg * dOdx + yg * dOdy) / np.maximum(Rcyl, 1e-30)).astype(np.float32)
     mri = Q_ok & (dOmega_dR < 0.0)
@@ -693,8 +567,7 @@ def _process_snapshot_disk(args: tuple) -> None:
     Returns:
     {<name>_<suffix>: slice}.
     """
-    pos = slice_cells(mb_geom_ref, (nx1, nx2, nx3), sel, axes, fixed,
-                      center[axes[0]] + u, center[axes[1]] + u)
+    pos = grid.plane(axes, fixed, center[axes[0]] + u, center[axes[1]] + u)
     ok  = pos >= 0
     pos = np.maximum(pos, 0)
     ok &= outside_bh[pos]
@@ -709,7 +582,7 @@ def _process_snapshot_disk(args: tuple) -> None:
   slices.update(plane((0, 2, 1), center[1], {**base, **parker_fd}, "xz"))
   np.savez(os.path.join(outdir, "slices", f"disk_slices_{snapshot}.npz"), u=u, **slices)
   del Q_loc, Qtot_loc, rho_cells, base, parker_fd, slices, parker, parker_ok, gbg, newcomb, \
-      newcomb_ok, Bx, Bz, vcx, vcz, sel # Free up memory.
+      newcomb_ok, Bx, Bz, vcx, vcz # Free up memory.
 
   wq     = dM[mri]
   Q_scal = {}
@@ -721,7 +594,6 @@ def _process_snapshot_disk(args: tuple) -> None:
 
   qv = None # Loop variable, still references Q_tot[mri].
   del b_phi, wq # Free up memory.
-  dz_min = float(np.min(dzv)) # Finest grid spacing on the whole mesh.
 
   # ======================================================================
   # INTEGRALS
@@ -816,11 +688,13 @@ def _process_snapshot_disk(args: tuple) -> None:
 
       # Grid spacing in the disk: mass-weighted dz percentiles (m) and the mass
       # fraction on the finest level of the mesh.
+      native = np.isfinite(dz_min)
       dz_m = dz[mask] * L_UNIT * 1.0e-2
       out.update({
-        "dz_pct_m"    : wpercentile(dz_m, w, [5, 25, 50, 75, 95]).tolist(),
+        "dz_pct_m"    : (wpercentile(dz_m, w, [5, 25, 50, 75, 95]).tolist() if native
+                         else [np.nan] * 5),
         "dz_min_m"    : dz_min * L_UNIT * 1.0e-2,
-        "f_M_finest"  : float(w[dz[mask] <= 1.01 * dz_min].sum()) / M,
+        "f_M_finest"  : float(w[dz[mask] <= 1.01 * dz_min].sum()) / M if native else np.nan,
       })
 
       a_mk = mask & aniso_ok
@@ -1043,11 +917,13 @@ def _process_snapshot_disk(args: tuple) -> None:
   # ======================================================================
   wd_all = dM[disk]
   hists = {}
-  for name, q, bins in (("Ye", ye[disk], np.linspace(0.0, 0.6, 61)),
-                        ("entropy_kB", entropy[disk], np.linspace(0.0, 40.0, 81)),
-                        ("T_MeV", temp[disk], np.geomspace(0.4, 20.0, 61)),
-                        ("dz_m", dz[disk] * L_UNIT * 1.0e-2,
-                         dz_min * L_UNIT * 1.0e-2 * 2.0**np.arange(-0.5, 12.0))):
+  hist_specs = [("Ye", ye[disk], np.linspace(0.0, 0.6, 61)),
+                ("entropy_kB", entropy[disk], np.linspace(0.0, 40.0, 81)),
+                ("T_MeV", temp[disk], np.geomspace(0.4, 20.0, 61))]
+  if np.isfinite(dz_min):
+    hist_specs.append(("dz_m", dz[disk] * L_UNIT * 1.0e-2,
+                       dz_min * L_UNIT * 1.0e-2 * 2.0**np.arange(-0.5, 12.0)))
+  for name, q, bins in hist_specs:
     hh, ee = np.histogram(q, bins=bins, weights=wd_all)
     hists[name] = (ee, hh)
 
@@ -1092,8 +968,8 @@ def _process_snapshot_disk(args: tuple) -> None:
   os.replace(path + ".tmp", path)
 
   if print_memory:
-    print(f"$ [pid {os.getpid()}] {snapshot}: {ncells_total // ncell_block} blocks, "
-          f"{len(rho)}/{ncells_total} cells kept, peak RSS {peak_rss_gb():.2f} GB", flush=True)
+    print(f"$ [pid {os.getpid()}] {snapshot}: {len(rho)}/{ncells_total} cells kept, "
+          f"peak RSS {peak_rss_gb():.2f} GB", flush=True)
 
 
 def scalars_path(outdir: str, snapshot: str) -> str:
@@ -1249,14 +1125,12 @@ def analyze(args: argparse.Namespace) -> None:
   Parameters:
   args (argparse.Namespace): Parsed command-line arguments:
     simpath (str): simulation directory holding the output-XXXX segments, or
-                   (without batchtools) the directory of the 3D binary files.
-                   IMPORTANT: files need to hold the signature *.<var><suffix>.*.bin. The
-                   output needed at each output time is `*.mhd_w_bcc_3D.*.bin`,
-                   `*.adm_3D.*.bin`, `*.alpha_3D.*.bin`, `*.betax_3D.*.bin`,
-                   `*.betay_3D.*.bin`, `*.betaz_3D.*.bin`.
+                   (without batchtools) the directory of the dumps.
     batchtools (bool): whether simpath holds batchtools output-XXXX segments.
-    suffix (str): suffix of the 3D output ids (default: _3D).
-    drop_first_bins (int): how many bins to drop at the start (during inspiral).
+    source (str): 'bin' (3D bin dumps) or 'sph' (sph volume); the dumps are found by
+                  the fields in FIELDS, whatever their output block names.
+    jobname (str): only use dumps named <jobname>.* (default: all).
+    drop_first_bins (int): drop snapshots whose counter is below this (inspiral).
     eos_table (str): path to the .h5 CompOSE table used for the evolution.
     tracker (str): path to one of the tracker files (merged into one segment
                    with BatchMerger; currently only supported this way).
@@ -1295,32 +1169,21 @@ def analyze(args: argparse.Namespace) -> None:
   Returns:
   None.
   """
-  # Find the files with the signature.
-  files = {tag: find_snapshots(tag, args.simpath, args.batchtools, args.suffix) for tag in VARIABLES}
-
-  # Only keep snapshots that exist for every tag.
-  number_sets = [set(files[tag]) for tag in VARIABLES]
-  numbers = sorted(set.intersection(*number_sets))
-  incomplete = len(set.union(*number_sets)) - len(numbers)
-  if incomplete:
-    print(f"$ Skipping {incomplete} snapshots missing one of {', '.join(VARIABLES)}")
-
-  # Drop snapshots at the beginning.
+  # Find the snapshots holding every field.
+  streams = scan(dump_dirs(args.simpath, args.source, args.batchtools), args.source, args.jobname)
+  snaps = find(streams, FIELDS, volume=args.source == "sph")
   if args.drop_first_bins is not None:
-    numbers = [n for n in numbers if n >= args.drop_first_bins]
-
-  if not numbers:
+    snaps = [s for s in snaps if int(s.tag) >= args.drop_first_bins]
+  if not snaps:
     raise SystemExit("No complete disk snapshot found!")
-  print(f"$ Found {len(numbers)} disk snapshots...")
 
   # Skip snapshots that a previous run already finished.
   if not args.overwrite:
-    done = [n for n in numbers
-            if os.path.exists(scalars_path(args.outdir, snapshot_tag(files["mhd_w_bcc"][n])))]
+    done = [s for s in snaps if os.path.exists(scalars_path(args.outdir, s.tag))]
     if done:
       print(f"$ Skipping {len(done)} snapshots already in {args.outdir} (--overwrite to redo)")
-      numbers = [n for n in numbers if n not in set(done)]
-    if not numbers:
+      snaps = [s for s in snaps if s not in done]
+    if not snaps:
       print("$ Nothing left to do.")
       return
 
@@ -1341,26 +1204,14 @@ def analyze(args: argparse.Namespace) -> None:
   # Prepare the worker arguments.
   n_workers = args.n_workers or default_workers()
 
-  def _snapshot_files(n: int) -> tuple[str, ...]:
-    """
-    Path to every tagged file for a given snapshot number.
-
-    Parameters:
-    n (int): Snapshot number.
-
-    Returns:
-    The paths, in the order of VARIABLES.
-    """
-    return tuple(files[v][n] for v in VARIABLES)
-  worker_args = [_snapshot_files(n) +
-                 (args.rho_cut, args.rho_keep, args.rho_remnant,
+  worker_args = [(snap, args.rho_cut, args.rho_keep, args.rho_remnant,
                   args.bound_criterion, args.r_exclude, args.center,
                   args.r_disk_max, args.nbins, args.rmax,
                   args.slice_extent, args.slice_npts,
                   args.parker_dir, args.parker_eps,
                   args.parker_rmax if args.parker_rmax is not None else args.rmax,
                   args.parker_smooth, args.vprof_R, args.outdir, args.print_memory)
-                 for n in numbers]
+                 for snap in snaps]
   print(f"$ Processing {len(worker_args)} snapshots with n_worker={n_workers}...")
 
   # Make directories.
@@ -1393,15 +1244,16 @@ def main(argv: list[str] | None = None) -> None:
       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
   ap.add_argument("--simpath", "--bindir", dest="simpath", required=True,
                   help="simulation directory holding the output-XXXX segments, "
-                       "or (with --no-batchtools) the directory of the 3D bin files")
+                       "or (with --no-batchtools) the directory of the dumps")
   ap.add_argument("--batchtools", action=argparse.BooleanOptionalAction, default=True,
-                  help="search the 3D bin files in <simpath>/output-XXXX[/bin]; "
-                       "--no-batchtools searches <simpath>[/bin] only")
-  ap.add_argument("--suffix", default="_3D",
-                  help="suffix of the 3D output ids, i.e. files <job>.<var><suffix>.NNNNN.bin "
-                       "(use '' for unsuffixed ids)")
+                  help="search the dumps in <simpath>/output-XXXX/{bin,sph}; "
+                       "--no-batchtools searches <simpath>[/bin or /sph] only")
+  ap.add_argument("--source", choices=("bin", "sph"), default="bin",
+                  help="3D bin dumps or an sph volume around the black hole")
+  ap.add_argument("--jobname", default=None,
+                  help="only use dumps named <jobname>.* [default: all]")
   ap.add_argument("--drop-first-bins", default=None, type=int,
-                  help="Drop that many .bin files at the start (inspiral).")
+                  help="Drop snapshots whose counter is below this (inspiral).")
   ap.add_argument("--eos-table",
                   help="CompOSE .h5 used by the run (for h and entropy)")
   ap.add_argument("--tracker", default=None,

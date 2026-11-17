@@ -63,8 +63,8 @@ kplot/              the installed Python package
                       ejecta.py, neutrinos.py, mergertime.py, poynting.py,
                       butterfly.py, accretion.py, mad.py, penrose.py,
                       plots.py, comparison.py
-  volume/           3D volume-domain (bin) analysis
-                      disk.py, spectra.py, plots.py
+  volume/           3D volume-domain (bin or sph volume) analysis
+                      cells.py, disk.py, spectra.py, slice3D.py, plots.py
   utils/            helpers shared by all of the above (see below)
 scripts/            ready-to-edit shell drivers, one folder per workflow
   system/           plot_system.sh, make_movies.sh                  -> kplot.system
@@ -82,14 +82,20 @@ batchtools-like arrangement, i.e. in folders with the signature ```output-XXXX``
 ```simpath```. If the data lives in a single directory instead, set ```batchtools = false``` in
 the driver's ```config.ini``` (or pass ```--no-batchtools``` on the command line).
 
+Dumps are found by the **fields** they hold, not by their output block names
+(```kplot.utils.catalog```). The lapse may come from a ```z4c_alpha``` or a ```z4c_gauge```
+block, the M1 moments from ```rad_m1_E/N/F``` or ```rad_m1_moments```, and blocks written at
+different cadences or started at a restart are matched by their cycle.
+
 ### Shared helpers (```kplot.utils```)
 Code used by more than one analysis lives in ```kplot.utils```, so each analysis
 script only holds its own physics:
 - ```surface.py``` - the common driver for all sph analyses: finds the dumps, builds one
   ```Surface``` per snapshot and radius, and runs a ```compute(surface, ctx)``` function
   in parallel. A new sph analysis only needs to write that one function.
-- ```sph.py``` - finds the sph VTK dumps (single or multi-radius files) across segments
-- ```bin3d.py``` - 3D binary dumps: snapshot lookup, meshblock geometry, tracker/horizon files
+- ```catalog.py``` - field-based lookup of bin and sph dumps across segments
+- ```sph.py``` - reader for the sph VTK dumps (single or multi-radius files)
+- ```bin3d.py``` - 3D binary dumps: reader, meshblock geometry, tracker/horizon files
 - ```grmhd.py``` - 3+1 GRMHD operations (four-velocity, magnetic four-vector, metric determinant, ...)
 - ```eos.py``` - PyCompOSE HDF5 EOS tables
 - ```quadrature.py``` - surface integration weights
@@ -240,12 +246,15 @@ Outputs land in ```<simpath>/analysis/``` as plain text (plus ```.npy``` for the
 without re-reading the VTK files.
 
 ### Post-merger disk analysis (volume)
-```kplot.volume``` analyses AthenaK's 3D volume-domain output (```file_type = bin```)
-directly, rather than a spherical extraction surface:
+```kplot.volume``` analyses the volume around the remnant, either from AthenaK's 3D
+output (```file_type = bin```) or from an sph volume (```file_type = sph``` with many radii,
+```center_tracker = 0```). ```kplot.volume.cells``` reads either into flat arrays of cells,
+so the analyses do not depend on the grid:
 - ```kplot.volume.disk``` - per-snapshot post-merger disk diagnostics (mass,
-  angular momentum, MRI quality factor, ...) from ```mhd_w_bcc```/```adm```/```z4c_alpha```/
-  ```z4c_betax/y/z``` 3D snapshots, an EOS table and a tracker/horizon file
-  (or a manual center) to locate the compact object
+  angular momentum, MRI quality factor, ...) from the primitives, ADM metric, lapse and
+  shift (```--source bin``` or ```--source sph```), an EOS table and a tracker/horizon file
+  (or a manual center; for an sph volume its center by default). On an sph volume the
+  native grid spacing is unknown, so the quality factors and dz diagnostics are NaN
 - ```kplot.volume.plots``` - one histogram/profile frame per snapshot (```Ye```,
   entropy, temperature histograms; ```Sigma```, ```rho```, ```Ye```, ```T```,
   ```H/R```, ```Omega``` radial profiles), with fixed, log-scaled axes so
